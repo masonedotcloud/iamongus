@@ -1,0 +1,10 @@
+dearpygui
+mss
+pywin32
+numpy
+opencv-python
+pyautogui
+ultralytics
+pymem
+Pillow
+easyocr
