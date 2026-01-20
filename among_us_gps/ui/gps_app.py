@@ -397,3 +397,273 @@ class GPSVisualizerPro:
         # Popola la listbox con i POI
         self._refresh_poi_listbox()
 
+    def _costruisci_pannello(self):
+        dpg.add_text("CONTROLLI", color=Colors.ACCENT)
+        dpg.add_separator()
+
+        dpg.add_text("Telecamera")
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Follow", width=80,
+                callback=lambda *a: self._set_camera("follow"))
+            dpg.add_button(label="Libera", width=80,
+                callback=lambda *a: self._set_camera("free"))
+            dpg.add_button(label="Tutta", width=80,
+                callback=lambda *a: self._set_camera("overview"))
+
+        dpg.add_spacer(height=10)
+        dpg.add_text("Zoom")
+        dpg.add_slider_float(tag="zoom_slider",
+                             default_value=self.scale,
+                             min_value=GPSConfig.MIN_SCALE,
+                             max_value=GPSConfig.MAX_SCALE,
+                             width=-1,
+                             callback=self._on_zoom_slider)
+        with dpg.group(horizontal=True):
+            dpg.add_button(label=" - ", width=50,
+                callback=lambda *a: self._zoom(0.8))
+            dpg.add_button(label=" + ", width=50,
+                callback=lambda *a: self._zoom(1.25))
+            dpg.add_button(label="Reset", width=110,
+                callback=lambda *a: self._reset_view())
+
+        dpg.add_spacer(height=10)
+        dpg.add_separator()
+        dpg.add_text("AUTO-MOVEMENT", color=Colors.ACCENT)
+        dpg.add_separator()
+
+        dpg.add_checkbox(label="Abilita (click sulla mappa)",
+                         default_value=self.auto_enabled,
+                         tag="auto_checkbox",
+                         callback=self._on_auto_checkbox)
+        dpg.add_text("Stato:", color=Colors.TEXT_DIM)
+        dpg.add_text("inattivo", tag="auto_state_label", color=Colors.TEXT_DIM)
+        dpg.add_text("Target:", color=Colors.TEXT_DIM)
+        dpg.add_text("—", tag="auto_target_label")
+        dpg.add_text("Path:", color=Colors.TEXT_DIM)
+        dpg.add_text("0 waypoint", tag="auto_path_label")
+        dpg.add_button(label="Stop (ESC)", width=-1,
+                       callback=lambda *a: self._cancel_auto_move())
+        dpg.add_checkbox(label="Mostra percorso",
+                         default_value=self.show_path,
+                         callback=lambda s, a: setattr(self, 'show_path', a))
+
+        # ================== ZONE ==================
+        dpg.add_spacer(height=10)
+        dpg.add_separator()
+        dpg.add_text("ZONE", color=Colors.ACCENT)
+        dpg.add_separator()
+
+        dpg.add_button(label="+ Nuova Zona  [N]", width=-1,
+                       tag="btn_nuova_zona",
+                       callback=lambda *a: self._start_new_zone_mode())
+        dpg.add_listbox(tag="zone_listbox", items=[],
+                        num_items=6, width=-1)
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Centra", width=85,
+                           callback=lambda *a: self._vai_a_zona())
+            dpg.add_button(label="Naviga A*", width=85,
+                           callback=lambda *a: self._naviga_a_zona())
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Forma", width=85,
+                           callback=lambda *a: self._modifica_forma_zona())
+            dpg.add_button(label="Colore", width=85,
+                           callback=lambda *a: self._cambia_colore_zona())
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Rinomina", width=85,
+                           callback=lambda *a: self._rinomina_zona())
+            dpg.add_button(label="Adatta", width=85,
+                           callback=lambda *a: self._forza_adattamento_zona())
+            dpg.add_button(label="Elimina", width=85,
+                           callback=lambda *a: self._elimina_zona())
+        dpg.add_button(label="Imposta ID Zona Gioco", width=-1,
+                       callback=lambda *a: self._imposta_game_zone_id())
+
+        dpg.add_spacer(height=10)
+        dpg.add_separator()
+        dpg.add_text("ZONE PORTE (FILTRO YOLO)", color=(255, 100, 100))
+        dpg.add_separator()
+
+        dpg.add_button(label="+ Disegna Zona Porta", width=-1,
+                       callback=lambda *a: self._start_new_door_zone_mode())
+        dpg.add_listbox(tag="door_zone_listbox", items=[], num_items=4, width=-1)
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Centra", width=85,
+                           callback=lambda *a: self._vai_a_door_zona())
+            dpg.add_button(label="Forma", width=85,
+                           callback=lambda *a: self._modifica_forma_door_zona())
+            dpg.add_button(label="Colore", width=85,
+                           callback=lambda *a: self._cambia_colore_door_zona())
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Rinomina", width=85,
+                           callback=lambda *a: self._rinomina_door_zona())
+            dpg.add_button(label="Elimina", width=85,
+                           callback=lambda *a: self._elimina_door_zone())
+        dpg.add_checkbox(label="Mostra Zone Porte su Mappa", default_value=True,
+                         callback=lambda s, a: setattr(self, 'show_door_zones', a))
+
+        dpg.add_spacer(height=10)
+        dpg.add_separator()
+        dpg.add_text("Livelli visibili")
+        dpg.add_checkbox(label="Griglia", default_value=self.show_grid,
+                         callback=lambda s, a: setattr(self, 'show_grid', a))
+        dpg.add_checkbox(label="Scia (trail)", default_value=self.show_trail,
+                         callback=lambda s, a: setattr(self, 'show_trail', a))
+        dpg.add_checkbox(label="Mappa visitata", default_value=self.show_visited,
+                         callback=self._on_toggle_visited)
+        dpg.add_checkbox(label="Mirino centrale", default_value=self.show_crosshair,
+                         callback=lambda s, a: setattr(self, 'show_crosshair', a))
+        dpg.add_checkbox(label="Linee Zona-Task", default_value=self.show_task_links,
+                         callback=lambda s, a: setattr(self, 'show_task_links', a))
+        dpg.add_checkbox(label="Mostra solo task in memoria", default_value=self.show_only_active_tasks,
+                         callback=lambda s, a: setattr(self, 'show_only_active_tasks', a))                 
+        dpg.add_checkbox(label="Altri giocatori (YOLO)", default_value=self.show_other_players,
+                         callback=lambda s, a: setattr(self, 'show_other_players', a))
+        dpg.add_checkbox(label="Porte chiuse rilevate (YOLO)", default_value=self.show_detected_doors,
+                         callback=lambda s, a: setattr(self, 'show_detected_doors', a))
+        with dpg.group(horizontal=True):
+            dpg.add_slider_float(tag="yolo_cam_slider", default_value=self.yolo_camera_height,
+                                 min_value=3.0, max_value=12.0, width=-130,
+                                 callback=lambda s, a: setattr(self, 'yolo_camera_height', a))
+            dpg.add_text("Cam Height")
+        dpg.add_checkbox(label="Auto-calibra YOLO (movimento)", default_value=self.yolo_auto_calibrate,
+                         callback=lambda s, a: setattr(self, 'yolo_auto_calibrate', a))
+        dpg.add_checkbox(label="HUD overlay", default_value=self.show_hud,
+                         callback=lambda s, a: setattr(self, 'show_hud', a))
+
+        dpg.add_spacer(height=8)
+        dpg.add_slider_float(label="Smoothing",
+                             default_value=GPSConfig.SMOOTHING,
+                             min_value=1.0, max_value=50.0, width=-80,
+                             callback=lambda s, a: setattr(GPSConfig, 'SMOOTHING', a))
+
+        dpg.add_spacer(height=10)
+        dpg.add_separator()
+        dpg.add_text("TASK", color=Colors.ACCENT)
+        dpg.add_separator()
+        dpg.add_button(label="Relazioni Padre ↔ Figlia",
+                       width=-1, height=28,
+                       callback=lambda *a: self._apri_popup_relazioni_task())
+
+        # --- Memoria: task rilevate dal gioco ---
+        with dpg.group(horizontal=True):
+            dpg.add_text("Task in memoria:", color=Colors.TEXT_DIM)
+            dpg.add_checkbox(label="A-Z", default_value=False, tag="sort_mem_tasks_chk", callback=lambda *a: self._refresh_mem_task_listbox())
+        dpg.add_listbox(tag="mem_task_listbox", items=[], num_items=5, width=-1)
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Vai (A*)", width=85,
+                           callback=lambda *a: self._naviga_a_task_memoria())
+            dpg.add_button(label="Avvia Task", width=85,
+                           callback=lambda *a: self._avvia_task_selezionata())
+            dpg.add_button(label="Registra ?", width=80,
+                           callback=lambda *a: self._registra_task_sconosciuta())
+        dpg.add_button(label="▶ Esegui TUTTE le Task", width=-1, tag="btn_auto_all",
+                       callback=lambda *a: self._toggle_auto_all())
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Modifica", width=120,
+                           callback=lambda *a: self._modifica_task_da_memoria())
+            dpg.add_button(label="⏹ Stop Task", width=120,
+                           tag="btn_stop_task",
+                           callback=lambda *a: self._ferma_processo_task())
+            dpg.add_text("", tag="processo_status", color=(200, 200, 200, 200))
+
+        dpg.add_spacer(height=8)
+        dpg.add_separator()
+        with dpg.group(horizontal=True):
+            dpg.add_text("Task Registrate:", color=Colors.TEXT_DIM)
+            dpg.add_checkbox(label="A-Z", default_value=False, tag="sort_reg_tasks_chk", callback=lambda *a: self._refresh_reg_task_listbox())
+        dpg.add_listbox(tag="reg_task_listbox", items=[], num_items=5, width=-1)
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Nuova Task", width=125,
+                           callback=lambda *a: self._apri_popup_nuova_task())
+            dpg.add_button(label="Modifica", width=125,
+                           callback=lambda *a: self._apri_popup_modifica_task())
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="+ Fase", width=62,
+                           callback=lambda *a: self._apri_popup_nuova_fase())
+            dpg.add_button(label="+ Fratello", width=76,
+                           callback=lambda *a: self._apri_popup_nuovo_fratello())
+            dpg.add_button(label="Vai", width=55,
+                           callback=lambda *a: self._naviga_a_task_registrata())
+            dpg.add_button(label="Elimina", width=65,
+                           callback=lambda *a: self._elimina_task_registrata())
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Genera .py", width=127,
+                           tag="btn_genera_py",
+                           callback=lambda *a: self._genera_file_esecuzione())
+            dpg.add_text("", tag="genera_py_status", color=(0, 200, 120, 255))
+        dpg.add_button(label="Link Zona ↔ Task", width=-1,
+                       callback=lambda *a: self._apri_popup_link_zona())
+
+        # ================== PUNTI DI INTERESSE ==================
+        dpg.add_spacer(height=10)
+        dpg.add_separator()
+        dpg.add_text("PUNTI DI INTERESSE", color=(255, 160, 60, 255))
+        dpg.add_separator()
+
+        dpg.add_checkbox(label="Mostra sulla mappa", default_value=self.show_poi,
+                         callback=lambda s, a: setattr(self, 'show_poi', a))
+        dpg.add_listbox(tag="poi_listbox", items=[], num_items=5, width=-1)
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="+ Nuovo POI", width=127,
+                           callback=lambda *a: self._apri_popup_nuovo_poi())
+            dpg.add_button(label="Modifica", width=123,
+                           callback=lambda *a: self._apri_popup_modifica_poi())
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="Vai (A*)", width=127,
+                           callback=lambda *a: self._naviga_a_poi())
+            dpg.add_button(label="Elimina", width=123,
+                           callback=lambda *a: self._elimina_poi())
+
+        dpg.add_spacer(height=10)
+        dpg.add_separator()
+        dpg.add_text("STATISTICHE", color=Colors.ACCENT)
+        dpg.add_separator()
+        dpg.add_text("Distanza percorsa:", color=Colors.TEXT_DIM)
+        dpg.add_text("0.00 u", tag="stat_dist")
+        dpg.add_text("Tempo sessione:", color=Colors.TEXT_DIM)
+        dpg.add_text("00:00", tag="stat_time")
+        dpg.add_text("Celle mappa:", color=Colors.TEXT_DIM)
+        dpg.add_text(f"{len(self.visitati_coords)}", tag="stat_visited")
+        dpg.add_text("Celle calpestabili:", color=Colors.TEXT_DIM)
+        dpg.add_text(f"{len(self.pathfinder.walkable)}", tag="stat_walkable")
+        dpg.add_text("Punti del trail:", color=Colors.TEXT_DIM)
+        dpg.add_text("0", tag="stat_trail")
+
+        dpg.add_spacer(height=10)
+        dpg.add_separator()
+        dpg.add_text("SCORCIATOIE", color=Colors.ACCENT)
+        dpg.add_separator()
+        dpg.add_text(
+            "F / R / O = telecamera\n"
+            "G / T / C / H / P = toggle layers\n"
+            "M = abilita auto-move\n"
+            "N = nuova zona\n"
+            "F4 / FINE (END) = ferma esecuzione (globale)\n"
+            "Click SX = destinazione (pathfinding)\n"
+            "Click DX / ESC = annulla\n"
+            "Rotellina = zoom\n"
+            "Middle + drag = pan mappa",
+            color=Colors.TEXT_DIM)
+
+    def _setup_theme(self):
+        with dpg.theme() as self.global_theme:
+            with dpg.theme_component(dpg.mvAll):
+                dpg.add_theme_color(dpg.mvThemeCol_WindowBg,       Colors.BG)
+                dpg.add_theme_color(dpg.mvThemeCol_ChildBg,        Colors.BG)
+                dpg.add_theme_color(dpg.mvThemeCol_MenuBarBg,      Colors.PANEL_BG)
+                dpg.add_theme_color(dpg.mvThemeCol_PopupBg,        Colors.PANEL_BG)
+                dpg.add_theme_color(dpg.mvThemeCol_Button,         (32, 32, 40, 255))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (0, 120, 200, 255))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (0, 160, 230, 255))
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBg,        (28, 28, 34, 255))
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBgHovered, (40, 40, 48, 255))
+                dpg.add_theme_color(dpg.mvThemeCol_SliderGrab,     Colors.ACCENT)
+                dpg.add_theme_color(dpg.mvThemeCol_CheckMark,      Colors.ACCENT)
+                dpg.add_theme_color(dpg.mvThemeCol_Text,           Colors.TEXT)
+                dpg.add_theme_color(dpg.mvThemeCol_Separator,      (60, 60, 70, 255))
+                dpg.add_theme_style(dpg.mvStyleVar_FrameRounding,  4)
+                dpg.add_theme_style(dpg.mvStyleVar_WindowPadding,  6, 6)
+                dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,    6, 4)
+        dpg.bind_theme(self.global_theme)
+
+    # ================= SCANNER RADAR YOLO =================
