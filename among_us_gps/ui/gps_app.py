@@ -1160,3 +1160,662 @@ class GPSVisualizerPro:
             p1x, p1y = p2x, p2y
         return inside
 
+    def _plan_path(self, goal_xy):
+        """Calcola A* assicurandosi che il target sia su una cella calpestabile."""
+        # SNAP: Trova la cella calpestabile più vicina al click/centroide
+        snapped_goal_key = self.pathfinder.nearest_walkable(goal_xy[0], goal_xy[1], GPSConfig.NEAREST_SEARCH_RADIUS)
+        
+        if snapped_goal_key is None:
+            self.auto_path = []
+            self.auto_path_index = 0
+            self.auto_status_msg = "Punto irraggiungibile (non mappato)"
+            self.key_ctrl.release_all()
+            return
+
+        # Usa le coordinate della cella reale come target finale
+        actual_goal = self.pathfinder._coord(snapped_goal_key)
+        self.auto_final_target = actual_goal 
+        
+        start = (self.pos_target[0], self.pos_target[1])
+        t0 = time.time()
+        
+        # Calcola il percorso verso il punto "snappato"
+        path = self.pathfinder.astar(start, actual_goal, max_nodes=GPSConfig.ASTAR_MAX_NODES)
+        elapsed_ms = (time.time() - t0) * 1000
+
+        if not path:
+            self.auto_path = []
+            self.auto_path_index = 0
+            self.auto_status_msg = "In attesa (percorso bloccato)..."
+            self.key_ctrl.release_all()
+            return
+
+        # Aggiungo il goal esatto come ultimo waypoint (per precisione finale
+        # rispetto alla cella piu' vicina) SOLO se e' raggiungibile in linea
+        # retta dal goal snapped — altrimenti il bot tenta di camminare nel
+        # muro per arrivarci e va in loop di stuck/replan.
+        if path:
+            last = path[-1]
+            dist_extra = math.hypot(last[0] - goal_xy[0], last[1] - goal_xy[1])
+            if 0.05 < dist_extra < 1.0 and self.pathfinder.line_walkable_coords(last, goal_xy):
+                path.append(goal_xy)
+
+        self.auto_path = path
+        self.auto_path_index = 0
+        self.auto_stuck_pos = tuple(self.pos_target)
+        self.auto_stuck_timer = 0.0
+        self.auto_status_msg = f"Path: {len(path)} wp ({elapsed_ms:.0f}ms)"
+
+    def _camera_center(self):
+        if self.camera_mode == "follow":
+            return (self.pos_visuale[0], self.pos_visuale[1])
+        return (self.free_cam[0], self.free_cam[1])
+
+    def _on_zoom_slider(self, sender, app_data):
+        self.scale = max(GPSConfig.MIN_SCALE,
+                         min(GPSConfig.MAX_SCALE, app_data))
+
+    def _zoom(self, factor):
+        self.scale = max(GPSConfig.MIN_SCALE,
+                         min(GPSConfig.MAX_SCALE, self.scale * factor))
+        if dpg.does_item_exist("zoom_slider"):
+            dpg.set_value("zoom_slider", self.scale)
+
+    def _toggle(self, attr):
+        setattr(self, attr, not getattr(self, attr))
+
+    def _on_toggle_visited(self, sender, app_data):
+        self.show_visited = app_data
+        dpg.configure_item("map_node", show=self.show_visited)
+
+    def _set_camera(self, mode):
+        self.camera_mode = mode
+        if mode == "overview":
+            self._fit_to_map()
+        elif mode == "free":
+            self.free_cam = list(self.pos_visuale)
+
+    def _fit_to_map(self):
+        if not self.map_bounds: return
+        min_x, min_y, max_x, max_y = self.map_bounds
+        w_u = max_x - min_x; h_u = max_y - min_y
+        if w_u <= 0 or h_u <= 0: return
+        scale_x = self.canvas_w / w_u
+        scale_y = self.canvas_h / h_u
+        self.scale = max(GPSConfig.MIN_SCALE,
+                         min(GPSConfig.MAX_SCALE, min(scale_x, scale_y) * 0.95))
+        if dpg.does_item_exist("zoom_slider"):
+            dpg.set_value("zoom_slider", self.scale)
+        self.free_cam = [(min_x + max_x) / 2, (min_y + max_y) / 2]
+
+    def _reset_view(self):
+        self.scale = GPSConfig.DEFAULT_SCALE
+        if dpg.does_item_exist("zoom_slider"):
+            dpg.set_value("zoom_slider", self.scale)
+        if self.camera_mode == "free":
+            self.free_cam = list(self.pos_visuale)
+
+    def _on_auto_checkbox(self, sender, app_data):
+        self.auto_enabled = app_data
+        if not app_data:
+            self._cancel_auto_move(silent=True)
+
+    def _toggle_auto_enabled(self):
+        self.auto_enabled = not self.auto_enabled
+        if dpg.does_item_exist("auto_checkbox"):
+            dpg.set_value("auto_checkbox", self.auto_enabled)
+        if not self.auto_enabled:
+            self._cancel_auto_move(silent=True)
+        else:
+            self.auto_status_msg = "Pronto: clicca sulla mappa"
+
+    def _cancel_auto_move(self, silent=False, stop_auto_all=True):
+        self.auto_final_target = None
+        self.auto_path = []
+        self.auto_path_index = 0
+        self.auto_is_2p_task = False
+        self._task_fratelli_pendenti = None
+        self.key_ctrl.release_all()
+        
+        if stop_auto_all:
+            self.auto_execute_all = False
+            self._current_auto_all_task_id = None
+            if dpg.does_item_exist("btn_auto_all"):
+                with dpg.theme() as th:
+                    with dpg.theme_component(dpg.mvButton):
+                        dpg.add_theme_color(dpg.mvThemeCol_Text, Colors.TEXT)
+                dpg.bind_item_theme("btn_auto_all", th)
+                dpg.configure_item("btn_auto_all", label="▶ Esegui TUTTE le Task")
+            
+        if not silent:
+            self.auto_status_msg = "Annullato"
+
+    def _cancel_all(self):
+        """Annulla sia il disegno/modifica zona sia il pathfinding."""
+        if (self.zone_draw_mode or self.zone_draw_points
+                or getattr(self, 'door_rect_start', None)
+                or self.zona_in_modifica is not None):
+            self.zone_draw_mode = False
+            self.zone_draw_type = "normal"
+            self.zone_draw_points = []
+            self.door_rect_start = None
+            self.door_rect_end = None
+            self.zone_last_pixel = None
+            self.zona_in_modifica = None
+            self.auto_status_msg = "Disegno zona annullato"
+        self._cancel_auto_move()
+        
+    def _get_task_target_coords(self, reg_task):
+        """
+        Calcola la coordinata bersaglio esatta di una task in base allo step 
+        registrato in memoria (es: se siamo a 1/2, naviga alla fase 0).
+        Ritorna (x, y, step).
+        """
+        x, y = reg_task['x'], reg_task['y']
+        step = 0
+        # Cerca lo step attuale in RAM
+        for mt in getattr(self, 'memory_tasks', []):
+            if mt.get('tipo') == reg_task.get('tipo') and mt.get('room_id') == reg_task.get('room_id'):
+                try:
+                    step = int(mt['prog'].split('/')[0])
+                except: pass
+                break
+                
+        fasi = reg_task.get('fasi', [])
+        # Se lo step è maggiore di 0 e c'è una fase mappata corrispondente
+        if step > 0 and step <= len(fasi):
+            x, y = fasi[step - 1]['x'], fasi[step - 1]['y']
+            
+        return x, y, step
+
+    def _imposta_navigazione_2p(self, reg):
+        """
+        Prepara la logica di navigazione per le task a 2 giocatori. 
+        Ritorna la coordinata (x,y) iniziale ottimale (la più vicina).
+        """
+        self.auto_is_2p_task = False
+        if reg.get('due_giocatori'):
+            loc_A = (reg['x'], reg['y'])
+            loc_B = None
+            if reg.get('fasi') and len(reg['fasi']) > 0:
+                loc_B = (reg['fasi'][0]['x'], reg['fasi'][0]['y'])
+
+            if loc_B:
+                self.auto_is_2p_task = True
+                self.auto_2p_loc_A = loc_A
+                self.auto_2p_loc_B = loc_B
+                self._2p_last_switch_time = 0.0
+
+                start_pos = (self.pos_target[0], self.pos_target[1])
+                
+                # Calcola il percorso reale (A*) per capire quale è effettivamente più vicino
+                path_A = self.pathfinder.astar(start_pos, loc_A)
+                path_B = self.pathfinder.astar(start_pos, loc_B)
+                
+                def calc_len(p):
+                    if not p: return float('inf')
+                    if len(p) < 2: return 0.0
+                    return sum(math.hypot(p[i+1][0]-p[i][0], p[i+1][1]-p[i][1]) for i in range(len(p)-1))
+                
+                dist_A = calc_len(path_A)
+                dist_B = calc_len(path_B)
+
+                if dist_A <= dist_B and dist_A != float('inf'):
+                    target = loc_A
+                    step = 0
+                elif dist_B < float('inf'):
+                    target = loc_B
+                    step = 1
+                else:
+                    # Fallback alla distanza in linea d'aria se non ancora mappato
+                    d_A = math.hypot(start_pos[0]-loc_A[0], start_pos[1]-loc_A[1])
+                    d_B = math.hypot(start_pos[0]-loc_B[0], start_pos[1]-loc_B[1])
+                    target = loc_A if d_A <= d_B else loc_B
+                    step = 0 if target == loc_A else 1
+                    
+                self.auto_2p_current_target = target
+                return target, step
+        return None, None
+
+    def _toggle_auto_all(self):
+        """Attiva o disattiva l'esecuzione automatica in loop di tutte le task."""
+        self.auto_execute_all = not self.auto_execute_all
+        if self.auto_execute_all:
+            with dpg.theme() as th:
+                with dpg.theme_component(dpg.mvButton):
+                    dpg.add_theme_color(dpg.mvThemeCol_Text, (0, 255, 100, 255))
+            dpg.bind_item_theme("btn_auto_all", th)
+            dpg.configure_item("btn_auto_all", label="⏹ Ferma Esecuzione Totale")
+            self.auto_status_msg = "Auto-All attivato: cerco task..."
+            self._auto_all_timer = 1.0 # Forza il check immediato
+        else:
+            self._cancel_auto_move()
+            self._ferma_processo_task()
+
+    def _update_auto_all(self, dt):
+        """Loop logico dell'Auto-Quest: sceglie e avvia la prossima task se libero."""
+        if not self.auto_execute_all:
+            return
+
+        # Se il bot sta viaggiando verso una task, eseguendo una task o gestendo popup: aspetta
+        if self.auto_path or self._task_process is not None or getattr(self, '_task_launch_arrivo', False):
+            return
+        if dpg.does_item_exist("task_launch_popup"):
+            return
+
+        self._auto_all_timer += dt
+        if self._auto_all_timer < 1.0: # Check throttling (1 secondo)
+            return
+        self._auto_all_timer = 0.0
+
+        if not self.memory_tasks:
+            return
+
+        enriched = self.task_mgr.get_memory_tasks_info(self.memory_tasks)
+        candidati = []
+        in_cooldown = 0
+        non_registrate = 0
+
+        for t in enriched:
+            if t['done']: continue
+            reg = t.get('reg_task')
+            if not reg:
+                non_registrate += 1
+                continue
+            rem = self.task_cooldowns.get(reg['id'], 0) - time.time()
+            if rem > 0:
+                in_cooldown += 1
+                continue
+            candidati.append(t)
+
+        if not candidati:
+            if non_registrate > 0:
+                self.auto_status_msg = f"Auto-All in attesa: {non_registrate} task NON registrate."
+            elif in_cooldown > 0:
+                self.auto_status_msg = f"Auto-All in attesa: {in_cooldown} task in cooldown..."
+            else:
+                self.auto_status_msg = "Tutte le task completate! Vittoria!"
+                self._toggle_auto_all()
+            return
+
+        # Trova la task valida PIÙ VICINA
+        cx, cy = self.pos_target
+        closest = None
+        min_dist = float('inf')
+        for c in candidati:
+            rx, ry = c['reg_task']['x'], c['reg_task']['y']
+            dist = math.hypot(cx - rx, cy - ry)
+            if dist < min_dist:
+                min_dist = dist
+                closest = c
+                
+        if closest:
+            print(f"[Auto-All] Scelta task più vicina: {closest['reg_task']['nome']} (Dist: {min_dist:.1f})")
+            self._avvia_task_selezionata(task_to_run=closest)
+
+    def _check_2p_yolo_thread(self, current_target_is_A):
+        """Esegue l'analisi YOLO asincrona per vedere se il pannello è occupato da un altro player."""
+        if getattr(self, '_2p_yolo_active', False): return
+        self._2p_yolo_active = True
+        try:
+            import mss
+            import numpy as np
+            from ultralytics import YOLO
+            import os
+            import win32gui
+
+            if not getattr(self, 'yolo_player_loaded', False):
+                model_path = getattr(GPSConfig, 'YOLO_PLAYER_MODEL', 'yolo_players.pt')
+                if os.path.exists(model_path):
+                    self.yolo_player = YOLO(model_path)
+                else:
+                    self.yolo_player = None
+                    print(f"[YOLO 2P] Modello non trovato: {model_path}")
+                self.yolo_player_loaded = True
+
+            if getattr(self, 'yolo_player', None) is None:
+                self._2p_yolo_active = False
+                return
+
+            hwnd = win32gui.FindWindow(None, "Among Us")
+            if not hwnd:
+                self._2p_yolo_active = False
+                return
+
+            rect = win32gui.GetWindowRect(hwnd)
+            crect = win32gui.GetClientRect(hwnd)
+            bw = int((rect[2] - rect[0] - crect[2]) / 2)
+            th = int(rect[3] - rect[1] - crect[3] - bw)
+            wx, wy = rect[0] + bw, rect[1] + th
+            ww, wh = crect[2], crect[3]
+
+            with mss.mss() as sct:
+                monitor = {"top": wy, "left": wx, "width": ww, "height": wh}
+                img = np.array(sct.grab(monitor))[:, :, :3]
+
+            results = self.yolo_player(img, conf=0.75, verbose=False)
+            boxes = results[0].boxes
+
+            # Cerca player che non siamo noi (il nostro player è al centro dello schermo)
+            other_players_found = False
+            cx_screen, cy_screen = ww / 2, wh / 2
+
+            for box in boxes:
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                px = (x1 + x2) / 2
+                py = (y1 + y2) / 2
+
+                # Tolleranza di 70px dal centro; se è oltre, è sicuramente un altro giocatore
+                dist_from_center = math.hypot(px - cx_screen, py - cy_screen)
+                if dist_from_center > 70:
+                    other_players_found = True
+                    break
+
+            if other_players_found:
+                new_target = self.auto_2p_loc_B if current_target_is_A else self.auto_2p_loc_A
+                
+                if new_target and new_target != self.auto_2p_current_target:
+                    self.auto_2p_current_target = new_target
+                    self._pending_2p_replan = new_target
+                    print(f"[YOLO 2P] Player rilevato al pannello! Spostamento alla seconda postazione.")
+
+        except Exception as e:
+            print(f"[YOLO 2P] Errore: {e}")
+        finally:
+            self._2p_yolo_active = False
+
+    # ================= GESTIONE ZONE =================
+    def _start_new_zone_mode(self):
+        """Entra in modalita' disegno: il prossimo click+drag crea un poligono."""
+        if self.zone_draw_mode:
+            self._cancel_all()
+            return
+        self.zone_draw_mode = True
+        self.zone_draw_type = "normal"
+        self.zone_draw_points = []
+        self.zone_last_pixel = None
+        self.zona_in_modifica = None
+        self.auto_status_msg = "Trascina col tasto sinistro per disegnare il poligono"
+
+    def _start_new_door_zone_mode(self):
+        if self.zone_draw_mode:
+            self._cancel_all()
+            return
+        self.zone_draw_mode = True
+        self.zone_draw_type = "door"
+        self.zone_draw_points = []
+        self.door_rect_start = None
+        self.door_rect_end = None
+        self.zone_last_pixel = None
+        self.zona_in_modifica = None
+        self.auto_status_msg = "Trascina col tasto sinistro per creare la Zona Porta"
+
+    def _refresh_zone_list(self):
+        items = []
+        for z in self.zone_mgr.zone:
+            gzid = z.get('game_zone_id')
+            id_str = f" GZ:{gzid}" if gzid is not None else ""
+            items.append(f"[{z['id']:02d}]{id_str} {z['nome']}")
+        if dpg.does_item_exist("zone_listbox"):
+            dpg.configure_item("zone_listbox", items=items)
+
+    def _get_selected_zone(self):
+        """Ritorna la zona selezionata nella listbox, oppure None."""
+        if not self.zone_mgr.zone:
+            return None
+        if not dpg.does_item_exist("zone_listbox"):
+            return None
+        selected = dpg.get_value("zone_listbox")
+        if not selected:
+            return None
+        # Formato "[NN] nome" -> estraggo l'ID
+        try:
+            id_str = selected.split(']')[0].lstrip('[').strip()
+            id_num = int(id_str)
+            for z in self.zone_mgr.zone:
+                if z['id'] == id_num:
+                    return z
+        except (ValueError, IndexError):
+            pass
+        return None
+
+    def _refresh_door_zone_list(self):
+        items = []
+        for z in self.door_zone_mgr.zone:
+            items.append(f"[{z['id']:02d}] {z['nome']}")
+        if dpg.does_item_exist("door_zone_listbox"):
+            dpg.configure_item("door_zone_listbox", items=items)
+
+    def _get_selected_door_zone(self):
+        if not self.door_zone_mgr.zone: return None
+        if not dpg.does_item_exist("door_zone_listbox"): return None
+        sel = dpg.get_value("door_zone_listbox")
+        if not sel: return None
+        try:
+            id_num = int(sel.split(']')[0].lstrip('[').strip())
+            return next((z for z in self.door_zone_mgr.zone if z['id'] == id_num), None)
+        except: return None
+
+    def _elimina_door_zone(self):
+        z = self._get_selected_door_zone()
+        if z is None: return
+        def on_confirm(yes):
+            if yes:
+                self.door_zone_mgr.rimuovi(z['id'])
+                self._refresh_door_zone_list()
+        self._show_confirm(f"Eliminare Zona Porta '{z['nome']}'?", on_confirm)
+
+    def _vai_a_door_zona(self):
+        z = self._get_selected_door_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona porta dalla lista"
+            return
+        cx, cy = ZoneManager.centroide(z)
+        self.camera_mode = "free"
+        self.free_cam = [cx, cy]
+        x1, y1, x2, y2 = ZoneManager.bbox(z)
+        w = x2 - x1
+        h = y2 - y1
+        if w > 0 and h > 0:
+            scale_x = self.canvas_w / (w * 1.5)
+            scale_y = self.canvas_h / (h * 1.5)
+            nuova = min(scale_x, scale_y)
+            self.scale = max(GPSConfig.MIN_SCALE,
+                             min(GPSConfig.MAX_SCALE, nuova))
+            if dpg.does_item_exist("zoom_slider"):
+                dpg.set_value("zoom_slider", self.scale)
+        self.auto_status_msg = f"Centrato su '{z['nome']}'"
+
+    def _modifica_forma_door_zona(self):
+        z = self._get_selected_door_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona porta dalla lista"
+            return
+        self.zona_in_modifica = z['id']
+        self.zone_draw_mode = True
+        self.zone_draw_type = "door"
+        self.zone_draw_points = []
+        self.door_rect_start = None
+        self.door_rect_end = None
+        self.zone_last_pixel = None
+        self.auto_status_msg = f"Ridisegna '{z['nome']}' trascinando un rettangolo"
+
+    def _cambia_colore_door_zona(self):
+        z = self._get_selected_door_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona porta dalla lista"
+            return
+        tag = "color_picker_popup_door"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+        def pick(col_hex):
+            self.door_zone_mgr.cambia_colore(z['id'], col_hex)
+            self._refresh_door_zone_list()
+            self.auto_status_msg = f"Colore di '{z['nome']}' aggiornato"
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        cols_per_row = 4
+        rows = [GPSConfig.COLORI_ZONE[i:i + cols_per_row]
+                for i in range(0, len(GPSConfig.COLORI_ZONE), cols_per_row)]
+        n_rows = len(rows)
+        win_h = 70 + n_rows * 42
+
+        with dpg.window(label=f"Colore: {z['nome']}", tag=tag, modal=True,
+                        no_resize=True, no_collapse=True,
+                        width=300, height=win_h,
+                        pos=(max(0, vp_w // 2 - 150),
+                             max(0, vp_h // 2 - win_h // 2))):
+            dpg.add_text("Scegli un colore:")
+            dpg.add_spacer(height=4)
+            for row in rows:
+                with dpg.group(horizontal=True):
+                    for col_hex in row:
+                        rgba = _hex_to_rgba(col_hex)
+                        btn_tag = f"{tag}_btn_{col_hex}"
+                        dpg.add_button(label=" ", tag=btn_tag,
+                                       width=60, height=32,
+                                       callback=lambda s, a, u=col_hex: pick(u))
+                        with dpg.theme() as th:
+                            with dpg.theme_component(dpg.mvButton):
+                                dpg.add_theme_color(dpg.mvThemeCol_Button, rgba)
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,
+                                                    (min(255, rgba[0] + 30),
+                                                     min(255, rgba[1] + 30),
+                                                     min(255, rgba[2] + 30), 255))
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, rgba)
+                        dpg.bind_item_theme(btn_tag, th)
+            dpg.add_spacer(height=6)
+            dpg.add_button(label="Annulla", width=-1,
+                           callback=lambda *a: dpg.delete_item(tag) if dpg.does_item_exist(tag) else None)
+
+    def _rinomina_door_zona(self):
+        z = self._get_selected_door_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona porta dalla lista"
+            return
+        def on_name(nuovo):
+            if nuovo:
+                self.door_zone_mgr.rinomina(z['id'], nuovo)
+                self._refresh_door_zone_list()
+                self.auto_status_msg = f"Zona porta rinominata in '{nuovo}'"
+        self._show_text_input("Rinomina Zona Porta", z['nome'], on_name)
+
+    def _vai_a_zona(self):
+        """Centra la camera sulla zona selezionata e adatta lo zoom."""
+        z = self._get_selected_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona dalla lista"
+            return
+        cx, cy = ZoneManager.centroide(z)
+        self.camera_mode = "free"
+        self.free_cam = [cx, cy]
+        # Zoom per inquadrare il poligono con margine
+        x1, y1, x2, y2 = ZoneManager.bbox(z)
+        w = x2 - x1
+        h = y2 - y1
+        if w > 0 and h > 0:
+            scale_x = self.canvas_w / (w * 1.5)
+            scale_y = self.canvas_h / (h * 1.5)
+            nuova = min(scale_x, scale_y)
+            self.scale = max(GPSConfig.MIN_SCALE,
+                             min(GPSConfig.MAX_SCALE, nuova))
+            if dpg.does_item_exist("zoom_slider"):
+                dpg.set_value("zoom_slider", self.scale)
+        self.auto_status_msg = f"Centrato su '{z['nome']}'"
+
+    def _naviga_a_zona(self):
+        """Usa A* per muovere il player verso il miglior punto calpestabile della zona."""
+        z = self._get_selected_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona dalla lista"
+            return
+        
+        if not self.auto_enabled:
+            self.auto_enabled = True
+            if dpg.does_item_exist("auto_checkbox"):
+                dpg.set_value("auto_checkbox", True)
+
+        punti_poligono = z['punti']
+        cx_geom, cy_geom = ZoneManager.centroide(z)
+        
+        # Filtra tutti i punti calpestabili che cadono dentro la zona
+        walkable_in_zone = []
+        for cell_key in self.pathfinder.walkable:
+            gx, gy = self.pathfinder._coord(cell_key)
+            if self._is_point_in_polygon(gx, gy, punti_poligono):
+                walkable_in_zone.append((gx, gy))
+
+        if walkable_in_zone:
+            # Scegliamo il punto calpestabile più vicino al centro della zona
+            target = min(walkable_in_zone, key=lambda p: math.hypot(p[0]-cx_geom, p[1]-cy_geom))
+            self._plan_path(target)
+            self.auto_status_msg = f"Navigazione interna a '{z['nome']}'"
+        else:
+            # Se la zona non è stata ancora esplorata/mappata, fallback al centroide
+            # ma il pathfinder cercherà comunque la cella calpestabile esterna più vicina.
+            self._plan_path((cx_geom, cy_geom))
+            self.auto_status_msg = f"Zona '{z['nome']}' non mappata: vado al confine"
+
+    def _modifica_forma_zona(self):
+        """Entra in modalita' ridisegna-forma per la zona selezionata."""
+        z = self._get_selected_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona dalla lista"
+            return
+        self.zona_in_modifica = z['id']
+        self.zone_draw_mode = True
+        self.zone_draw_points = []
+        self.zone_last_pixel = None
+        self.auto_status_msg = f"Ridisegna '{z['nome']}' col tasto sinistro"
+
+    def _cambia_colore_zona(self):
+        """Apre un popup con la palette per scegliere il nuovo colore."""
+        z = self._get_selected_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona dalla lista"
+            return
+        self._show_color_picker(z)
+    
+    def _forza_adattamento_zona(self):
+        """Prende la zona selezionata e la modella sulla mappa attuale."""
+        z = self._get_selected_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona"
+            return
+        
+        nuovi_punti = self._adatta_punti_alla_mappa(z['punti'])
+        self.zone_mgr.aggiorna_forma(z['id'], nuovi_punti)
+        self.auto_status_msg = f"Forma di '{z['nome']}' ottimizzata"
+
+    def _rinomina_zona(self):
+        z = self._get_selected_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona dalla lista"
+            return
+        def on_name(nuovo):
+            if nuovo:
+                self.zone_mgr.rinomina(z['id'], nuovo)
+                self._refresh_zone_list()
+                self.auto_status_msg = f"Zona rinominata in '{nuovo}'"
+        self._show_text_input("Rinomina Zona", z['nome'], on_name)
+
+    def _elimina_zona(self):
+        z = self._get_selected_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona dalla lista"
+            return
+        nome = z['nome']
+        id_zona = z['id']
+        def on_confirm(yes):
+            if yes:
+                self.zone_mgr.rimuovi(id_zona)
+                self._refresh_zone_list()
+                self.auto_status_msg = f"Zona '{nome}' eliminata"
+        self._show_confirm(f"Eliminare la zona '{nome}' ?", on_confirm)
+
+    # ================= GESTIONE TASK =================
+
