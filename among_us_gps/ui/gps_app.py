@@ -3693,3 +3693,1615 @@ class GPSVisualizerPro:
                                                 if dpg.does_item_exist(tag) else None)
 
     # ================= LOOP AUTO-MOVE =================
+    def _update_auto_move(self, dt):
+        # --- Aggiornamento ostacoli dinamici (Porte) ---
+        if hasattr(self, 'pathfinder'):
+            self.pathfinder.dynamic_obstacles.clear()
+            current_time = time.time()
+            for d in getattr(self, 'detected_doors', []):
+                if current_time - d['time'] < 1.0:
+                    door_key = self.pathfinder._key(d['x'], d['y'])
+                    r = int(1.2 / self.pathfinder.step) # Raggio blocco porta
+                    for dx in range(-r, r+1):
+                        for dy in range(-r, r+1):
+                            if math.hypot(dx, dy) <= r:
+                                self.pathfinder.dynamic_obstacles.add((door_key[0]+dx, door_key[1]+dy))
+
+        if (not self.auto_enabled) or (not self.auto_path):
+            if self.key_ctrl.pressed:
+                self.key_ctrl.release_all()
+            
+            # Replan periodico se in attesa (es. percorso bloccato)
+            if self.auto_enabled and getattr(self, 'auto_final_target', None):
+                self.auto_stuck_timer += dt
+                if self.auto_stuck_timer > 1.0:
+                    self._plan_path(self.auto_final_target)
+                    self.auto_stuck_timer = 0.0
+            return
+
+        # --- Controllo Finestra in Primo Piano ---
+        if _WIN_OK:
+            hwnd_au = win32gui.FindWindow(None, "Among Us")
+            if hwnd_au and win32gui.GetForegroundWindow() != hwnd_au:
+                if self.key_ctrl.pressed:
+                    self.key_ctrl.release_all()
+                self.auto_status_msg = "In pausa (Focus su altra finestra)"
+                return
+
+        cx, cy = self.pos_target
+        
+        # Replan if current path hits a door
+        if self.auto_path:
+            path_blocked = False
+            start_point = (cx, cy)
+            for i in range(self.auto_path_index, len(self.auto_path)):
+                wp = self.auto_path[i]
+                if self.pathfinder.line_has_dynamic_obstacle(start_point, wp):
+                    path_blocked = True
+                    break
+                start_point = wp
+            
+            if path_blocked:
+                self.auto_status_msg = "Percorso bloccato da porta, ricalcolo..."
+                self._plan_path(self.auto_final_target)
+                if not self.auto_path:
+                    if getattr(self, 'auto_execute_all', False) and getattr(self, '_current_auto_all_task_id', None):
+                        tid = self._current_auto_all_task_id
+                        self.task_cooldowns[tid] = time.time() + 15.0
+                        self.auto_status_msg = "Task isolata da porte chiuse, cambio task..."
+                        self._cancel_auto_move(silent=True, stop_auto_all=False)
+                        if dpg.does_item_exist("task_launch_popup"):
+                            dpg.delete_item("task_launch_popup")
+                    return
+
+        # --- Controllo Radar per task 2P ---
+        if getattr(self, 'auto_is_2p_task', False):
+            target_x, target_y = self.auto_2p_current_target
+            dist_to_target = math.hypot(cx - target_x, cy - target_y)
+            
+            # Controlliamo solo se siamo nel raggio visivo (circa 5 mattonelle) e switch in cooldown
+            if dist_to_target < 5.0 and (time.time() - getattr(self, '_2p_last_switch_time', 0) > 3.0):
+                occupato = False
+                current_time = time.time()
+                for p in self.detected_players:
+                    # Ignora cadaveri
+                    if p.get('is_dead', False): 
+                        continue
+                    # Considera SOLO avvistamenti in tempo reale (max 0.5 secondi fa)
+                    if current_time - p['time'] > 0.5: 
+                        continue
+                    # Se un giocatore vivo è a meno di 1.2 unità dalla postazione della task
+                    if math.hypot(p['x'] - target_x, p['y'] - target_y) < 1.2:
+                        occupato = True
+                        break
+                
+                if occupato:
+                    pending = getattr(self, 'auto_2p_pending_locs', [])
+                    if len(pending) > 1:
+                        for step, loc in pending:
+                            if loc != self.auto_2p_current_target:
+                                self.auto_2p_current_target = loc
+                                self.auto_2p_current_step = step
+                                self._2p_last_switch_time = time.time()
+                                self._plan_path(loc)
+                                self.auto_status_msg = f"Player al pannello! Cambio a tappa {step}."
+                                return
+
+        # --- Controllo Visuale Dinamico per i Fratelli ---
+        pendenti = getattr(self, '_task_fratelli_pendenti', None)
+        if pendenti and len(pendenti) > 1:
+            lock_target = self._cerca_glow_fratelli(pendenti)
+            if lock_target:
+                self.auto_status_msg = "Task individuata visivamente! Lock acquisito."
+                print(f"[Visual Lock] Alone giallo rilevato a {lock_target}! Aggiorno il path.")
+                self._current_nav_target = lock_target
+                self._task_fratelli_pendenti = None # Lock acquisito
+                self.auto_final_target = lock_target
+                self._plan_path(lock_target)
+                return
+
+        # Waypoint corrente
+        wx, wy = self.auto_path[self.auto_path_index]
+        dx = wx - cx
+        dy = wy - cy
+        dist = math.hypot(dx, dy)
+
+        is_last = (self.auto_path_index == len(self.auto_path) - 1)
+        advance_th = (GPSConfig.AUTO_ARRIVAL_THRESHOLD
+                      if is_last else GPSConfig.WAYPOINT_ADVANCE)
+
+        # ================= 1. ANTICIPAZIONE DELLA CURVA (Lookahead Umano) =================
+        # Se non è l'ultimo waypoint e ci stiamo avvicinando all'angolo
+        if not is_last and dist < 0.75:
+            next_wx, next_wy = self.auto_path[self.auto_path_index + 1]
+            if self.pathfinder.line_walkable_coords((cx, cy), (next_wx, next_wy)):
+                self.auto_path_index += 1
+                return  # Salta al prossimo ciclo per ricalcolare la curva fluida
+
+        # Avanzamento waypoint standard
+        if dist < advance_th:
+            if is_last:
+                self.auto_status_msg = "Arrivato ✓"
+                self._cancel_auto_move(silent=True, stop_auto_all=False)
+                # Esegui callback di arrivo (es. avvio subprocess task)
+                if self._on_arrival_callback is not None:
+                    cb = self._on_arrival_callback
+                    self._on_arrival_callback = None
+                    cb()
+                return
+            self.auto_path_index += 1
+            self.auto_stuck_pos = (cx, cy)
+            self.auto_stuck_timer = 0.0
+            return
+
+        # Stuck detection
+        if self.auto_stuck_pos is None:
+            self.auto_stuck_pos = (cx, cy)
+        moved = math.hypot(cx - self.auto_stuck_pos[0],
+                           cy - self.auto_stuck_pos[1])
+        if moved > GPSConfig.AUTO_STUCK_DELTA:
+            self.auto_stuck_pos = (cx, cy)
+            self.auto_stuck_timer = 0.0
+        else:
+            self.auto_stuck_timer += dt
+            if self.auto_stuck_timer > GPSConfig.AUTO_STUCK_TIME:
+                if GPSConfig.AUTO_REPLAN_ON_STUCK and self.auto_final_target:
+                    self.auto_status_msg = "Bloccato — replan"
+                    self.key_ctrl.release_all()
+                    self._plan_path(self.auto_final_target)
+                    return
+                self.auto_status_msg = "Bloccato — stop"
+                self._cancel_auto_move(silent=True)
+                return
+
+        move_x = 0
+        move_y = 0
+
+        # ================= 2. MOVIMENTO FLUIDO (PWM Direzionale) =================
+        # Per evitare l'effetto "onde" (zig-zag) sulle diagonali, premiamo 
+        # sempre l'asse principale al 100% e "tappiamo" l'asse secondario in 
+        # proporzione all'angolo (Pulse Width Modulation).
+        
+        if dist > 0:
+            vx = dx / dist
+            vy = dy / dist
+            
+            # Normalizziamo affinché l'asse maggiore sia esattamente 1.0
+            max_v = max(abs(vx), abs(vy))
+            if max_v > 0:
+                vx /= max_v
+                vy /= max_v
+                
+            freq = 25.0  # Frequenza del tap (25 Hz = micro-correzioni fluide)
+            phase = (time.time() * freq) % 1.0
+            
+            stop_th = 0.03  # Tolleranza finale per fermarsi perfettamente
+            
+            if abs(dx) > stop_th:
+                if abs(vx) >= 1.0 or abs(vx) > phase:
+                    move_x = 1 if dx > 0 else -1
+                    
+            if abs(dy) > stop_th:
+                if abs(vy) >= 1.0 or abs(vy) > phase:
+                    move_y = 1 if dy > 0 else -1
+
+        # Wiggle anti-incastro
+        if self.auto_stuck_timer > 0.3:
+            if int(self.auto_stuck_timer * 15) % 2 == 0:
+                # Forza movimento trasversale casuale per sbloccarsi dall'angolo
+                if move_x != 0 and move_y == 0:
+                    move_y = 1 if random.random() < 0.5 else -1
+                elif move_y != 0 and move_x == 0:
+                    move_x = 1 if random.random() < 0.5 else -1
+                else:
+                    move_x = -move_x if random.random() < 0.5 else move_x
+                    move_y = -move_y if random.random() < 0.5 else move_y
+
+        # ================= 3. SCIVOLAMENTO SUI MURI =================
+        def is_safe(offset_x, offset_y):
+            test_x = cx + offset_x
+            test_y = cy + offset_y
+            key = self.pathfinder._key(test_x, test_y)
+            # Aggiungiamo spessore per non tagliare troppo i muri (hitbox)
+            ox_range = (0, 1) if offset_x > 0 else ((0, -1) if offset_x < 0 else (0,))
+            oy_range = (0, 1) if offset_y > 0 else ((0, -1) if offset_y < 0 else (0,))
+            for ox in ox_range:
+                for oy in oy_range:
+                    if (key[0]+ox, key[1]+oy) not in self.pathfinder.walkable:
+                        return False
+            return True
+
+        # Se la mossa calcolata ci manda a sbattere, proviamo a muoverci solo su un asse (sliding)
+        if move_x != 0 or move_y != 0:
+            step_check = 0.25 # Aumentato da 0.15 per rilevare i muri prima
+            if not is_safe(move_x * step_check, move_y * step_check):
+                if move_x != 0 and is_safe(move_x * step_check, 0):
+                    move_y = 0
+                elif move_y != 0 and is_safe(0, move_y * step_check):
+                    move_x = 0
+                else:
+                    self.auto_stuck_timer += dt * 1.5 
+            
+        # Assegna i tasti finali
+        want = set()
+        if move_x == 1: want.add('D')
+        elif move_x == -1: want.add('A')
+        if move_y == 1: want.add('W')
+        elif move_y == -1: want.add('S')
+
+        current = set(self.key_ctrl.pressed)
+        for k in want - current:  self.key_ctrl.press(k)
+        for k in current - want:  self.key_ctrl.release(k)
+
+        total_wp = len(self.auto_path)
+        self.auto_status_msg = (f"wp {self.auto_path_index+1}/{total_wp}  "
+                                f"d={dist:.2f}")
+
+    # ================= VARIE =================
+    def _clear_trail(self):
+        self.trail = []
+
+    def _reset_distance(self):
+        self.total_distance = 0.0
+        self.last_pos_for_dist = None
+        self.session_start = time.time()
+
+    def _ricarica_mappa(self):
+        self.visitati_coords = []
+        self.carica_mappa()
+        self._calcola_bounds_mappa()
+        self.pathfinder.rebuild(self.visitati_coords)
+        dpg.delete_item("map_node", children_only=True)
+        dpg.push_container_stack("map_node")
+        step_u = GPSConfig.CELL_STEP
+        for kx, ky in self.visitati_coords:
+            dpg.draw_rectangle((kx, -ky), (kx + step_u, -ky + step_u),
+                               color=Colors.VISITED, fill=Colors.VISITED)
+        dpg.pop_container_stack()
+        dpg.set_value("stat_visited", f"{len(self.visitati_coords)}")
+        dpg.set_value("stat_walkable", f"{len(self.pathfinder.walkable)}")
+
+    def _esporta_trail(self):
+        try:
+            with open("trail_export.json", "w") as f:
+                json.dump({"trail": [[p[0], p[1]] for p in self.trail]}, f)
+            print("Trail esportato in trail_export.json")
+        except Exception as e:
+            print(f"Errore export: {e}")
+
+    def _esporta_tutto(self):
+        """
+        Esporta in un'unica cartella con timestamp:
+          - mappa_skeld.json
+          - task_registrate.json
+          - zone_skeld.json
+          - mappa_preview.png  (rendering vettoriale dall'alto)
+          - export.zip         (tutti i file sopra)
+        """
+        import zipfile, shutil
+        from datetime import datetime
+
+        # --- 1. Cartella di destinazione con timestamp ---
+        ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir   = f"export_{ts}"
+        os.makedirs(out_dir, exist_ok=True)
+
+        # --- 2. Copia JSON ---
+        copiati = []
+        for src in (GPSConfig.MAP_FILE, GPSConfig.TASK_FILE,
+                    GPSConfig.ZONE_FILE, GPSConfig.POI_FILE):
+            if os.path.exists(src):
+                shutil.copy2(src, os.path.join(out_dir, os.path.basename(src)))
+                copiati.append(os.path.basename(src))
+
+        # --- 3. Genera PNG mappa in 5 risoluzioni ---
+        RISOLUZIONI = [512, 1024, 2048, 4096, 8192]
+        ok_png = False
+        for res in RISOLUZIONI:
+            png_nome = f"mappa_{res}px.png"
+            png_path = os.path.join(out_dir, png_nome)
+            ok = self._genera_png_mappa(png_path, img_size=res)
+            if ok:
+                ok_png = True
+        # --- 4. Crea ZIP ---
+        zip_path = f"export_{ts}.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, _, files in os.walk(out_dir):
+                for fname in files:
+                    fpath = os.path.join(root, fname)
+                    zf.write(fpath, arcname=fname)
+
+        # --- 5. Feedback ---
+        png_msg = "+ 5x PNG (512→8192px)" if ok_png else "(Pillow non installato: PNG saltati)"
+        self.auto_status_msg = f"Esportato → {zip_path}  ({', '.join(copiati)} {png_msg})"
+        print(f"[EXPORT] {zip_path}  |  cartella: {out_dir}")
+
+    def _genera_png_mappa(self, output_path, img_size=1200):
+        """
+        Disegna la mappa su un'immagine PIL e la salva come PNG.
+        Colori:
+          - sfondo scuro
+          - celle visitate = grigio scuro
+          - zone = colore zona semi-trasparente
+          - task normale = arancione  |  vitale = rosso  |  fatta = (non disponibile offline)
+          - fasi task = ciano, collegate da linea
+          - trail = giallo (se presente)
+        """
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except ImportError:
+            print("[EXPORT] Pillow non installato. Installa con: pip install Pillow")
+            return False
+
+        import math as _m
+
+        # ---- bounds ----
+        if not self.visitati_coords:
+            return False
+        xs = [p[0] for p in self.visitati_coords]
+        ys = [p[1] for p in self.visitati_coords]
+        pad = 2.0
+        min_x, max_x = min(xs) - pad, max(xs) + pad
+        min_y, max_y = min(ys) - pad, max(ys) + pad
+        span_x = max_x - min_x
+        span_y = max_y - min_y
+        scale  = img_size / max(span_x, span_y)
+
+        img_w = int(span_x * scale) + 1
+        img_h = int(span_y * scale) + 1
+
+        def to_px(gx, gy):
+            """Game coords → pixel (Y invertita: gioco ha Y verso l'alto)."""
+            px = int((gx - min_x) * scale)
+            py = int((max_y - gy) * scale)   # flip Y
+            return (px, py)
+
+        # ---- immagine base ----
+        img  = Image.new("RGB", (img_w, img_h), color=(12, 12, 15))
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        # ---- celle visitate ----
+        cell_px = max(2, int(GPSConfig.CELL_STEP * scale))
+        for gx, gy in self.visitati_coords:
+            px, py = to_px(gx, gy)
+            draw.rectangle([px, py - cell_px, px + cell_px, py], fill=(50, 50, 58))
+
+        # ---- zone (poligoni semi-trasparenti) ----
+        for zona in self.zone_mgr.zone:
+            punti = zona.get('punti', [])
+            if len(punti) < 3:
+                continue
+            hex_col = zona.get('colore', '#3498DB')
+            h = hex_col.lstrip('#')
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+            poly_px = [to_px(p[0], p[1]) for p in punti]
+            draw.polygon(poly_px, fill=(r, g, b, 45), outline=(r, g, b, 180))
+            # Nome zona al centroide
+            cx = sum(p[0] for p in punti) / len(punti)
+            cy = sum(p[1] for p in punti) / len(punti)
+            tx, ty = to_px(cx, cy)
+            draw.text((tx, ty), zona['nome'], fill=(r, g, b, 220))
+
+        # ---- trail ----
+        if len(self.trail) >= 2:
+            trail_px = [to_px(p[0], p[1]) for p in self.trail]
+            for i in range(len(trail_px) - 1):
+                alpha = int(60 + 160 * (i / max(1, len(trail_px) - 1)))
+                draw.line([trail_px[i], trail_px[i + 1]],
+                          fill=(255, 200, 0, alpha), width=2)
+
+        # ---- task ----
+        R_task = max(5, int(8 * scale / 60))   # raggio proporzionale allo zoom
+        for t in self.task_mgr.task_list:
+            is_vitale = bool(t.get('vitale', False))
+            is_due_p  = bool(t.get('due_giocatori', False))
+
+            col = (255, 40, 40) if is_vitale else (255, 140, 0)
+
+            mx, my = to_px(t['x'], t['y'])
+
+            # Glow esterno per task vitali
+            if is_vitale:
+                draw.ellipse([mx - R_task - 5, my - R_task - 5,
+                              mx + R_task + 5, my + R_task + 5],
+                             fill=(255, 40, 40, 60), outline=None)
+
+            draw.ellipse([mx - R_task - 3, my - R_task - 3,
+                          mx + R_task + 3, my + R_task + 3],
+                         fill=(*col, 50), outline=(*col, 200), width=2)
+            draw.ellipse([mx - R_task, my - R_task,
+                          mx + R_task, my + R_task],
+                         fill=(*col, 220))
+
+            # Etichetta task
+            tag_str  = ("[!] " if is_vitale else "") + ("[2P] " if is_due_p else "")
+            label    = f"{tag_str}{t['nome']}"
+            draw.text((mx - len(label) * 3, my - R_task - 14), label,
+                      fill=(255, 255, 255, 220))
+
+            # Fasi: linea + cerchio ciano numerato
+            fasi = t.get('fasi', [])
+            prev_px = (mx, my)
+            for i, fase in enumerate(fasi, start=1):
+                fsx, fsy = to_px(fase['x'], fase['y'])
+                # linea di collegamento con freccia a metà
+                draw.line([prev_px, (fsx, fsy)], fill=(*col, 160), width=2)
+                # freccia a metà
+                hx = (prev_px[0] + fsx) // 2
+                hy = (prev_px[1] + fsy) // 2
+                ang = _m.atan2(fsy - prev_px[1], fsx - prev_px[0])
+                al  = 8
+                draw.line([(hx, hy),
+                            (int(hx - al * _m.cos(ang - 0.4)),
+                             int(hy - al * _m.sin(ang - 0.4)))],
+                          fill=(*col, 200), width=2)
+                draw.line([(hx, hy),
+                            (int(hx - al * _m.cos(ang + 0.4)),
+                             int(hy - al * _m.sin(ang + 0.4)))],
+                          fill=(*col, 200), width=2)
+                # cerchio fase
+                draw.ellipse([fsx - R_task, fsy - R_task,
+                               fsx + R_task, fsy + R_task],
+                             fill=(100, 200, 255, 220),
+                             outline=(*col, 180), width=2)
+                draw.text((fsx - 4, fsy - 7), str(i), fill=(10, 10, 10, 255))
+                draw.text((fsx - len(fase['nome']) * 3, fsy - R_task - 14),
+                          fase['nome'], fill=(200, 230, 255, 210))
+                prev_px = (fsx, fsy)
+
+        # ---- punti di interesse ----
+        COL_POI = (80, 200, 255)
+        for p in self.poi_mgr.poi_list:
+            ppx, ppy = to_px(p['x'], p['y'])
+            r_poi = max(6, int(10 * scale / 60))
+            draw.ellipse([ppx - r_poi - 3, ppy - r_poi - 3,
+                          ppx + r_poi + 3, ppy + r_poi + 3],
+                         fill=(*COL_POI, 40), outline=(*COL_POI, 200), width=2)
+            draw.ellipse([ppx - r_poi, ppy - r_poi,
+                          ppx + r_poi, ppy + r_poi],
+                         fill=(*COL_POI, 200))
+            draw.text((ppx - 4, ppy - 7), "★", fill=(15, 15, 15, 255))
+            zona_sfx  = f"  [{p['zone_nome']}]" if p.get('zone_nome') else ""
+            poi_label = f"{p['nome']}{zona_sfx}"
+            draw.text((ppx - len(poi_label) * 3, ppy - r_poi - 14),
+                      poi_label, fill=(*COL_POI, 230))
+
+        # ---- giocatore (posizione attuale) ----
+        if self.pos_target != [0.0, 0.0]:
+            ppx, ppy = to_px(self.pos_target[0], self.pos_target[1])
+            draw.ellipse([ppx - 10, ppy - 10, ppx + 10, ppy + 10],
+                         fill=(0, 255, 100, 60))
+            draw.ellipse([ppx - 6, ppy - 6, ppx + 6, ppy + 6],
+                         fill=(0, 255, 100, 230))
+            draw.text((ppx + 10, ppy - 8), "YOU", fill=(0, 255, 100, 255))
+
+        # ---- legenda ----
+        lx, ly = 10, img_h - 90
+        draw.rectangle([lx - 4, ly - 4, lx + 220, ly + 82],
+                       fill=(20, 20, 25, 200))
+        items_leg = [
+            ((255, 140,  0), "Task da fare"),
+            ((255,  40, 40), "[!] Task vitale"),
+            ((100, 200, 255), "Fase secondaria"),
+            ((0,  255, 100), "Posizione giocatore"),
+        ]
+        for i, (col_l, txt_l) in enumerate(items_leg):
+            draw.ellipse([lx, ly + i*18, lx+10, ly + i*18 + 10], fill=col_l)
+            draw.text((lx + 16, ly + i*18 - 1), txt_l, fill=(220, 220, 220))
+
+        img.save(output_path, "PNG")
+        return True
+
+
+    def _show_help(self):
+        if dpg.does_item_exist("help_win"):
+            dpg.show_item("help_win"); return
+        with dpg.window(label="Informazioni", tag="help_win",
+                        width=520, height=470, pos=(180, 130)):
+            dpg.add_text("Among Us — Among Us AI Bot", color=Colors.ACCENT)
+            dpg.add_separator()
+            dpg.add_text("Mouse:")
+            dpg.add_text("  Sinistro   = destinazione con pathfinding A*",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("  Destro     = annulla destinazione",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("  Rotella (drag) = sposta la mappa", color=Colors.TEXT_DIM)
+            dpg.add_text("  Rotella (scroll) = zoom", color=Colors.TEXT_DIM)
+            dpg.add_separator()
+            dpg.add_text("Tastiera:")
+            dpg.add_text("  F / R / O = telecamera", color=Colors.TEXT_DIM)
+            dpg.add_text("  G / T / C / H / P = toggle layers",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("  M = abilita / disabilita auto-move",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("  F4 / FINE (END) = ferma esecuzione task",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("  ESC = annulla", color=Colors.TEXT_DIM)
+            dpg.add_separator()
+            dpg.add_text("Pathfinding:", color=Colors.TARGET)
+            dpg.add_text("A* lavora sulle celle già visitate del mapper.",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("Più la mappa è completa, più il percorso è ottimale.",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("Il path viene semplificato con 'string-pulling'.",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("Se il player resta fermo >0.8s, si fa replan.",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("Se la mappa ha buchi, dilate +1 cella li tappa.",
+                         color=Colors.TEXT_DIM)
+
+    # ================= FRAME =================
+    def _update_trail_and_distance(self):
+        now = time.time()
+        if now - self.last_trail_time >= GPSConfig.TRAIL_INTERVAL:
+            self.trail.append((self.pos_target[0], self.pos_target[1]))
+            if len(self.trail) > GPSConfig.TRAIL_MAX:
+                self.trail.pop(0)
+            self.last_trail_time = now
+        if self.last_pos_for_dist is not None:
+            dx = self.pos_target[0] - self.last_pos_for_dist[0]
+            dy = self.pos_target[1] - self.last_pos_for_dist[1]
+            d = math.hypot(dx, dy)
+            if 0.0005 < d < 5.0:
+                self.total_distance += d
+        self.last_pos_for_dist = list(self.pos_target)
+
+    def _controlla_task_attiva(self, task_x, task_y):
+        """
+        Controlla a schermo se c'è il pulsante USE acceso o l'alone giallo
+        sulla task a coordinate di gioco (task_x, task_y).
+        Ritorna True se la task sembra attiva qui, False altrimenti.
+        """
+        if not _WIN_OK:
+            return True
+            
+        try:
+            import mss
+            import numpy as np
+        except ImportError:
+            return True
+
+        hwnd = win32gui.FindWindow(None, "Among Us")
+        if not hwnd:
+            return True 
+
+        rect = get_client_rect(hwnd)
+        if not rect:
+            return True
+        cx, cy, cw, ch = rect
+
+        with mss.mss() as sct:
+            monitor = {"top": cy, "left": cx, "width": cw, "height": ch}
+            try:
+                img = np.array(sct.grab(monitor))[:, :, :3] # BGR
+            except Exception:
+                return True
+
+        # 1. Controlla il pulsante USE in basso a destra (16:9 / 16:10)
+        use_roi_x1 = int(cw * 0.82)
+        use_roi_x2 = int(cw * 0.98)
+        use_roi_y1 = int(ch * 0.80)
+        use_roi_y2 = int(ch * 0.96)
+        use_region = img[use_roi_y1:use_roi_y2, use_roi_x1:use_roi_x2]
+        
+        use_active = False
+        if use_region.size > 0:
+            # Cerca densità di pixel molto luminosi (testo bianco o colori accesi)
+            bright_pixels = np.sum(np.all(use_region > 220, axis=2))
+            if bright_pixels > 100:
+                use_active = True
+                
+        # 2. Controlla alone giallo sulla task
+        cam_x, cam_y = self.pos_target
+        cam_h = getattr(self, 'yolo_camera_height', 6.0)
+        ppu = ch / cam_h
+        
+        dx = task_x - cam_x
+        dy = task_y - (cam_y + 0.36) # Offset altezza camera
+        
+        screen_x = int(cw / 2 + dx * ppu)
+        screen_y = int(ch / 2 - dy * ppu)
+        
+        glow_active = False
+        if 0 <= screen_x < cw and 0 <= screen_y < ch:
+            r_sz = int(ppu * 0.6) 
+            y1 = max(0, screen_y - r_sz)
+            y2 = min(ch, screen_y + r_sz)
+            x1 = max(0, screen_x - r_sz)
+            x2 = min(cw, screen_x + r_sz)
+            
+            target_region = img[y1:y2, x1:x2]
+            if target_region.size > 0:
+                # Giallo in BGR: B < 150, G > 200, R > 200
+                yellow_pixels = np.sum((target_region[:,:,0] < 150) & (target_region[:,:,1] > 200) & (target_region[:,:,2] > 200))
+                if yellow_pixels > 20:
+                    glow_active = True
+                    
+        return use_active or glow_active
+
+    def _cerca_glow_fratelli(self, lista_punti):
+        """Scansiona lo schermo per cercare l'alone giallo su una lista di coordinate di gioco."""
+        if not _WIN_OK: return None
+        try:
+            import mss
+            import numpy as np
+        except ImportError:
+            return None
+
+        hwnd = win32gui.FindWindow(None, "Among Us")
+        if not hwnd: return None
+        rect = get_client_rect(hwnd)
+        if not rect: return None
+        cx_w, cy_w, cw, ch = rect
+
+        with mss.mss() as sct:
+            monitor = {"top": cy_w, "left": cx_w, "width": cw, "height": ch}
+            try:
+                img = np.array(sct.grab(monitor))[:, :, :3] # BGR
+            except Exception:
+                return None
+                
+        cam_x, cam_y = self.pos_target
+        cam_h = getattr(self, 'yolo_camera_height', 6.0)
+        ppu = ch / cam_h
+        
+        for px, py in lista_punti:
+            dx = px - cam_x
+            dy = py - (cam_y + 0.36) # Offset altezza camera
+            screen_x = int(cw / 2 + dx * ppu)
+            screen_y = int(ch / 2 - dy * ppu)
+            if 0 <= screen_x < cw and 0 <= screen_y < ch:
+                r_sz = int(ppu * 0.6) 
+                y1 = max(0, screen_y - r_sz); y2 = min(ch, screen_y + r_sz)
+                x1 = max(0, screen_x - r_sz); x2 = min(cw, screen_x + r_sz)
+                target_region = img[y1:y2, x1:x2]
+                if target_region.size > 0:
+                    yellow_pixels = np.sum((target_region[:,:,0] < 150) & (target_region[:,:,1] > 200) & (target_region[:,:,2] > 200))
+                    if yellow_pixels > 20: return (px, py)
+        return None
+
+    def aggiorna_frame(self):
+        dt = dpg.get_delta_time()
+        if dt > 0.1: dt = 0.1
+
+        # --- HOTKEY GLOBALE PER STOP TASK (F4 o END/FINE) ---
+        if _WIN_OK:
+            f4_pressed = (win32api.GetAsyncKeyState(0x73) & 0x8000) != 0
+            end_pressed = (win32api.GetAsyncKeyState(0x23) & 0x8000) != 0
+            if (f4_pressed or end_pressed) and not getattr(self, '_prev_stop_key', False):
+                stop_flag.requested = True
+                self._cancel_auto_move()
+                self._ferma_processo_task()
+                self._task_launch_arrivo = False
+                try:
+                    pyautogui.mouseUp(button='left')
+                except Exception:
+                    pass
+                if dpg.does_item_exist("task_launch_popup"):
+                    dpg.delete_item("task_launch_popup")
+                self.auto_status_msg = "⏹ Esecuzione annullata (Stop)"
+            self._prev_stop_key = (f4_pressed or end_pressed)
+
+        self._update_trail_and_distance()
+        self._update_auto_move(dt)
+        self._update_task_launch(dt)
+        self._controlla_processo_task()
+        self._update_auto_all(dt)
+        
+        pending_2p = getattr(self, '_pending_next_2p_task', None)
+        if pending_2p is not None:
+            self._pending_next_2p_task = None
+            if self.auto_enabled:
+                task_reg = self.task_mgr.get_by_id(pending_2p)
+                if task_reg:
+                    t_mem = None
+                    for enriched in self.task_mgr.get_memory_tasks_info(self.memory_tasks):
+                        if enriched.get('reg_task') and enriched['reg_task']['id'] == pending_2p:
+                            t_mem = enriched
+                            break
+                    if t_mem:
+                        self._naviga_a_task_memoria(task_to_nav=t_mem)
+                    else:
+                        self.auto_enabled = True
+                        target_2p, step_2p = self._imposta_navigazione_2p(task_reg)
+                        if target_2p:
+                            self._plan_path(target_2p)
+                            self.auto_status_msg = f"Navigo verso '{task_reg['nome']}' (Tappa {step_2p})"
+
+        # Editor azioni (se aperto): aggiorna preview + gestisci Ctrl+Click
+        if self.action_editor.e_aperto():
+            self.action_editor.tick()
+
+        # Aggiorna label stato processo accanto al pulsante Stop
+        if dpg.does_item_exist("processo_status"):
+            if self._task_process is not None and self._task_process.poll() is None:
+                task_att = self.task_mgr.get_by_id(self._task_process_task_id)
+                nome_att = task_att['nome'] if task_att else "?"
+                dpg.configure_item("processo_status", color=(0, 220, 120, 255))
+                dpg.set_value("processo_status", f"▶ {nome_att}")
+            else:
+                dpg.configure_item("processo_status", color=(120, 120, 120, 200))
+                dpg.set_value("processo_status", "nessun processo")
+
+        # Aggiorna listbox task memoria con timer fisso (ogni 0.3s)
+        self._mem_task_refresh_acc = getattr(self, '_mem_task_refresh_acc', 0.0) + dt
+        if self._mem_task_refresh_acc >= 0.3:
+            self._mem_task_refresh_acc = 0.0
+            self._refresh_mem_task_listbox()
+
+        # Refresh listbox task registrate se il thread ha aggiornato i nomi
+        if self._pending_refresh_task_list:
+            self._pending_refresh_task_list = False
+            self._refresh_reg_task_listbox()
+
+        factor = 1.0 - math.exp(-GPSConfig.SMOOTHING * dt)
+        self.pos_visuale[0] += (self.pos_target[0] - self.pos_visuale[0]) * factor
+        self.pos_visuale[1] += (self.pos_target[1] - self.pos_visuale[1]) * factor
+
+        cam_x, cam_y = self._camera_center()
+        half_w = self.canvas_w / 2
+        half_h = self.canvas_h / 2
+        scale = self.scale
+
+        trans_x = half_w - scale * cam_x
+        trans_y = half_h + scale * cam_y
+        scale_mat = dpg.create_scale_matrix([scale, scale])
+        trans_mat = dpg.create_translation_matrix([trans_x, trans_y])
+        dpg.apply_transform("map_node", trans_mat * scale_mat)
+
+        self._render_grid(cam_x, cam_y, half_w, half_h, scale)
+        self._render_zones(cam_x, cam_y, half_w, half_h, scale)
+        self._render_tasks(cam_x, cam_y, half_w, half_h, scale)
+        self._render_poi(cam_x, cam_y, half_w, half_h, scale)
+        self._render_trail(cam_x, cam_y, half_w, half_h, scale)
+        self._render_path(cam_x, cam_y, half_w, half_h, scale)
+        self._render_target(cam_x, cam_y, half_w, half_h, scale)
+        self._render_doors(cam_x, cam_y, half_w, half_h, scale)
+        self._render_other_players(cam_x, cam_y, half_w, half_h, scale)
+        self._render_player(cam_x, cam_y, half_w, half_h, scale)
+        self._render_hud()
+
+    def _render_grid(self, cam_x, cam_y, half_w, half_h, scale):
+        dpg.delete_item("grid_node", children_only=True)
+        if not self.show_grid: return
+        dpg.push_container_stack("grid_node")
+
+        grid_size = GPSConfig.GRID_SIZE
+        while grid_size * scale < 28: grid_size *= 2
+        while grid_size * scale > 140: grid_size /= 2
+
+        step_px = grid_size * scale
+        off_x = (cam_x % grid_size) * scale
+        off_y = (cam_y % grid_size) * scale
+
+        n = int(self.canvas_w / step_px) + 2
+        x = half_w - off_x - step_px * (n // 2 + 1)
+        end_x = self.canvas_w + step_px
+        while x < end_x:
+            game_x = cam_x + (x - half_w) / scale
+            col = Colors.AXIS if abs(game_x) < grid_size / 2 else Colors.GRID
+            dpg.draw_line((x, 0), (x, self.canvas_h), color=col, thickness=1)
+            x += step_px
+
+        n = int(self.canvas_h / step_px) + 2
+        y = half_h + off_y - step_px * (n // 2 + 1)
+        end_y = self.canvas_h + step_px
+        while y < end_y:
+            game_y = cam_y - (y - half_h) / scale
+            col = Colors.AXIS if abs(game_y) < grid_size / 2 else Colors.GRID
+            dpg.draw_line((0, y), (self.canvas_w, y), color=col, thickness=1)
+            y += step_px
+
+        dpg.pop_container_stack()
+
+    def _render_zones(self, cam_x, cam_y, half_w, half_h, scale):
+        dpg.delete_item("zone_node", children_only=True)
+        dpg.push_container_stack("zone_node")
+
+        # Zone salvate
+        for z in self.zone_mgr.zone:
+            pts = z.get('punti', [])
+            if len(pts) < 3:
+                continue
+
+            pts_schermo = []
+            for gx, gy in pts:
+                sx = half_w + scale * (gx - cam_x)
+                sy = half_h - scale * (gy - cam_y)
+                pts_schermo.append((sx, sy))
+
+            # Culling bounding-box
+            xs = [p[0] for p in pts_schermo]
+            ys = [p[1] for p in pts_schermo]
+            if max(xs) < 0 or min(xs) > self.canvas_w: continue
+            if max(ys) < 0 or min(ys) > self.canvas_h: continue
+
+            col_full = _hex_to_rgba(z['colore'], 230)
+            col_fill = _hex_to_rgba(z['colore'], 45)
+
+            # Evidenzia la zona che stiamo modificando (bordo bianco piu' spesso)
+            if z['id'] == self.zona_in_modifica:
+                outline = (255, 255, 255, 255)
+                thickness = 3
+            else:
+                outline = col_full
+                thickness = 2
+
+            dpg.draw_polygon(points=pts_schermo,
+                             color=outline, fill=col_fill,
+                             thickness=thickness)
+
+            # Etichetta al centroide
+            cx_lbl = sum(xs) / len(xs)
+            cy_lbl = sum(ys) / len(ys)
+            nome = z['nome']
+            txt_w = max(20, len(nome) * 7.5)
+            dpg.draw_rectangle(
+                (cx_lbl - txt_w / 2 - 5, cy_lbl - 11),
+                (cx_lbl + txt_w / 2 + 5, cy_lbl + 11),
+                color=col_full, fill=col_full)
+            dpg.draw_text((cx_lbl - txt_w / 2, cy_lbl - 8),
+                          nome, color=(255, 255, 255, 255), size=14)
+
+        # Render Zone Porte (YOLO)
+        if getattr(self, 'show_door_zones', True):
+            for z in self.door_zone_mgr.zone:
+                pts = z.get('punti', [])
+                if len(pts) < 3: continue
+                pts_schermo = []
+                for gx, gy in pts:
+                    sx = half_w + scale * (gx - cam_x)
+                    sy = half_h - scale * (gy - cam_y)
+                    pts_schermo.append((sx, sy))
+
+                xs = [p[0] for p in pts_schermo]
+                ys = [p[1] for p in pts_schermo]
+                if max(xs) < 0 or min(xs) > self.canvas_w: continue
+                if max(ys) < 0 or min(ys) > self.canvas_h: continue
+
+                col_full = _hex_to_rgba(z.get('colore', '#FF3333'), 200)
+                col_fill = _hex_to_rgba(z.get('colore', '#FF3333'), 30)
+                dpg.draw_polygon(points=pts_schermo, color=col_full, fill=col_fill, thickness=2)
+                cx_lbl = sum(xs) / len(xs)
+                cy_lbl = sum(ys) / len(ys)
+                dpg.draw_text((cx_lbl - len(z['nome'])*3, cy_lbl - 8), z['nome'], color=(255, 100, 100, 255), size=13)
+
+        # Preview del poligono in corso di disegno
+        if self.zone_draw_mode:
+            if getattr(self, 'zone_draw_type', 'normal') == "door" and getattr(self, 'door_rect_start', None) and getattr(self, 'door_rect_end', None):
+                x1, y1 = self.door_rect_start
+                x2, y2 = self.door_rect_end
+                sx1 = half_w + scale * (x1 - cam_x)
+                sy1 = half_h - scale * (y1 - cam_y)
+                sx2 = half_w + scale * (x2 - cam_x)
+                sy2 = half_h - scale * (y2 - cam_y)
+                dpg.draw_rectangle((sx1, sy1), (sx2, sy2), color=(255, 50, 50, 255), fill=(255, 50, 50, 40), parent="zone_node")
+            elif getattr(self, 'zone_draw_type', 'normal') == "normal" and len(self.zone_draw_points) >= 1:
+                pts_schermo = []
+                for gx, gy in self.zone_draw_points:
+                    sx = half_w + scale * (gx - cam_x)
+                    sy = half_h - scale * (gy - cam_y)
+                    pts_schermo.append((sx, sy))
+
+                # "Rubber band": aggiungi la posizione corrente del mouse
+                if dpg.is_item_hovered("canvas"):
+                    mpos = dpg.get_drawing_mouse_pos()
+                    pts_schermo.append((mpos[0], mpos[1]))
+
+                preview_color = Colors.ZONE_PREVIEW
+
+                # Linea continua tra i punti
+                for i in range(len(pts_schermo) - 1):
+                    dpg.draw_line(pts_schermo[i], pts_schermo[i + 1],
+                                  color=preview_color, thickness=2)
+                # Linea di chiusura sottile verso il primo punto
+                if len(pts_schermo) >= 3:
+                    dpg.draw_line(pts_schermo[-1], pts_schermo[0],
+                                  color=(180, 180, 180, 150), thickness=1)
+                # Pallini sui vertici
+                for sx, sy in pts_schermo:
+                    dpg.draw_circle((sx, sy), 2,
+                                    color=preview_color,
+                                    fill=preview_color)
+
+        dpg.pop_container_stack()
+
+    def _render_tasks(self, cam_x, cam_y, half_w, half_h, scale):
+        """Disegna le task con colori dinamici: Arancione (da fare), Verde (completata), Rosso (vitale)."""
+        dpg.delete_item("task_node", children_only=True)
+        if not self.task_mgr.task_list:
+            return
+        dpg.push_container_stack("task_node")
+
+        # Palette colori richiesta
+        COL_DA_FARE      = (255, 140,   0, 230) # Arancione acceso
+        COL_DA_FARE_FILL = (255, 140,   0,  60)
+        COL_FATTA        = (  0, 255,   0, 230) # Verde acceso
+        COL_FATTA_FILL   = (  0, 255,   0,  60)
+        COL_VITALE       = (255,  30,  30, 240) # Rosso intenso
+        COL_VITALE_FILL  = (255,  30,  30,  70)
+        
+        COL_FASE         = (100, 200, 255, 200)
+        COL_TESTO        = (255, 255, 255, 255)
+        COL_BG_LBL       = ( 20,  20,  25, 200)
+        R = GPSConfig.TASK_ICON_RADIUS
+
+        # 1. Mappatura stato dalla memoria
+        active_keys = set()
+        completed_keys = set()
+        for mt in getattr(self, 'memory_tasks', []):
+            chiave_mem = (mt.get('tipo'), mt.get('room_id'))
+            active_keys.add(chiave_mem)
+            if mt.get('done', False):
+                completed_keys.add(chiave_mem)
+
+        for t in self.task_mgr.task_list:
+            chiave_task = (t.get('tipo'), t.get('room_id'))
+            is_vitale      = bool(t.get('vitale', False))
+            is_due_p       = bool(t.get('due_giocatori', False))
+
+            # Filtro opzionale: mostra solo se attiva in memoria
+            if getattr(self, 'show_only_active_tasks', False) and chiave_task not in active_keys:
+                continue
+
+            # 2. Determinazione colore in base allo stato
+            if chiave_task in completed_keys:
+                # Task FATTA -> Verde (anche se vitale, ormai è completata)
+                col_bordo = COL_FATTA
+                col_fill  = COL_FATTA_FILL
+                stato_testo = "[FATTA]"
+            elif is_vitale:
+                # Task VITALE DA FARE -> Rosso
+                col_bordo = COL_VITALE
+                col_fill  = COL_VITALE_FILL
+                stato_testo = "[!] VITALE"
+            elif chiave_task in active_keys:
+                # Task DA FARE -> Arancione
+                col_bordo = COL_DA_FARE
+                col_fill  = COL_DA_FARE_FILL
+                stato_testo = "[DA FARE]"
+            else:
+                # Task registrata ma non presente in questa partita
+                col_bordo = (150, 150, 150, 150) # Grigio neutro
+                col_fill  = (150, 150, 150,  40)
+                stato_testo = "[NON IN LISTA]"
+
+            # Calcolo coordinate schermo
+            tx, ty = t['x'], t['y']
+            sx = half_w + scale * (tx - cam_x)
+            sy = half_h - scale * (ty - cam_y)
+
+            # Culling per prestazioni
+            if sx < -50 or sx > self.canvas_w + 50 or sy < -50 or sy > self.canvas_h + 50:
+                continue
+
+            # Disegno Marcatore
+            # Per le task vitali aggiungiamo un anello esterno extra per farle risaltare
+            if is_vitale and chiave_task not in completed_keys:
+                pulse = 0.5 + 0.5 * __import__('math').sin(__import__('time').time() * 4)
+                r_glow = int(R + 8 + pulse * 5)
+                glow_alpha = int(80 + pulse * 80)
+                dpg.draw_circle((sx, sy), r_glow,
+                                color=(255, 30, 30, glow_alpha),
+                                fill=(255, 30, 30, int(glow_alpha * 0.3)),
+                                thickness=2)
+
+            dpg.draw_circle((sx, sy), R + 4, color=col_bordo, fill=col_fill, thickness=2)
+            dpg.draw_circle((sx, sy), R, color=col_bordo, fill=col_bordo, thickness=1)
+
+            # Etichetta informativa
+            due_p_tag = " [2P]" if is_due_p else ""
+            label = f"{stato_testo}{due_p_tag} {t['nome']}"
+            txt_w = max(20, len(label) * 7)
+            dpg.draw_rectangle(
+                (sx - txt_w / 2 - 4, sy - R - 20),
+                (sx + txt_w / 2 + 4, sy - R - 4),
+                color=col_bordo, fill=COL_BG_LBL)
+            dpg.draw_text((sx - txt_w / 2, sy - R - 18),
+                          label, color=COL_TESTO, size=13)
+
+            # Disegno Fasi (se presenti) — punti numerati collegati con linea tratteggiata
+            fasi = t.get('fasi', [])
+            if fasi:
+                # Tutti i punti in sequenza: prima la task principale, poi le fasi
+                tutti_punti = [(sx, sy)] + [
+                    (half_w + scale * (f['x'] - cam_x),
+                     half_h - scale * (f['y'] - cam_y))
+                    for f in fasi
+                ]
+                nomi_fasi  = [t['nome']] + [f['nome'] for f in fasi]
+
+                # Linee di collegamento tra i punti in sequenza
+                for i in range(len(tutti_punti) - 1):
+                    ax, ay = tutti_punti[i]
+                    bx, by = tutti_punti[i + 1]
+                    # Linea principale colorata
+                    dpg.draw_line((ax, ay), (bx, by),
+                                  color=(col_bordo[0], col_bordo[1], col_bordo[2], 160),
+                                  thickness=2)
+                    # Freccia a metà linea per indicare la direzione
+                    mx, my = (ax + bx) / 2, (ay + by) / 2
+                    import math as _m
+                    ang = _m.atan2(by - ay, bx - ax)
+                    arrow_len = 8
+                    ax1 = mx - arrow_len * _m.cos(ang - 0.4)
+                    ay1 = my - arrow_len * _m.sin(ang - 0.4)
+                    ax2 = mx - arrow_len * _m.cos(ang + 0.4)
+                    ay2 = my - arrow_len * _m.sin(ang + 0.4)
+                    dpg.draw_line((mx, my), (ax1, ay1),
+                                  color=(col_bordo[0], col_bordo[1], col_bordo[2], 200),
+                                  thickness=2)
+                    dpg.draw_line((mx, my), (ax2, ay2),
+                                  color=(col_bordo[0], col_bordo[1], col_bordo[2], 200),
+                                  thickness=2)
+
+                # Punti fase (dal secondo in poi — il primo è già disegnato come task principale)
+                for i, (fsx, fsy) in enumerate(tutti_punti[1:], start=1):
+                    # Cerchio fase
+                    dpg.draw_circle((fsx, fsy), R + 2,
+                                    color=(col_bordo[0], col_bordo[1], col_bordo[2], 180),
+                                    fill=(col_bordo[0], col_bordo[1], col_bordo[2], 50),
+                                    thickness=2)
+                    dpg.draw_circle((fsx, fsy), 6, color=COL_FASE, fill=COL_FASE)
+
+                    # Numero della fase dentro al cerchio
+                    num_str = str(i)
+                    dpg.draw_text((fsx - 4, fsy - 7), num_str, color=(10, 10, 10, 255), size=13)
+
+                    # Etichetta nome fase
+                    flabel = nomi_fasi[i]
+                    ftxt_w = max(20, len(flabel) * 7)
+                    dpg.draw_rectangle(
+                        (fsx - ftxt_w / 2 - 4, fsy - R - 20),
+                        (fsx + ftxt_w / 2 + 4, fsy - R - 4),
+                        color=(col_bordo[0], col_bordo[1], col_bordo[2], 160),
+                        fill=COL_BG_LBL)
+                    dpg.draw_text((fsx - ftxt_w / 2, fsy - R - 18),
+                                  flabel, color=COL_TESTO, size=13)
+
+                # Aggiunge "①" al marker principale per coerenza visiva
+                dpg.draw_text((sx - 4, sy - 7), "0", color=(10, 10, 10, 255), size=13)
+
+            # Punti fratello (simili a fasi ma senza collegamenti o con linea diversa)
+            fratelli = t.get('fratelli', [])
+            for i, frat in enumerate(fratelli, start=1):
+                fsx = half_w + scale * (frat['x'] - cam_x)
+                fsy = half_h - scale * (frat['y'] - cam_y)
+                dpg.draw_line((sx, sy), (fsx, fsy),
+                              color=(col_bordo[0], col_bordo[1], col_bordo[2], 100),
+                              thickness=1)
+                dpg.draw_circle((fsx, fsy), R,
+                                color=(col_bordo[0], col_bordo[1], col_bordo[2], 180),
+                                fill=(col_bordo[0], col_bordo[1], col_bordo[2], 50),
+                                thickness=2)
+                dpg.draw_text((fsx - 4, fsy - 7), f"F{i}", color=(200, 200, 200, 255), size=12)
+
+        dpg.pop_container_stack()
+
+    # ================= PUNTI DI INTERESSE =================
+
+    def _refresh_poi_listbox(self):
+        items = []
+        for p in self.poi_mgr.poi_list:
+            zona_str = f"  [{p['zone_nome']}]" if p.get('zone_nome') else ""
+            items.append(f"[{p['id']:02d}] {p['nome']}{zona_str}")
+        if dpg.does_item_exist("poi_listbox"):
+            dpg.configure_item("poi_listbox", items=items)
+
+    def _get_selected_poi(self):
+        if not self.poi_mgr.poi_list:
+            return None
+        if not dpg.does_item_exist("poi_listbox"):
+            return None
+        sel = dpg.get_value("poi_listbox")
+        if not sel:
+            return None
+        try:
+            id_num = int(sel.split(']')[0].lstrip('[').strip())
+            return self.poi_mgr.get_by_id(id_num)
+        except (ValueError, IndexError):
+            return None
+
+    def _naviga_a_poi(self):
+        p = self._get_selected_poi()
+        if p is None:
+            self.auto_status_msg = "Seleziona un POI dalla lista"
+            return
+        if not self.auto_enabled:
+            self.auto_enabled = True
+            if dpg.does_item_exist("auto_checkbox"):
+                dpg.set_value("auto_checkbox", True)
+        self._plan_path((p['x'], p['y']))
+        self.auto_status_msg = f"Navigo verso POI '{p['nome']}'"
+
+    def _elimina_poi(self):
+        p = self._get_selected_poi()
+        if p is None:
+            self.auto_status_msg = "Seleziona un POI da eliminare"
+            return
+        nome  = p['nome']
+        id_p  = p['id']
+        def on_confirm(yes):
+            if yes:
+                self.poi_mgr.rimuovi(id_p)
+                self._refresh_poi_listbox()
+                self.auto_status_msg = f"POI '{nome}' eliminato"
+        self._show_confirm(f"Eliminare il POI '{nome}'?", on_confirm)
+
+    def _apri_popup_nuovo_poi(self):
+        tag = "popup_nuovo_poi"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+        px, py = self.pos_target
+        vp_w   = dpg.get_viewport_client_width()
+        vp_h   = dpg.get_viewport_client_height()
+
+        zona_now  = self._zona_alla_posizione(px, py)
+        gz_id_now = zona_now.get('game_zone_id') if zona_now else None
+        zl_id_now = zona_now['id']               if zona_now else None
+        if zona_now:
+            gz_str    = f"  GZ:{gz_id_now}" if gz_id_now is not None else ""
+            zona_info = f"[{zl_id_now:02d}] {zona_now['nome']}{gz_str}"
+            col_zona  = Colors.ACCENT
+        else:
+            zona_info = "Fuori da qualsiasi zona"
+            col_zona  = (200, 120, 30, 255)
+
+        def do_salva(*_):
+            nome_v = dpg.get_value("np_nome").strip()
+            x_v    = dpg.get_value("np_x")
+            y_v    = dpg.get_value("np_y")
+            if not nome_v:
+                return
+            zona_s  = self._zona_alla_posizione(x_v, y_v) or zona_now
+            gz_id_s = zona_s.get('game_zone_id') if zona_s else gz_id_now
+            zl_id_s = zona_s['id']               if zona_s else zl_id_now
+            self.poi_mgr.aggiungi(
+                nome_v, x_v, y_v,
+                zone_id       = gz_id_s,
+                zone_local_id = zl_id_s,
+                zone_nome     = zona_s['nome'] if zona_s else None,
+            )
+            self._refresh_poi_listbox()
+            self.auto_status_msg = f"POI '{nome_v}' aggiunto"
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        def do_usa_pos(*_):
+            nx = round(self.pos_target[0], 3)
+            ny = round(self.pos_target[1], 3)
+            dpg.set_value("np_x", nx)
+            dpg.set_value("np_y", ny)
+            z2 = self._zona_alla_posizione(nx, ny)
+            if z2:
+                gz2   = z2.get('game_zone_id')
+                info2 = f"[{z2['id']:02d}] {z2['nome']}" + (f"  GZ:{gz2}" if gz2 is not None else "")
+            else:
+                info2 = "Fuori da qualsiasi zona"
+            if dpg.does_item_exist("np_zona_info"):
+                dpg.set_value("np_zona_info", info2)
+
+        with dpg.window(label="Nuovo Punto di Interesse", tag=tag,
+                        modal=True, no_resize=True, no_collapse=True,
+                        width=400, height=220,
+                        pos=(max(0, vp_w // 2 - 200), max(0, vp_h // 2 - 110))):
+            dpg.add_text("Zona rilevata automaticamente:", color=Colors.TEXT_DIM)
+            dpg.add_text(zona_info, tag="np_zona_info", color=col_zona)
+            dpg.add_separator()
+            dpg.add_text("Nome:")
+            dpg.add_input_text(tag="np_nome", default_value="", width=-1)
+            dpg.add_spacer(height=4)
+            dpg.add_text("Coordinate:")
+            with dpg.group(horizontal=True):
+                dpg.add_text("X:")
+                dpg.add_input_float(tag="np_x", default_value=round(px, 3), width=155, step=0)
+                dpg.add_text("Y:")
+                dpg.add_input_float(tag="np_y", default_value=round(py, 3), width=155, step=0)
+            dpg.add_button(label="Usa posizione attuale  (aggiorna zona)", width=-1,
+                           callback=do_usa_pos)
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Salva", width=190, callback=do_salva)
+                dpg.add_button(label="Annulla", width=190,
+                               callback=lambda *a: dpg.delete_item(tag)
+                               if dpg.does_item_exist(tag) else None)
+
+    def _apri_popup_modifica_poi(self):
+        p = self._get_selected_poi()
+        if p is None:
+            self.auto_status_msg = "Seleziona un POI da modificare"
+            return
+        tag  = "popup_modifica_poi"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+        id_p = p['id']
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+
+        zona_now = self._zona_alla_posizione(p['x'], p['y'])
+        if zona_now:
+            gz2      = zona_now.get('game_zone_id')
+            zona_info = f"[{zona_now['id']:02d}] {zona_now['nome']}" + (f"  GZ:{gz2}" if gz2 is not None else "")
+            col_zona  = Colors.ACCENT
+        else:
+            zona_info = p.get('zone_nome') or "Fuori da qualsiasi zona"
+            col_zona  = (200, 120, 30, 255)
+
+        def do_salva(*_):
+            nome_v = dpg.get_value("mp_nome").strip()
+            x_v    = dpg.get_value("mp_x")
+            y_v    = dpg.get_value("mp_y")
+            if not nome_v:
+                return
+            zona_s  = self._zona_alla_posizione(x_v, y_v) or zona_now
+            gz_id_s = zona_s.get('game_zone_id') if zona_s else None
+            zl_id_s = zona_s['id']               if zona_s else None
+            self.poi_mgr.aggiorna(
+                id_p, nome_v, x_v, y_v,
+                zone_id       = gz_id_s,
+                zone_local_id = zl_id_s,
+                zone_nome     = zona_s['nome'] if zona_s else None,
+            )
+            self._refresh_poi_listbox()
+            self.auto_status_msg = f"POI [{id_p}] aggiornato"
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        def do_usa_pos(*_):
+            nx = round(self.pos_target[0], 3)
+            ny = round(self.pos_target[1], 3)
+            dpg.set_value("mp_x", nx)
+            dpg.set_value("mp_y", ny)
+            z2 = self._zona_alla_posizione(nx, ny)
+            if z2:
+                gz2   = z2.get('game_zone_id')
+                info2 = f"[{z2['id']:02d}] {z2['nome']}" + (f"  GZ:{gz2}" if gz2 is not None else "")
+            else:
+                info2 = "Fuori da qualsiasi zona"
+            if dpg.does_item_exist("mp_zona_info"):
+                dpg.set_value("mp_zona_info", info2)
+
+        with dpg.window(label=f"Modifica POI [{id_p}]", tag=tag,
+                        modal=True, no_resize=True, no_collapse=True,
+                        width=400, height=220,
+                        pos=(max(0, vp_w // 2 - 200), max(0, vp_h // 2 - 110))):
+            dpg.add_text("Zona rilevata:", color=Colors.TEXT_DIM)
+            dpg.add_text(zona_info, tag="mp_zona_info", color=col_zona)
+            dpg.add_separator()
+            dpg.add_text("Nome:")
+            dpg.add_input_text(tag="mp_nome", default_value=p['nome'], width=-1)
+            dpg.add_spacer(height=4)
+            dpg.add_text("Coordinate:")
+            with dpg.group(horizontal=True):
+                dpg.add_text("X:")
+                dpg.add_input_float(tag="mp_x", default_value=p['x'], width=155, step=0)
+                dpg.add_text("Y:")
+                dpg.add_input_float(tag="mp_y", default_value=p['y'], width=155, step=0)
+            dpg.add_button(label="Usa posizione attuale  (aggiorna zona)", width=-1,
+                           callback=do_usa_pos)
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Salva", width=190, callback=do_salva)
+                dpg.add_button(label="Annulla", width=190,
+                               callback=lambda *a: dpg.delete_item(tag)
+                               if dpg.does_item_exist(tag) else None)
+
+    def _render_poi(self, cam_x, cam_y, half_w, half_h, scale):
+        dpg.delete_item("poi_node", children_only=True)
+        if not self.show_poi or not self.poi_mgr.poi_list:
+            return
+        dpg.push_container_stack("poi_node")
+
+        import math as _m, time as _t
+        pulse   = 0.5 + 0.5 * _m.sin(_t.time() * 3)
+        COL     = (80, 200, 255)   # ciano fisso per tutti i POI
+        COL_LBL = (15, 15, 20, 210)
+        R = 10
+
+        for p in self.poi_mgr.poi_list:
+            sx = half_w + scale * (p['x'] - cam_x)
+            sy = half_h - scale * (p['y'] - cam_y)
+
+            if sx < -60 or sx > self.canvas_w + 60 or sy < -60 or sy > self.canvas_h + 60:
+                continue
+
+            # Alone pulsante
+            glow_a = int(40 + pulse * 60)
+            dpg.draw_circle((sx, sy), int(R + 7 + pulse * 4),
+                            color=(*COL, glow_a), fill=(*COL, glow_a // 3), thickness=1)
+
+            # Cerchio esterno
+            dpg.draw_circle((sx, sy), R + 4,
+                            color=(*COL, 220), fill=(*COL, 40), thickness=2)
+
+            # Cerchio interno
+            dpg.draw_circle((sx, sy), R,
+                            color=(*COL, 255), fill=(*COL, 200), thickness=1)
+
+            # Rombo centrale (★ → segnalino POI)
+            dpg.draw_text((sx - 4, sy - 7), "★", color=(15, 15, 15, 255), size=14)
+
+            # Etichetta: nome  [zona]
+            zona_sfx = f"  [{p['zone_nome']}]" if p.get('zone_nome') else ""
+            label    = f"{p['nome']}{zona_sfx}"
+            txt_w    = max(20, len(label) * 7)
+            dpg.draw_rectangle(
+                (sx - txt_w / 2 - 4, sy - R - 22),
+                (sx + txt_w / 2 + 4, sy - R - 4),
+                color=(*COL, 180), fill=COL_LBL)
+            dpg.draw_text((sx - txt_w / 2, sy - R - 20),
+                          label, color=(*COL, 255), size=13)
+
+        dpg.pop_container_stack()
+
+    def _render_trail(self, cam_x, cam_y, half_w, half_h, scale):
+        dpg.delete_item("trail_node", children_only=True)
+        if not self.show_trail or len(self.trail) < 2: return
+        dpg.push_container_stack("trail_node")
+        pts = []
+        for tx, ty in self.trail:
+            sx = half_w + scale * (tx - cam_x)
+            sy = half_h - scale * (ty - cam_y)
+            pts.append((sx, sy))
+        n = len(pts)
+        for i in range(n - 1):
+            alpha = int(30 + 180 * (i / max(1, n - 1)))
+            col = (Colors.TRAIL[0], Colors.TRAIL[1], Colors.TRAIL[2], alpha)
+            dpg.draw_line(pts[i], pts[i + 1], color=col, thickness=2)
+        dpg.pop_container_stack()
+
+    def _render_path(self, cam_x, cam_y, half_w, half_h, scale):
+        dpg.delete_item("path_node", children_only=True)
+        if not self.show_path or not self.auto_path: return
+        dpg.push_container_stack("path_node")
+
+        # Converto waypoint in pixel
+        pts = []
+        for wx, wy in self.auto_path:
+            sx = half_w + scale * (wx - cam_x)
+            sy = half_h - scale * (wy - cam_y)
+            pts.append((sx, sy))
+
+        # Segmenti "fatti" più spenti, segmenti "da fare" accesi
+        current_i = self.auto_path_index
+        # Connessione dal player al waypoint corrente
+        px = half_w + scale * (self.pos_visuale[0] - cam_x)
+        py = half_h - scale * (self.pos_visuale[1] - cam_y)
+        if current_i < len(pts):
+            dpg.draw_line((px, py), pts[current_i],
+                          color=Colors.PATH, thickness=3)
+
+        # Segmenti fra waypoint
+        for i in range(len(pts) - 1):
+            col = Colors.PATH if i >= current_i else Colors.PATH_DONE
+            th = 3 if i >= current_i else 1
+            dpg.draw_line(pts[i], pts[i + 1], color=col, thickness=th)
+
+        # Marker waypoint
+        for i, (sx, sy) in enumerate(pts):
+            if i < current_i:
+                dpg.draw_circle((sx, sy), 3, color=Colors.PATH_DONE,
+                                fill=Colors.PATH_DONE)
+            elif i == current_i:
+                dpg.draw_circle((sx, sy), 6, color=Colors.WAYPOINT,
+                                fill=Colors.WAYPOINT)
+            else:
+                dpg.draw_circle((sx, sy), 4, color=Colors.PATH,
+                                fill=Colors.PATH)
+
+        dpg.pop_container_stack()
+
+    def _render_target(self, cam_x, cam_y, half_w, half_h, scale):
+        dpg.delete_item("target_node", children_only=True)
+        if self.auto_final_target is None: return
+        dpg.push_container_stack("target_node")
+
+        tx, ty = self.auto_final_target
+        sx = half_w + scale * (tx - cam_x)
+        sy = half_h - scale * (ty - cam_y)
+
+        pulse = 0.5 + 0.5 * math.sin(time.time() * 5)
+        r_outer = 14 + pulse * 8
+        dpg.draw_circle((sx, sy), r_outer, color=Colors.TARGET_DIM,
+                        fill=Colors.TARGET_DIM)
+        dpg.draw_circle((sx, sy), 6, color=Colors.TARGET, fill=Colors.TARGET)
+        dpg.draw_line((sx - 10, sy), (sx + 10, sy),
+                      color=Colors.TARGET, thickness=1)
+        dpg.draw_line((sx, sy - 10), (sx, sy + 10),
+                      color=Colors.TARGET, thickness=1)
+        dpg.pop_container_stack()
+
+    def _render_doors(self, cam_x, cam_y, half_w, half_h, scale):
+        dpg.delete_item("doors_node", children_only=True)
+        if not getattr(self, 'show_detected_doors', True) or not hasattr(self, 'detected_doors') or not self.detected_doors:
+            return
+        dpg.push_container_stack("doors_node")
+        
+        current_time = time.time()
+        for d in self.detected_doors:
+            if current_time - d['time'] < 1.0:
+                sx = half_w + scale * (d['x'] - cam_x)
+                sy = half_h - scale * (d['y'] - cam_y)
+                
+                door_w = 20
+                door_h = 30
+                dpg.draw_rectangle((sx - door_w/2, sy - door_h/2), (sx + door_w/2, sy + door_h/2), 
+                                   color=(255, 50, 50, 200), fill=(255, 50, 50, 100), thickness=2)
+                dpg.draw_text((sx - 18, sy - door_h/2 - 18), "PORTA CHIUSA", color=(255, 50, 50, 255), size=14)
+                
+        dpg.pop_container_stack()
+
+    def _render_other_players(self, cam_x, cam_y, half_w, half_h, scale):
+        dpg.delete_item("other_players_node", children_only=True)
+        if not self.show_other_players: 
+            return
+        dpg.push_container_stack("other_players_node")
+        
+        current_time = time.time()
+        for p in self.detected_players:
+            age = current_time - p['time']
+                
+            sx = half_w + scale * (p['x'] - cam_x)
+            sy = half_h - scale * (p['y'] - cam_y)
+            
+            base_color = p.get('color', (255, 50, 50))
+            is_dead = p.get('is_dead', False)
+            
+            display_name = p.get('name', 'Player')
+            if display_name == 'Unknown': 
+                display_name = 'Player'
+            
+            if is_dead:
+                alpha = 255
+                col_bordo = (base_color[0], base_color[1], base_color[2], alpha)
+                dpg.draw_circle((sx, sy), 9, color=col_bordo, fill=(30, 30, 30, 200), thickness=2)
+                dpg.draw_line((sx - 6, sy - 6), (sx + 6, sy + 6), color=col_bordo, thickness=2)
+                dpg.draw_line((sx - 6, sy + 6), (sx + 6, sy - 6), color=col_bordo, thickness=2)
+                
+                time_str = f"{int(age // 60)}m {int(age % 60)}s" if age > 60 else f"{int(age)}s"
+                dpg.draw_text((sx + 12, sy - 12), f"DEAD {display_name} ({time_str})", color=col_bordo, size=15)
+                
+            elif age <= 4.0:
+                # Giocatore appena visto o visto da poco
+                alpha = 255
+                col_bordo = (base_color[0], base_color[1], base_color[2], alpha)
+                col_fill  = (base_color[0], base_color[1], base_color[2], 180)
+                dpg.draw_circle((sx, sy), 9, color=col_bordo, fill=col_fill, thickness=2)
+                dpg.draw_text((sx + 12, sy - 12), display_name, color=col_bordo, size=15)
+            else:
+                # "Fantasma" / Ultima posizione nota (dopo i 4 secondi e fino a 30)
+                alpha = 220
+                col_bordo = (base_color[0], base_color[1], base_color[2], alpha)
+                # Disegna una 'X' per indicare un punto nel passato
+                dpg.draw_line((sx - 6, sy - 6), (sx + 6, sy + 6), color=col_bordo, thickness=3)
+                dpg.draw_line((sx - 6, sy + 6), (sx + 6, sy - 6), color=col_bordo, thickness=3)
+                
+                time_str = f"{int(age // 60)}m {int(age % 60)}s" if age > 60 else f"{int(age)}s"
+                dpg.draw_text((sx + 10, sy - 10), f"Last seen {display_name} ({time_str})", color=col_bordo, size=14)
+            
+        dpg.pop_container_stack()
+
+    def _render_player(self, cam_x, cam_y, half_w, half_h, scale):
+        dpg.delete_item("player_node", children_only=True)
+        dpg.push_container_stack("player_node")
+
+        px = half_w + scale * (self.pos_visuale[0] - cam_x)
+        py = half_h - scale * (self.pos_visuale[1] - cam_y)
+
+        margin = 20
+        on_screen = (margin <= px <= self.canvas_w - margin and
+                     margin <= py <= self.canvas_h - margin)
+
+        if on_screen:
+            dpg.draw_circle((px, py), 14,
+                            color=Colors.PLAYER_GLOW, fill=Colors.PLAYER_GLOW)
+            dpg.draw_circle((px, py), 7,
+                            color=Colors.PLAYER, fill=Colors.PLAYER)
+        else:
+            dx = px - half_w; dy = py - half_h
+            angle = math.atan2(dy, dx)
+            rx = self.canvas_w / 2 - 25
+            ry = self.canvas_h / 2 - 25
+            bx = half_w + math.cos(angle) * rx
+            by = half_h + math.sin(angle) * ry
+            dpg.draw_circle((bx, by), 10,
+                            color=Colors.PLAYER, fill=Colors.PLAYER)
+            ax = bx + math.cos(angle) * 16
+            ay = by + math.sin(angle) * 16
+            dpg.draw_line((bx, by), (ax, ay),
+                          color=Colors.PLAYER, thickness=3)
+
+        if self.show_crosshair:
+            dpg.draw_line((half_w - 14, half_h), (half_w + 14, half_h),
+                          color=Colors.CROSSHAIR, thickness=1)
+            dpg.draw_line((half_w, half_h - 14), (half_w, half_h + 14),
+                          color=Colors.CROSSHAIR, thickness=1)
+
+        dpg.pop_container_stack()
+
+    def _render_hud(self):
+        dpg.set_value("status_x",    f"X: {self.pos_target[0]:.3f}")
+        dpg.set_value("status_y",    f"Y: {self.pos_target[1]:.3f}")
+        dpg.set_value("status_fps",  f"FPS: {dpg.get_frame_rate()}")
+        dpg.set_value("status_mode", f"Mode: {self.camera_mode}")
+        dpg.set_value("status_zoom", f"Zoom: {self.scale:.0f}")
+
+        if self.auto_enabled:
+            if self.auto_path:
+                dpg.configure_item("status_auto", color=Colors.TARGET)
+                dpg.set_value("status_auto", f"Auto: ON ({self.auto_status_msg})")
+            else:
+                dpg.configure_item("status_auto", color=Colors.ACCENT)
+                dpg.set_value("status_auto", "Auto: ARMATO (click mappa)")
+        else:
+            dpg.configure_item("status_auto", color=Colors.TEXT_DIM)
+            dpg.set_value("status_auto", "Auto: OFF")
+
+        dpg.set_value("stat_dist", f"{self.total_distance:.2f} u")
+        elapsed = int(time.time() - self.session_start)
+        m, s = divmod(elapsed, 60); h, m = divmod(m, 60)
+        dpg.set_value("stat_time",
+                      f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}")
+        dpg.set_value("stat_trail", f"{len(self.trail)}")
+        dpg.set_value("auto_state_label",
+                      self.auto_status_msg if self.auto_status_msg else "inattivo")
+        if self.auto_final_target is not None:
+            dpg.set_value("auto_target_label",
+                f"X={self.auto_final_target[0]:.2f}  Y={self.auto_final_target[1]:.2f}")
+        else:
+            dpg.set_value("auto_target_label", "—")
+        if self.auto_path:
+            dpg.set_value("auto_path_label",
+                f"{self.auto_path_index+1} / {len(self.auto_path)} waypoint")
+        else:
+            dpg.set_value("auto_path_label", "0 waypoint")
+
+        dpg.delete_item("hud_node", children_only=True)
+        if self.show_hud:
+            dpg.push_container_stack("hud_node")
+            label = f"[{self.camera_mode.upper()}]  x{self.scale:.0f}"
+            dpg.draw_text((11, 9),  label, color=(0, 0, 0, 220), size=18)
+            dpg.draw_text((10, 8),  label, color=Colors.ACCENT, size=18)
+            if self.auto_enabled and self.auto_path:
+                keys_txt = "+".join(sorted(self.key_ctrl.pressed)) or "—"
+                amsg = f"AUTO → {self.auto_status_msg}  |  {keys_txt}"
+                dpg.draw_text((11, 33), amsg, color=(0, 0, 0, 220), size=16)
+                dpg.draw_text((10, 32), amsg, color=Colors.TARGET, size=16)
+            dpg.pop_container_stack()
+
+    def _adatta_punti_alla_mappa(self, punti_originali):
+        """Sposta i punti del poligono sulle celle calpestabili più vicine."""
+        punti_adattati = []
+        for px, py in punti_originali:
+            # Cerca la cella calpestabile più vicina al punto disegnato a mano
+            cella_vicina = self.pathfinder.nearest_walkable(px, py, radius=10)
+            if cella_vicina:
+                gx, gy = self.pathfinder._coord(cella_vicina)
+                punti_adattati.append([gx, gy])
+            else:
+                # Se è troppo lontano da zone conosciute, tieni il punto originale
+                punti_adattati.append([px, py])
+        
+        # Rimuove duplicati consecutivi che potrebbero crearsi con lo snap
+        risultato = []
+        for p in punti_adattati:
+            if not risultato or (p[0] != risultato[-1][0] or p[1] != risultato[-1][1]):
+                risultato.append(p)
+        return risultato
+
+    # ================= MAIN =================
+    def run(self):
+        print("=== Among Us AI Bot avviato ===")
+        print(f"  Celle calpestabili: {len(self.pathfinder.walkable)}")
+        print("  SX = destinazione (A*) | DX/ESC = annulla")
+        print("  Rotella drag = pan | M = toggle auto-move")
+
+        self._on_viewport_resize()
+        try:
+            while dpg.is_dearpygui_running():
+                self.aggiorna_frame()
+                dpg.render_dearpygui_frame()
+        finally:
+            self.key_ctrl.release_all()
+            self.running = False
+            dpg.destroy_context()
