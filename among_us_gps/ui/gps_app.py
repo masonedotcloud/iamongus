@@ -1819,3 +1819,1877 @@ class GPSVisualizerPro:
 
     # ================= GESTIONE TASK =================
 
+    def _refresh_mem_task_listbox(self):
+        """
+        Aggiorna la listbox task in memoria senza il match ID.
+        Formato: [STATO] [ID:ROOM_ID] LUOGO: NOME TASK [PROG] (COORD)
+        """
+        enriched = self.task_mgr.get_memory_tasks_info(self.memory_tasks)
+        
+        if dpg.does_item_exist("sort_mem_tasks_chk") and dpg.get_value("sort_mem_tasks_chk"):
+            enriched.sort(key=lambda x: (x['reg_task']['nome'] if x.get('reg_task') else x['nome']).lower())
+            
+        items = []
+        for t in enriched:
+            # Stato: [V] completata, [-] in corso
+            stato = "[V]" if t['done'] else "[-]"
+            room_id = t.get('room_id', '?')
+            reg = t['reg_task']
+            
+            if reg:
+                # Controllo Cooldown
+                cd = self.task_cooldowns.get(reg['id'], 0)
+                rem = cd - time.time()
+                
+                # Task Registrata: Formato "Luogo: Nome Task"
+                # Puliamo il nome da eventuali prefissi doppi
+                nome_pulito = reg['nome'].split(": ", 1)[-1]
+                luogo = reg.get('zone_nome', 'Mappa')
+                display_name = f"{luogo}: {nome_pulito}"
+                
+                coord_str = f" ({reg['x']:.1f},{reg['y']:.1f})"
+                
+                if rem > 0:
+                    items.append(f"[WAIT {int(rem)}s] [ID:{room_id}] {display_name} [{t['prog']}]{coord_str}")
+                else:
+                    items.append(f"{stato} [ID:{room_id}] {display_name} [{t['prog']}]{coord_str}")
+            else:
+                # Task Sconosciuta: Nome base dalla RAM
+                items.append(f"{stato} [ID:{room_id}] {t['nome']} [{t['prog']}]")
+                
+        if dpg.does_item_exist("mem_task_listbox"):
+            dpg.configure_item("mem_task_listbox", items=items)
+
+    def _refresh_reg_task_listbox(self):
+        """
+        Aggiorna la listbox delle task registrate dall'utente con tutti i
+        dettagli rilevanti: flag vitale/due-giocatori, zona, numero fasi,
+        e SOPRATTUTTO il legame padre/figlia (sia da che a) e l'origine
+        delle azioni (proprie o ereditate).
+
+        Formato riga:
+            [ID] [!][2P] Nome  A:N  +Nf  [Z:gzid=nome]  ↳P:XX  +Nfigli
+        dove:
+            A:N      = numero azioni proprie
+            A:0←PXX  = questa task non ha azioni proprie e le eredita da XX
+            ↳P:XX    = questa task è FIGLIA di XX (indipendente dal fatto che
+                       erediti o meno: può anche avere azioni proprie)
+            +Nfigli  = questa task è PADRE di N task figlie
+        """
+        items = []
+        
+        tasks_to_render = list(self.task_mgr.task_list)
+        if dpg.does_item_exist("sort_reg_tasks_chk") and dpg.get_value("sort_reg_tasks_chk"):
+            tasks_to_render.sort(key=lambda x: x['nome'].lower())
+            
+        for t in tasks_to_render:
+            vitale_str = " [!]" if t.get('vitale') else ""
+            due_p_str  = " [2P]" if t.get('due_giocatori') else ""
+            custom_str = " [C]" if t.get('codice_custom') else ""
+
+            # Fasi
+            n_fasi   = len(t.get('fasi', []))
+            fasi_str = f" +{n_fasi}f" if n_fasi else ""
+            
+            # Fratelli
+            n_frat   = len(t.get('fratelli', []))
+            frat_str = f" ~{n_frat}fr" if n_frat else ""
+
+            # Zona
+            zone_id  = t.get('zone_id')
+            zona_str = ""
+            if zone_id is not None:
+                z = self.zone_mgr.get_by_game_zone_id(zone_id)
+                zona_str = f" [Z:{zone_id}={z['nome'] if z else '?'}]"
+
+            # Azioni: numero proprie + eventuale ereditarietà
+            n_azioni_proprie = len(t.get('azioni', []))
+            if n_azioni_proprie > 0:
+                azioni_str = f" A:{n_azioni_proprie}"
+            else:
+                # Nessuna azione propria: controllo se eredita dal padre
+                _, src_id = self.task_mgr.get_azioni_effettive(t['id'])
+                if src_id is not None and src_id != t['id']:
+                    azioni_str = f" A:0←P{src_id:02d}"
+                else:
+                    azioni_str = " A:0"
+
+            # Relazioni padre/figlia
+            parent_str  = ""
+            parent_id   = t.get('parent_id')
+            if parent_id is not None:
+                padre = self.task_mgr.get_by_id(parent_id)
+                parent_nome = (padre['nome'].split(": ", 1)[-1][:15]
+                               if padre else '?')
+                parent_str = f"  ↳P:{parent_id:02d}({parent_nome})"
+
+            # Task padre di quante figlie?
+            figli = self.task_mgr.get_figli(t['id'])
+            figli_str = f"  +{len(figli)}figli" if figli else ""
+
+            items.append(
+                f"[{t['id']:02d}]{vitale_str}{due_p_str}{custom_str} {t['nome']}"
+                f"{azioni_str}{fasi_str}{frat_str}{zona_str}{parent_str}{figli_str}"
+            )
+
+        if dpg.does_item_exist("reg_task_listbox"):
+            dpg.configure_item("reg_task_listbox", items=items)
+
+    def _get_selected_mem_task(self):
+        """
+        Ritorna la task RAM selezionata ricostruendo la stringa esatta per il match.
+        """
+        if not self.memory_tasks:
+            return None
+        if not dpg.does_item_exist("mem_task_listbox"):
+            return None
+        
+        sel = dpg.get_value("mem_task_listbox")
+        if not sel:
+            return None
+            
+        enriched = self.task_mgr.get_memory_tasks_info(self.memory_tasks)
+        for t in enriched:
+            stato = "[V]" if t['done'] else "[-]"
+            room_id = t.get('room_id', '?')
+            reg = t['reg_task']
+            
+            if reg:
+                # Sincronizza il prefisso WAIT per far combaciare correttamente la stringa
+                cd = self.task_cooldowns.get(reg['id'], 0)
+                rem = cd - time.time()
+                
+                nome_pulito = reg['nome'].split(": ", 1)[-1]
+                luogo = reg.get('zone_nome', 'Mappa')
+                display_name = f"{luogo}: {nome_pulito}"
+                coord_str = f" ({reg['x']:.1f},{reg['y']:.1f})"
+                
+                if rem > 0:
+                    item_str = f"[WAIT {int(rem)}s] [ID:{room_id}] {display_name} [{t['prog']}]{coord_str}"
+                else:
+                    item_str = f"{stato} [ID:{room_id}] {display_name} [{t['prog']}]{coord_str}"
+            else:
+                item_str = f"{stato} [ID:{room_id}] {t['nome']} [{t['prog']}]"
+                
+            if item_str == sel:
+                return t
+                
+        return None
+
+    def _get_selected_reg_task(self):
+        if not self.task_mgr.task_list:
+            return None
+        if not dpg.does_item_exist("reg_task_listbox"):
+            return None
+        sel = dpg.get_value("reg_task_listbox")
+        if not sel:
+            return None
+        try:
+            id_str = sel.split(']')[0].lstrip('[').strip()
+            id_num = int(id_str)
+            return self.task_mgr.get_by_id(id_num)
+        except (ValueError, IndexError):
+            return None
+
+    def _naviga_a_task_memoria(self, task_to_nav=None):
+        """Naviga con A* verso la task in memoria selezionata, usando le coordinate registrate."""
+        t = task_to_nav if task_to_nav is not None else self._get_selected_mem_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task dalla lista memoria"
+            return
+        reg = t.get('reg_task')
+        if reg is None:
+            self.auto_status_msg = f"Task '{t['nome']}' non ancora registrata — aggiungila prima"
+            return
+            
+        # Controllo Cooldown
+        rem = self.task_cooldowns.get(reg['id'], 0) - time.time()
+        if rem > 0:
+            self.auto_status_msg = f"Task in cooldown. Riprova tra {int(rem)}s"
+            return
+            
+        if not self.auto_enabled:
+            self.auto_enabled = True
+            if dpg.does_item_exist("auto_checkbox"):
+                dpg.set_value("auto_checkbox", True)
+        
+        target_2p, step_2p = self._imposta_navigazione_2p(reg)
+        if target_2p:
+            self._plan_path(target_2p)
+            self.auto_status_msg = f"Navigo verso '{reg['nome']}' (Tappa {step_2p})"
+        else:
+            punti_possibili = [(reg['x'], reg['y'])]
+            for fr in reg.get('fratelli', []):
+                punti_possibili.append((fr['x'], fr['y']))
+                
+            if len(punti_possibili) > 1:
+                self._task_fratelli_pendenti = punti_possibili
+                cx, cy = self.pos_target
+                closest = min(punti_possibili, key=lambda p: math.hypot(cx - p[0], cy - p[1]))
+                tx, ty = closest
+                self.auto_status_msg = f"Navigo verso '{reg['nome']}' (Cerco lock visivo...)"
+            else:
+                self._task_fratelli_pendenti = None
+                tx, ty, step = self._get_task_target_coords(reg)
+                self.auto_status_msg = f"Navigo verso '{reg['nome']}'"
+                
+            self._plan_path((tx, ty))
+
+    def _modifica_task_da_memoria(self):
+        """
+        Apre il popup di modifica per la task REGISTRATA collegata alla task
+        in memoria attualmente selezionata.
+        Utile per modificare nome, coordinate, azioni, padre/figlia ecc. senza
+        dover prima trovare manualmente la corrispondente voce nella lista
+        delle task registrate.
+        Se la task in memoria non è ancora registrata, suggerisce di usare
+        prima il pulsante 'Registra ?'.
+        """
+        t = self._get_selected_mem_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task dalla lista memoria"
+            return
+        reg = t.get('reg_task')
+        if reg is None:
+            self.auto_status_msg = (
+                f"'{t['nome']}' non è ancora registrata — "
+                f"usa 'Registra ?' per aggiungere i dettagli, "
+                f"poi potrai modificarla qui."
+            )
+            return
+        # Apre il popup di modifica passando la task registrata direttamente,
+        # senza bisogno di selezionarla prima nella listbox delle registrate.
+        self._apri_popup_modifica_task(task=reg)
+
+    def _avvia_task_selezionata(self, task_to_run=None):
+        """
+        Flusso coerente in 3 fasi:
+          FASE 1 — Predisposizione (immediata):
+            Crea/verifica il file .py, mostra popup con log di setup,
+            poi avvia la navigazione A* verso la task.
+          FASE 2 — In viaggio:
+            Il popup rimane aperto e mostra "In viaggio verso X...".
+            Il player cammina automaticamente verso la task.
+          FASE 3 — Arrivo + Esecuzione:
+            Appena il player arriva, il popup aggiorna con gli step di lancio
+            (animazione breve), poi avvia il subprocess e si chiude.
+        """
+        t = task_to_run if task_to_run is not None else self._get_selected_mem_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task da avviare"
+            return
+
+        nome    = t['nome']
+        reg     = t.get('reg_task')
+        id_task = reg['id'] if reg else None
+
+        if reg is None:
+            self.auto_status_msg = f"'{nome}' non registrata — aggiungila prima"
+            return
+            
+        self._current_auto_all_task_id = id_task
+            
+        # Controllo Cooldown
+        rem = self.task_cooldowns.get(id_task, 0) - time.time()
+        if rem > 0:
+            self.auto_status_msg = f"Task in cooldown. Riprova tra {int(rem)}s"
+            return
+
+        tag = "task_launch_popup"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+        # ── FASE 1: predisposizione (sincrona, prima di aprire il popup) ──
+        filepath, pred_log = self.task_mgr.predisponi_esecuzione(id_task)
+
+        # Avvia navigazione A*
+        if not self.auto_enabled:
+            self.auto_enabled = True
+            if dpg.does_item_exist("auto_checkbox"):
+                dpg.set_value("auto_checkbox", True)
+        
+        target_2p, step_2p = self._imposta_navigazione_2p(reg)
+        if target_2p:
+            self._plan_path(target_2p)
+        else:
+            punti_possibili = [(reg['x'], reg['y'])]
+            for fr in reg.get('fratelli', []):
+                punti_possibili.append((fr['x'], fr['y']))
+                
+            if len(punti_possibili) > 1:
+                self._task_fratelli_pendenti = punti_possibili
+                cx, cy = self.pos_target
+                closest = min(punti_possibili, key=lambda p: math.hypot(cx - p[0], cy - p[1]))
+                tx, ty = closest
+            else:
+                self._task_fratelli_pendenti = None
+                tx, ty, step = self._get_task_target_coords(reg)
+                
+            self._plan_path((tx, ty))
+
+        # ── Apri popup con log di setup + messaggio "in viaggio" ──
+        setup_lines = "\n".join(pred_log)
+        viaggio_txt = f"{setup_lines}\n\n>> Navigazione verso '{nome}'...\n>> In attesa di arrivo..."
+
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+
+        with dpg.window(label=f"Task: {nome}", tag=tag,
+                        modal=True, no_resize=True, no_collapse=True,
+                        no_close=True,
+                        width=440, height=260,
+                        pos=(max(0, vp_w // 2 - 220),
+                             max(0, vp_h // 2 - 130))):
+            dpg.add_text(viaggio_txt, tag="task_launch_popup_text",
+                         color=(0, 200, 255, 255), wrap=420)
+
+        # Disabilita l'animazione a step (il popup è già pieno di testo)
+        self.task_launch_active = False
+        self._task_launch_nome  = nome
+        self._task_launch_id    = id_task
+        self._task_fallback_idx = 0
+
+        # ── FASE 2→3: callback all'arrivo ──
+        def on_arrivo():
+            """Chiamato da _update_auto_move quando il player raggiunge la task."""
+            if not dpg.does_item_exist("task_launch_popup_text"):
+                self._avvia_subprocess_task(id_task)
+                return
+
+            time.sleep(0.3) # pausa per stabilità visiva (frame capture screen)
+
+            # --- CHECK VISUALE (Use Button / Alone Giallo) ---
+            curr_target = getattr(self, '_current_nav_target', (tx, ty))
+            if not self._controlla_task_attiva(curr_target[0], curr_target[1]):
+                fratelli = reg.get('fratelli', [])
+                curr_fratello = getattr(self, '_task_fratello_idx', 0)
+                if curr_fratello < len(fratelli):
+                    next_target = (fratelli[curr_fratello]['x'], fratelli[curr_fratello]['y'])
+                    self._task_fratello_idx = curr_fratello + 1
+                    self.auto_status_msg = f"Task non attiva qui, navigo al fratello {self._task_fratello_idx}..."
+                    print(f"[Visual Check] Niente USE o alone giallo. Navigo a fratello: {next_target}")
+                    self._current_nav_target = next_target
+                    self._plan_path(next_target)
+                    self._on_arrival_callback = on_arrivo
+                    return
+                else:
+                    print(f"[Visual Check] Nessun fratello rimanente o tutti inattivi, procedo comunque.")
+
+            # Aggiorna popup con gli step di lancio animati
+            self._task_launch_steps     = (TaskManager.STATI_LAUNCH
+                                           + [f">> '{nome}' IN ESECUZIONE ★"])
+            self._task_launch_timer_arr = 0.0
+            self._task_launch_arrivo    = True  # flag: siamo in fase 3
+            dpg.configure_item("task_launch_popup_text", color=(0, 220, 120, 255))
+            self.auto_status_msg = f"Arrivato a '{nome}' — avvio in corso..."
+
+        self._current_nav_target = target_2p if target_2p else (tx, ty)
+        self._task_fratello_idx = 0
+        self._on_arrival_callback   = on_arrivo
+        self._task_launch_arrivo    = False
+        self._task_launch_timer_arr = 0.0
+        self.auto_status_msg        = f"In viaggio verso '{nome}'..."
+
+    def _update_task_launch(self, dt):
+        """
+        Gestisce l'animazione del popup nelle due fasi attive:
+        - Fase 3 (arrivo): anima gli step di lancio e poi avvia il subprocess.
+        (La fase 1 popola il popup in modo statico, nessuna animazione.)
+        """
+        if not getattr(self, '_task_launch_arrivo', False):
+            return
+
+        self._task_launch_timer_arr += dt
+        steps    = self._task_launch_steps
+        interval = 0.4
+        idx      = min(int(self._task_launch_timer_arr / interval), len(steps))
+
+        log_text = "\n".join(steps[:idx])
+        if dpg.does_item_exist("task_launch_popup_text"):
+            dpg.set_value("task_launch_popup_text", log_text)
+
+        # Dopo aver mostrato tutti gli step + 1s di pausa: avvia subprocess e chiudi
+        close_at = len(steps) * interval + 1.0
+        if self._task_launch_timer_arr >= close_at:
+            self._task_launch_arrivo = False
+            if dpg.does_item_exist("task_launch_popup"):
+                dpg.delete_item("task_launch_popup")
+
+            # --- PREMUTA DELLA BARRA SPAZIATRICE ---
+            # Simula la pressione di SPAZIO per far aprire il minigioco.
+            try:
+                _send_scan(SCAN_CODES['SPACE'], keyup=False)
+                time.sleep(0.05)
+                _send_scan(SCAN_CODES['SPACE'], keyup=True)
+            except Exception as e:
+                print(f"[Input] Errore pressione SPAZIO: {e}")
+            # ---------------------------------------
+
+            id_task = getattr(self, '_task_launch_id', None)
+            if id_task is not None:
+                self._avvia_subprocess_task(id_task)
+
+    def _avvia_subprocess_task(self, id_task):
+        """
+        Avvia il file .py della task come processo separato (non bloccante).
+        Se c'è già un processo attivo per la stessa task, non ne avvia un secondo.
+        """
+        task = self.task_mgr.get_by_id(id_task)
+        if task is None:
+            self.auto_status_msg = "Errore: task non trovata"
+            return
+
+        exec_info = task.setdefault('esecuzione', {})
+
+        azioni_eff, src_id = self.task_mgr.get_azioni_effettive(id_task)
+        target_id = src_id if (src_id is not None and src_id != id_task) else id_task
+        target_task = self.task_mgr.get_by_id(target_id)
+        
+        # Assicuriamoci di usare sempre il file del padre se si eredita
+        target_exec = target_task.setdefault('esecuzione', {})
+        filepath  = target_exec.get('file')
+
+        # Se il file non esiste ancora, crealo ora
+        if not filepath or not os.path.exists(filepath):
+            filepath = self.task_mgr.crea_file_esecuzione(target_id)
+            if not filepath:
+                self.auto_status_msg = f"Errore: impossibile creare file .py per '{target_task['nome']}'"
+                return
+            exec_info['file'] = filepath
+            target_exec['file'] = filepath
+            self.task_mgr.salva()
+
+        # Se il file esiste ma è vecchio (senza blocco __main__), rigeneralo
+        try:
+            with open(filepath, 'r', encoding='utf-8') as fh:
+                contenuto = fh.read()
+            if ('current_step=TASK_META' not in contenuto or 'sys.exit(1)' not in contenuto or 'GetForegroundWindow() != hwnd' not in contenuto) and not target_task.get('codice_custom', False):
+                print(f"[Exec] File '{os.path.basename(filepath)}' obsoleto — rigenero")
+                filepath = self.task_mgr.crea_file_esecuzione(target_id)
+                exec_info['file'] = filepath
+                target_exec['file'] = filepath
+                self.task_mgr.salva()
+        except Exception:
+            pass
+
+        # Evita doppio avvio dello stesso processo
+        if (self._task_process is not None
+                and self._task_process.poll() is None
+                and self._task_process_task_id == id_task):
+            self.auto_status_msg = f"'{task['nome']}' è già in esecuzione"
+            return
+
+        _, _, ram_step = self._get_task_target_coords(task)
+        
+        # Prende lo step massimo tra quello della RAM (se il giocatore l'ha fatto a mano) 
+        # e quello interno (guidato dalle azioni di Cooldown nello script)
+        internal_step = self.task_internal_steps.get(id_task, 0)
+        script_step = max(ram_step, internal_step)
+
+        try:
+            abs_filepath = os.path.abspath(filepath)
+            # cwd = directory di lancio del bot (dove stanno mappa_skeld.json,
+            # i modelli .pt, ecc.). Nell'originale __file__ era main.py nella
+            # cartella radice; con il package __file__ e' dentro among_us_gps/ui/
+            # quindi usiamo os.getcwd() che e' la cwd del processo principale.
+            self._task_process = subprocess.Popen(
+                [sys.executable, "-u", abs_filepath, "--step", str(script_step)],
+                cwd=os.getcwd(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,   # unifica stderr in stdout
+                bufsize=0,
+            )
+            self._task_process_task_id = id_task
+            self.task_mgr.imposta_stato_esecuzione(id_task, 'running')
+            self.auto_status_msg = f"▶ '{task['nome']}' avviata (PID {self._task_process.pid})"
+            print(f"[Exec] Avviato '{abs_filepath}' — PID {self._task_process.pid}", flush=True)
+
+            # Thread che legge stdout del processo e stampa riga per riga
+            proc_ref  = self._task_process
+            nome_task = task['nome']
+            def _leggi_output(proc, nome, tid, sys_ref):
+                try:
+                    for raw in proc.stdout:
+                        line = raw.decode('utf-8', errors='replace').rstrip('\n')
+                        print(f"[{nome}] {line}", flush=True)
+                        if line.startswith("__COOLDOWN__:"):
+                            try:
+                                cd_val = float(line.split(":")[1])
+                                sys_ref.task_cooldowns[tid] = time.time() + cd_val
+                                
+                                # Lo script ha eseguito con successo un blocco/fase, salviamo in memoria locale
+                                curr = sys_ref.task_internal_steps.get(tid, 0)
+                                sys_ref.task_internal_steps[tid] = curr + 1
+                                
+                                print(f"[{nome}] Timer cooldown impostato per {cd_val}s", flush=True)
+                            except ValueError:
+                                pass
+                except Exception:
+                    pass
+            t = threading.Thread(
+                target=_leggi_output,
+                args=(proc_ref, nome_task, id_task, self),
+                daemon=True,
+            )
+            t.start()
+        except Exception as e:
+            self.task_mgr.imposta_stato_esecuzione(id_task, 'error')
+            self.auto_status_msg = f"Errore avvio: {e}"
+            print(f"[Exec] Errore avvio '{filepath}': {e}")
+
+    def _controlla_processo_task(self):
+        """
+        Controlla se il processo in esecuzione è terminato e aggiorna lo stato.
+        Va chiamato nel loop principale (aggiorna_frame).
+        """
+        if self._task_process is None:
+            return
+        ret = self._task_process.poll()
+        if ret is None:
+            # --- Controllo completamento RAM in tempo reale ---
+            id_task = self._task_process_task_id
+            if id_task is not None:
+                task_reg = self.task_mgr.get_by_id(id_task)
+                if task_reg:
+                    tipo = task_reg.get('tipo')
+                    room_id = task_reg.get('room_id')
+                    # Cerca la task corrispondente in memoria
+                    for mt in getattr(self, 'memory_tasks', []):
+                        if mt.get('tipo') == tipo and mt.get('room_id') == room_id:
+                            if mt.get('done', False):
+                                # La task è finita nel gioco! Termina il processo.
+                                self._ferma_processo_task(success=True)
+                                return
+            return  # ancora in esecuzione
+
+        # Processo terminato
+        id_task = self._task_process_task_id
+        if id_task is not None:
+            task = self.task_mgr.get_by_id(id_task)
+            
+            # --- LOGICA DI FALLBACK: Se la task fallisce e ha Fratelli, usali come posizioni alternative ---
+            if ret != 0 and task and task.get('fratelli'):
+                fratelli = task.get('fratelli', [])
+                curr_fallback = getattr(self, '_task_fallback_idx', 0)
+                if curr_fallback < len(fratelli):
+                    next_target = (fratelli[curr_fallback]['x'], fratelli[curr_fallback]['y'])
+                    self._task_fallback_idx = curr_fallback + 1
+                    self.auto_status_msg = f"Task fallita, provo fratello {self._task_fallback_idx}..."
+                    print(f"[Fallback] Errore esecuzione. Navigo al punto alternativo: {next_target}")
+                    
+                    self._task_process = None
+                    self._task_process_task_id = None
+                    
+                    self._current_nav_target = next_target
+                    self._plan_path(next_target)
+                    
+                    def on_arrivo_fallback():
+                        self._avvia_subprocess_task(id_task)
+                        
+                    self._on_arrival_callback = on_arrivo_fallback
+                    return
+            # -----------------------------------------------------------------------------------------
+
+            nuovo_stato = 'done' if ret == 0 else 'error'
+            self.task_mgr.imposta_stato_esecuzione(id_task, nuovo_stato)
+
+            # Applica Cooldown se il processo è finito senza errori e la task lo richiede
+            if ret == 0 and task and task.get('cooldown', 0) > 0:
+                self.task_cooldowns[id_task] = time.time() + task['cooldown']
+
+            # --- COOLDOWN DI SICUREZZA contro il loop infinito ---
+            # Se il subprocess e' terminato (con qualsiasi exit code) ma la
+            # task NON risulta done in RAM, applichiamo un cooldown breve
+            # per evitare che Auto-All la rilanci subito in ciclo. Succede
+            # quando il bot non arriva esatto sul punto, oppure il minigioco
+            # non si apre per qualunque motivo.
+            if task:
+                task_done_in_ram = False
+                tipo_t   = task.get('tipo')
+                room_t   = task.get('room_id')
+                for mt in getattr(self, 'memory_tasks', []):
+                    if (mt.get('tipo') == tipo_t
+                            and mt.get('room_id') == room_t
+                            and mt.get('done', False)):
+                        task_done_in_ram = True
+                        break
+                if not task_done_in_ram:
+                    existing_cd = self.task_cooldowns.get(id_task, 0)
+                    safety_cd = time.time() + 8.0   # 8 s di tregua
+                    if safety_cd > existing_cd:
+                        self.task_cooldowns[id_task] = safety_cd
+                        print(f"[Loop guard] Task non completata in RAM — cooldown di sicurezza 8s")
+
+            nome = task['nome'] if task else f"#{id_task}"
+            icona = "✓" if ret == 0 else "✗"
+            self.auto_status_msg = f"{icona} '{nome}' terminata (exit {ret})"
+            print(f"[Exec] '{nome}' terminata — exit code {ret}")
+
+        self._task_process         = None
+        self._task_process_task_id = None
+
+    def _ferma_processo_task(self, success=False):
+        """Termina il processo attivo (se presente) e aggiorna lo stato a idle."""
+        # Rilascia sempre il mouse per evitare che rimanga incastrato sul gioco
+        if _WIN_OK:
+            try:
+                pyautogui.mouseUp(button='left')
+            except Exception:
+                pass
+                
+        if self._task_process is None or self._task_process.poll() is not None:
+            if not success:
+                self.auto_status_msg = "Nessun processo da fermare"
+            return
+        try:
+            self._task_process.terminate()
+            self._task_process.wait(timeout=3)
+        except Exception:
+            try:
+                self._task_process.kill()
+            except Exception:
+                pass
+        id_task = self._task_process_task_id
+        if id_task is not None:
+            nuovo_stato = 'done' if success else 'idle'
+            self.task_mgr.imposta_stato_esecuzione(id_task, nuovo_stato)
+            task = self.task_mgr.get_by_id(id_task)
+            nome = task['nome'] if task else f"#{id_task}"
+            if success:
+                self.auto_status_msg = f"✓ '{nome}' completata (Memoria)"
+                print(f"[Exec] '{nome}' interrotta automaticamente (successo in RAM)")
+            else:
+                self.auto_status_msg = f"⏹ '{nome}' fermata"
+                print(f"[Exec] '{nome}' terminata forzatamente")
+        self._task_process         = None
+        self._task_process_task_id = None
+
+    def _registra_task_sconosciuta(self):
+        """
+        Se la task selezionata in memoria non è mappata, apre il popup
+        di registrazione pre-compilato con nome, tipo e room_id (identificatori univoci).
+        """
+        t = self._get_selected_mem_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task dalla lista"
+            return
+        if t.get('reg_task') is not None:
+            self.auto_status_msg = f"'{t['nome']}' è già registrata"
+            return
+
+        # Dati univoci e persistenti della task
+        tipo_id = t.get('tipo')
+        room_id = t.get('room_id')
+
+        tag = "popup_registra_sconosciuta"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+        px, py = self.pos_target
+        vp_w   = dpg.get_viewport_client_width()
+        vp_h   = dpg.get_viewport_client_height()
+
+        # --- Zona rilevata automaticamente dalla posizione attuale ---
+        zona_now  = self._zona_alla_posizione(px, py)
+        gz_id_now = zona_now.get('game_zone_id') if zona_now else None
+        zl_id_now = zona_now['id']               if zona_now else None
+
+        # Pre-compila nome vuoto per far scegliere all'utente
+        nome_default = ""
+
+        if zona_now:
+            gz_str    = f"  GZ:{gz_id_now}" if gz_id_now is not None else "  (nessun game_zone_id)"
+            zona_info = f"[{zl_id_now:02d}] {zona_now['nome']}{gz_str}"
+            col_zona  = Colors.ACCENT
+        else:
+            zona_info = "Fuori da qualsiasi zona - zone_id non impostato"
+            col_zona  = (200, 120, 30, 255)
+
+        def do_salva(*_):
+            nome_v      = dpg.get_value("rs_nome").strip()
+            x_v         = dpg.get_value("rs_x")
+            y_v         = dpg.get_value("rs_y")
+            vitale_v    = dpg.get_value("rs_vitale")
+            due_p_v     = dpg.get_value("rs_due_p")
+            if not nome_v:
+                return
+
+            # Ricalcola la zona basandosi sulle coordinate finali scelte nel popup
+            zona_s  = self._zona_alla_posizione(x_v, y_v) or zona_now
+            gz_id_s = zona_s.get('game_zone_id') if zona_s else gz_id_now
+            zl_id_s = zona_s['id']               if zona_s else zl_id_now
+
+            # Salvataggio tramite TaskManager usando i nuovi parametri
+            self.task_mgr.aggiungi(
+                nome_v, x_v, y_v,
+                room_id       = room_id,
+                tipo          = tipo_id,
+                zone_id       = gz_id_s,
+                zone_local_id = zl_id_s,
+                zone_nome     = zona_s['nome'] if zona_s else None,
+                vitale        = vitale_v,
+                due_giocatori = due_p_v,
+            )
+            self._refresh_reg_task_listbox()
+            self._refresh_mem_task_listbox()
+            
+            zona_msg = f" in '{zona_s['nome']}'" if zona_s else ""
+            self.auto_status_msg = (f"Task '{nome_v}' registrata{zona_msg}  "
+                                    f"tipo={tipo_id}  room={room_id}")
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        def do_usa_pos(*_):
+            nx = round(self.pos_target[0], 3)
+            ny = round(self.pos_target[1], 3)
+            dpg.set_value("rs_x", nx)
+            dpg.set_value("rs_y", ny)
+            
+            # Aggiorna label della zona in tempo reale se il giocatore si sposta
+            z2 = self._zona_alla_posizione(nx, ny)
+            if z2:
+                gz2   = z2.get('game_zone_id')
+                info2 = f"[{z2['id']:02d}] {z2['nome']}" + (f"  GZ:{gz2}" if gz2 is not None else "")
+            else:
+                info2 = "Fuori da qualsiasi zona"
+            if dpg.does_item_exist("rs_zona_info"):
+                dpg.set_value("rs_zona_info", info2)
+
+        # Mostriamo gli ID utili a schermo per debug e chiarezza
+        id_str = f"Task Type: {tipo_id}  |  Room ID: {room_id}"
+        
+        with dpg.window(label="Registra Task", tag=tag,
+                        modal=True, no_resize=True, no_collapse=True,
+                        width=400, height=315,
+                        pos=(max(0, vp_w // 2 - 200), max(0, vp_h // 2 - 147))):
+            dpg.add_text(id_str, color=Colors.ACCENT)
+            dpg.add_text("Zona rilevata automaticamente:", color=Colors.TEXT_DIM)
+            dpg.add_text(zona_info, tag="rs_zona_info", color=col_zona)
+            dpg.add_separator()
+            dpg.add_text("Nome  (puoi modificarlo):")
+            dpg.add_input_text(tag="rs_nome", default_value=nome_default, width=-1)
+            dpg.add_spacer(height=4)
+            dpg.add_text("Coordinate:")
+            with dpg.group(horizontal=True):
+                dpg.add_text("X:")
+                dpg.add_input_float(tag="rs_x", default_value=round(px, 3), width=155, step=0)
+                dpg.add_text("Y:")
+                dpg.add_input_float(tag="rs_y", default_value=round(py, 3), width=155, step=0)
+            dpg.add_button(label="Usa posizione attuale  (aggiorna zona)", width=-1,
+                           callback=do_usa_pos)
+            dpg.add_spacer(height=6)
+            dpg.add_checkbox(tag="rs_vitale", label=" Task di VITALE importanza  [!]",
+                             default_value=False)
+            dpg.add_checkbox(tag="rs_due_p", label=" Richiede due giocatori  [2P]",
+                             default_value=False)
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Salva", width=195, callback=do_salva)
+                dpg.add_button(label="Annulla", width=195,
+                               callback=lambda *a: dpg.delete_item(tag)
+                               if dpg.does_item_exist(tag) else None)
+
+    def _get_raw_task_id(self, nome_task):
+        """
+        Cerca l'ID numerico grezzo del gioco per una task dato il suo nome,
+        scorrendo le definizioni caricate da tasks.json.
+        """
+        # Prima prova nei task_def del reader (da tasks.json)
+        for tid, info in self.task_reader.skeld_tasks.items():
+            if info.get("n", "") == nome_task:
+                return tid
+        # Fallback: cerca nel TaskManager def
+        for tid, info in self.task_mgr.tasks_def.items():
+            if info.get("n", "") == nome_task:
+                return tid
+        return None
+
+    def _naviga_a_task_registrata(self):
+        t = self._get_selected_reg_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task registrata"
+            return
+        if not self.auto_enabled:
+            self.auto_enabled = True
+            if dpg.does_item_exist("auto_checkbox"):
+                dpg.set_value("auto_checkbox", True)
+                
+        target_2p, step_2p = self._imposta_navigazione_2p(t)
+        if target_2p:
+            self._plan_path(target_2p)
+            label_loc = 'A' if target_2p == getattr(self, 'auto_2p_loc_A', None) else 'B'
+            self.auto_status_msg = f"Navigo verso '{t['nome']}' (2P - Loc {label_loc})"
+        else:
+            self._plan_path((t['x'], t['y']))
+            self.auto_status_msg = f"Navigo verso '{t['nome']}'"
+
+    def _elimina_task_registrata(self):
+        t = self._get_selected_reg_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task da eliminare"
+            return
+        nome = t['nome']
+        id_t = t['id']
+        def on_confirm(yes):
+            if yes:
+                self.task_mgr.rimuovi(id_t)
+                # Sia la lista registrate (sparisce la task) sia la lista memoria
+                # (la voce collegata diventa "non registrata") devono aggiornarsi.
+                self._refresh_reg_task_listbox()
+                self._refresh_mem_task_listbox()
+                self.auto_status_msg = f"Task '{nome}' eliminata"
+        self._show_confirm(f"Eliminare la task '{nome}' ?", on_confirm)
+
+    def _esegui_generazione_py(self, t):
+        filepath = self.task_mgr.crea_file_esecuzione(t['id'])
+
+        if filepath:
+            filename = os.path.basename(filepath)
+            self.auto_status_msg = f"File creato: {filename}"
+            if dpg.does_item_exist("genera_py_status"):
+                dpg.configure_item("genera_py_status", color=(0, 220, 120, 255))
+                dpg.set_value("genera_py_status", f"✓ {filename}")
+            # Aggiorna anche il riferimento nel JSON (exec_info['file'])
+            exec_info = t.setdefault('esecuzione', {
+                'file': None, 'stato': 'idle', 'params': {}
+            })
+            exec_info['file'] = filepath
+            self.task_mgr.salva()
+        else:
+            self.auto_status_msg = "Errore creazione file .py"
+            if dpg.does_item_exist("genera_py_status"):
+                dpg.configure_item("genera_py_status", color=(255, 80, 80, 255))
+                dpg.set_value("genera_py_status", "✗ errore")
+
+    def _genera_file_esecuzione(self):
+        """
+        Genera (o rigenera) il file .py di esecuzione per la task registrata
+        selezionata nella listbox. Mostra feedback inline accanto al pulsante.
+        """
+        t = self._get_selected_reg_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task registrata"
+            if dpg.does_item_exist("genera_py_status"):
+                dpg.configure_item("genera_py_status", color=(255, 100, 80, 255))
+                dpg.set_value("genera_py_status", "← seleziona prima")
+            return
+
+        azioni_eff, src_id = self.task_mgr.get_azioni_effettive(t['id'])
+        if src_id is not None and src_id != t['id']:
+            self.auto_status_msg = f"La task eredita il file dal padre [{src_id}]"
+            if dpg.does_item_exist("genera_py_status"):
+                dpg.configure_item("genera_py_status", color=(255, 180, 100, 255))
+                dpg.set_value("genera_py_status", f"Eredita dal padre [{src_id}]")
+            return
+
+        if t.get('codice_custom', False):
+            def on_confirm(yes):
+                if yes:
+                    self._esegui_generazione_py(t)
+            self._show_confirm(f"La task '{t['nome']}' usa 'Codice Custom'.\nSovrascrivere il suo file .py?", on_confirm)
+        else:
+            self._esegui_generazione_py(t)
+
+    # ---- Popup Relazioni Padre ↔ Figlia ----
+    def _apri_popup_relazioni_task(self):
+        """
+        Finestra non-modale che mostra tutte le task registrate come card,
+        raggruppate in FAMIGLIE (padre + figlie) e TASK LIBERE.
+        Permette di collegare/scollegare relazioni padre-figlia con due click:
+          1. Clicca "Imposta come PADRE" su una task
+          2. Clicca "← Collega come figlia" su un'altra
+        """
+        TAG_WIN    = "popup_relazioni_task"
+        TAG_SCROLL = "rel_cards_scroll"
+        TAG_STATUS = "rel_status_txt"
+        WIN_W, WIN_H = 860, 700
+
+        if dpg.does_item_exist(TAG_WIN):
+            dpg.delete_item(TAG_WIN)
+
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+
+        # Stato condiviso tra i callback: quale task è "padre pending"
+        state = {'pending': None}   # None oppure id_task
+
+        # ── Helper stato / refresh ─────────────────────────────────────────
+
+        def _status(msg, col=None):
+            if dpg.does_item_exist(TAG_STATUS):
+                dpg.set_value(TAG_STATUS, msg)
+                if col:
+                    dpg.configure_item(TAG_STATUS, color=col)
+
+        def _refresh(*_):
+            if not dpg.does_item_exist(TAG_SCROLL):
+                return
+            dpg.delete_item(TAG_SCROLL, children_only=True)
+            _build_cards()
+
+        # ── Callback bottoni ──────────────────────────────────────────────
+
+        def _cb_imposta_padre(sender, app_data, tid):
+            t = self.task_mgr.get_by_id(tid)
+            state['pending'] = tid
+            _status(
+                f"PADRE selezionato: [{tid:02d}] {t['nome']}  "
+                f"→  clicca '← Collega come figlia' sulla task da collegare",
+                (255, 200, 0))
+            _refresh()
+
+        def _cb_collega_figlia(sender, app_data, id_figlia):
+            id_padre = state['pending']
+            if id_padre is None:
+                return
+            ok = self.task_mgr.imposta_parent(id_figlia, id_padre)
+            if ok:
+                state['pending'] = None
+                p = self.task_mgr.get_by_id(id_padre)
+                f = self.task_mgr.get_by_id(id_figlia)
+                _status(
+                    f"✓  [{id_figlia:02d}] {f['nome']}  "
+                    f"collegata come figlia di  [{id_padre:02d}] {p['nome']}",
+                    (0, 220, 120))
+                self._refresh_reg_task_listbox()
+                self._refresh_mem_task_listbox()
+            else:
+                _status(
+                    "✗  Collegamento non valido: self-loop, "
+                    "catena multi-livello, o padre già figlia di qualcuno",
+                    (255, 100, 80))
+            _refresh()
+
+        def _cb_scollega(sender, app_data, tid):
+            self.task_mgr.imposta_parent(tid, None)
+            state['pending'] = None
+            t = self.task_mgr.get_by_id(tid)
+            _status(f"[{tid:02d}] {t['nome']} scollegata dal padre",
+                    Colors.TEXT_DIM)
+            self._refresh_reg_task_listbox()
+            self._refresh_mem_task_listbox()
+            _refresh()
+
+        def _cb_annulla(*_):
+            state['pending'] = None
+            _status(
+                "Seleziona una task come PADRE per iniziare il collegamento",
+                Colors.TEXT_DIM)
+            _refresh()
+
+        def _cb_modifica(sender, app_data, tid):
+            self._apri_popup_modifica_task(task=self.task_mgr.get_by_id(tid))
+
+        # ── Costruzione card singola ───────────────────────────────────────
+
+        def _card(t, indented=False, padre_nome=None):
+            tid    = t['id']
+            nome   = t['nome']
+            zona   = t.get('zone_nome') or '—'
+            n_az   = len(t.get('azioni', []))
+            _, src = self.task_mgr.get_azioni_effettive(tid)
+            figli  = self.task_mgr.get_figli(tid)
+            pid    = state['pending']
+
+            # Colore della card
+            if tid == pid:
+                col_id = (255, 200, 0)    # giallo: padre selezionato
+            elif figli:
+                col_id = (80, 180, 255)   # azzurro: è padre
+            elif t.get('parent_id'):
+                col_id = (120, 220, 120)  # verde: è figlia
+            else:
+                col_id = (190, 190, 190)  # grigio: libera
+
+            # Stringa azioni
+            if n_az > 0:
+                az_str = f"A:{n_az}"
+            elif src and src != tid:
+                az_str = f"A:0←P{src:02d}"
+            else:
+                az_str = "A:0"
+
+            indent_txt = "    ↳  " if indented else ""
+
+            with dpg.group(horizontal=False, parent=TAG_SCROLL):
+                # ── Riga 1: id + nome + badge ──
+                with dpg.group(horizontal=True):
+                    dpg.add_text(f"{indent_txt}[{tid:02d}]", color=col_id)
+                    dpg.add_text(f"  {nome}")
+                    dpg.add_text(f"   {az_str}", color=(100, 200, 255))
+                    if t.get('vitale'):
+                        dpg.add_text("  [!]",  color=(255, 80, 80))
+                    if t.get('due_giocatori'):
+                        dpg.add_text("  [2P]", color=(255, 200, 80))
+
+                # ── Riga 2: dettagli ──
+                dettagli = f"      Zona: {zona}"
+                if padre_nome:
+                    dettagli += f"   |   Padre: {padre_nome}"
+                if figli:
+                    nomi_f = ", ".join(f"[{f['id']:02d}] {f['nome']}"
+                                       for f in figli[:4])
+                    if len(figli) > 4:
+                        nomi_f += f"  (+{len(figli)-4})"
+                    dettagli += f"   |   Figli: {nomi_f}"
+                dpg.add_text(dettagli, color=Colors.TEXT_DIM)
+
+                # ── Riga 3: bottoni ──
+                with dpg.group(horizontal=True):
+                    if pid is None:
+                        # Nessun padre in selezione
+                        if not t.get('parent_id'):
+                            # Può diventare padre (non è già figlia di nessuno)
+                            dpg.add_button(
+                                label="Imposta come PADRE",
+                                user_data=tid,
+                                callback=_cb_imposta_padre,
+                                width=155, height=22)
+                        if t.get('parent_id'):
+                            # È già figlia: offri di scollegarla
+                            dpg.add_button(
+                                label="Scollega dal padre",
+                                user_data=tid,
+                                callback=_cb_scollega,
+                                width=140, height=22)
+                    else:
+                        # Un padre è selezionato
+                        if tid == pid:
+                            dpg.add_text("[PADRE SELEZIONATO]",
+                                         color=(255, 200, 0))
+                            dpg.add_button(
+                                label="Annulla",
+                                callback=_cb_annulla,
+                                width=70, height=22)
+                        elif not t.get('parent_id') and not figli:
+                            # Task libera: può diventare figlia
+                            dpg.add_button(
+                                label=f"← Collega come figlia di [{pid:02d}]",
+                                user_data=tid,
+                                callback=_cb_collega_figlia,
+                                width=230, height=22)
+                        elif t.get('parent_id'):
+                            dpg.add_text("(ha già un padre)",
+                                         color=Colors.TEXT_DIM)
+                        elif figli:
+                            dpg.add_text("(è padre: non può diventare figlia)",
+                                         color=Colors.TEXT_DIM)
+
+                    # Modifica sempre disponibile
+                    dpg.add_button(
+                        label="Modifica",
+                        user_data=tid,
+                        callback=_cb_modifica,
+                        width=75, height=22)
+
+                dpg.add_separator()
+
+        # ── Costruzione completa lista card ───────────────────────────────
+
+        def _build_cards():
+            tasks  = self.task_mgr.task_list
+            padri  = [t for t in tasks
+                      if self.task_mgr.get_figli(t['id']) and not t.get('parent_id')]
+            orfane = [t for t in tasks
+                      if not self.task_mgr.get_figli(t['id']) and not t.get('parent_id')]
+
+            if not tasks:
+                with dpg.group(parent=TAG_SCROLL):
+                    dpg.add_text("Nessuna task registrata ancora.",
+                                 color=Colors.TEXT_DIM)
+                return
+
+            # Riepilogo numerico
+            n_famiglie = len(padri)
+            n_figli    = sum(len(self.task_mgr.get_figli(p['id'])) for p in padri)
+            n_libere   = len(orfane)
+            with dpg.group(horizontal=True, parent=TAG_SCROLL):
+                dpg.add_text(
+                    f"Totale: {len(tasks)} task   |   "
+                    f"{n_famiglie} famiglie ({n_figli} figlie)   |   "
+                    f"{n_libere} libere",
+                    color=Colors.TEXT_DIM)
+            with dpg.group(parent=TAG_SCROLL):
+                dpg.add_spacer(height=6)
+
+            # ─── Sezione FAMIGLIE ───────────────────────────────────────
+            if padri:
+                with dpg.group(parent=TAG_SCROLL):
+                    dpg.add_text("FAMIGLIE  —  padre con le sue figlie",
+                                 color=(80, 180, 255))
+                    dpg.add_separator()
+                    dpg.add_spacer(height=4)
+
+                for padre in padri:
+                    _card(padre)
+                    for figlia in self.task_mgr.get_figli(padre['id']):
+                        _card(figlia, indented=True, padre_nome=padre['nome'])
+                    with dpg.group(parent=TAG_SCROLL):
+                        dpg.add_spacer(height=8)
+
+            # ─── Sezione TASK LIBERE ────────────────────────────────────
+            if orfane:
+                with dpg.group(parent=TAG_SCROLL):
+                    dpg.add_spacer(height=4)
+                    dpg.add_text("TASK LIBERE  —  senza relazioni",
+                                 color=(190, 190, 190))
+                    dpg.add_separator()
+                    dpg.add_spacer(height=4)
+                for t in orfane:
+                    _card(t)
+
+        # ── Finestra ──────────────────────────────────────────────────────
+
+        with dpg.window(
+                label="Relazioni Task  —  Padre ↔ Figlia",
+                tag=TAG_WIN,
+                width=WIN_W, height=WIN_H,
+                pos=(max(0, vp_w // 2 - WIN_W // 2),
+                     max(0, vp_h // 2 - WIN_H // 2)),
+                no_collapse=True,
+                on_close=lambda *a: (dpg.delete_item(TAG_WIN)
+                                     if dpg.does_item_exist(TAG_WIN) else None)):
+
+            dpg.add_text("GESTIONE RELAZIONI  PADRE ↔ FIGLIA",
+                         color=Colors.ACCENT)
+            dpg.add_separator()
+
+            # Barra di stato / istruzioni
+            dpg.add_text(
+                "Seleziona una task come PADRE per iniziare il collegamento",
+                tag=TAG_STATUS, color=Colors.TEXT_DIM, wrap=WIN_W - 30)
+
+            dpg.add_spacer(height=4)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Annulla selezione",
+                               callback=_cb_annulla,
+                               width=150, height=26)
+                dpg.add_button(label="Aggiorna vista",
+                               callback=_refresh,
+                               width=120, height=26)
+                dpg.add_button(
+                    label="Chiudi",
+                    callback=lambda *a: (dpg.delete_item(TAG_WIN)
+                                         if dpg.does_item_exist(TAG_WIN) else None),
+                    width=90, height=26)
+            dpg.add_separator()
+            dpg.add_spacer(height=4)
+
+            # Area scrollabile con le card
+            with dpg.child_window(tag=TAG_SCROLL, width=-1, height=-1):
+                pass
+
+            _build_cards()
+
+    # ---- Popup Nuova Task ----
+    def _zona_alla_posizione(self, x, y):
+        """
+        Ritorna la zona (dict) in cui cade il punto (x, y).
+        Se il punto è fuori dai confini, calcola e restituisce la zona più vicina.
+        """
+        if not self.zone_mgr.zone:
+            return None
+
+        # 1. Controllo geometrico: il punto è esattamente dentro un poligono?
+        for z in self.zone_mgr.zone:
+            if self._is_point_in_polygon(x, y, z['punti']):
+                return z
+
+        # 2. Fallback: se sei fuori dai poligoni, trova la zona più vicina tramite centroide
+        zona_piu_vicina = None
+        dist_minima = float('inf')
+
+        for z in self.zone_mgr.zone:
+            cx, cy = ZoneManager.centroide(z)
+            dist = math.hypot(x - cx, y - cy)
+            if dist < dist_minima:
+                dist_minima = dist
+                zona_piu_vicina = z
+
+        return zona_piu_vicina
+
+    def _apri_popup_nuova_task(self):
+        tag = "popup_nuova_task"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+        px, py = self.pos_target
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+
+        # --- Rileva zona corrente ---
+        zona_corrente = self._zona_alla_posizione(px, py)
+        nome_zona     = zona_corrente['nome']       if zona_corrente else None
+        game_zone_id  = zona_corrente.get('game_zone_id') if zona_corrente else None
+        zone_local_id = zona_corrente['id']         if zona_corrente else None
+
+        # Nome vuoto — l'utente lo inserisce manualmente
+        nome_default = ""
+
+        # Info zona per mostrare nel popup
+        zona_info = ""
+        if zona_corrente:
+            gzid_str  = f"  game_zone_id={game_zone_id}" if game_zone_id is not None else "  (nessun game_zone_id)"
+            zona_info = f"Zona rilevata: [{zone_local_id:02d}] {nome_zona}{gzid_str}"
+        else:
+            zona_info = "Posizione fuori da qualsiasi zona registrata"
+
+        def do_salva(*_):
+            nome_v      = dpg.get_value("nt_nome").strip()
+            x_v         = dpg.get_value("nt_x")
+            y_v         = dpg.get_value("nt_y")
+            vitale_v    = dpg.get_value("nt_vitale")
+            due_p_v     = dpg.get_value("nt_due_p")
+            if not nome_v:
+                return
+
+            # 1. Ricava zona e ID locali in base alle coordinate
+            zona_s  = self._zona_alla_posizione(x_v, y_v)
+            gz_id_s = zona_s.get('game_zone_id') if zona_s else None
+            zl_id_s = zona_s['id']               if zona_s else None
+
+            # 2. Ricava tipo e room_id dalla RAM (identificatori univoci).
+            # NB: le memory_tasks non hanno un 'raw_game_id' (vedi
+            # AmongUsTaskReader.get_tasks): la chiave univoca è (tipo, room_id).
+            matched_mem = None
+            nome_bare   = nome_v.split(": ", 1)[-1].lower()
+
+            # Cerca per nome esatto
+            for mt in self.memory_tasks:
+                if mt['nome'].lower() == nome_bare or mt['nome'].lower() == nome_v.lower():
+                    matched_mem = mt
+                    break
+
+            # Fallback: prendi una task non ancora registrata che si trova
+            # nella stessa stanza di gioco del punto cliccato
+            if matched_mem is None and gz_id_s is not None:
+                enriched = self.task_mgr.get_memory_tasks_info(self.memory_tasks)
+                for mt in enriched:
+                    if mt.get('room_id') == gz_id_s and not mt.get('registrata'):
+                        matched_mem = mt
+                        break
+
+            # 3. Costruisce e salva il JSON
+            self.task_mgr.aggiungi(
+                nome_v, x_v, y_v,
+                room_id       = matched_mem['room_id']  if matched_mem else None,
+                tipo          = matched_mem.get('tipo') if matched_mem else None,
+                zone_id       = gz_id_s,
+                zone_local_id = zl_id_s,
+                zone_nome     = zona_s['nome'] if zona_s else None,
+                vitale        = vitale_v,
+                due_giocatori = due_p_v,
+            )
+            self._refresh_reg_task_listbox()
+            self._refresh_mem_task_listbox()
+
+            msg = f"Task '{nome_v}' registrata"
+            if zona_s:      msg += f" in '{zona_s['nome']}'"
+            if matched_mem: msg += f" (tipo={matched_mem.get('tipo')} room={matched_mem.get('room_id')})"
+            self.auto_status_msg = msg
+            
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        def do_usa_pos(*_):
+            nx = round(self.pos_target[0], 3)
+            ny = round(self.pos_target[1], 3)
+            dpg.set_value("nt_x", nx)
+            dpg.set_value("nt_y", ny)
+            # Aggiorna label zona in tempo reale
+            z2 = self._zona_alla_posizione(nx, ny)
+            if z2:
+                gz2   = z2.get('game_zone_id')
+                info2 = f"Zona: [{z2['id']:02d}] {z2['nome']}" + (f"  GZ:{gz2}" if gz2 is not None else "")
+            else:
+                info2 = "Posizione fuori da qualsiasi zona"
+            if dpg.does_item_exist("nt_zona_info"):
+                dpg.set_value("nt_zona_info", info2)
+
+        col_zona = Colors.ACCENT if zona_corrente else (200, 120, 30, 255)
+        with dpg.window(label="Nuova Task", tag=tag, modal=True, no_resize=True,
+                        no_collapse=True, width=400, height=275,
+                        pos=(max(0, vp_w // 2 - 200), max(0, vp_h // 2 - 147))):
+            dpg.add_text(zona_info, tag="nt_zona_info", color=col_zona, wrap=390)
+            dpg.add_spacer(height=4)
+            dpg.add_text("Nome task  (pre-compilato con zona):")
+            dpg.add_input_text(tag="nt_nome", default_value=nome_default, width=-1)
+            dpg.add_spacer(height=4)
+            dpg.add_text("Coordinate posizione principale:")
+            with dpg.group(horizontal=True):
+                dpg.add_text("X:")
+                dpg.add_input_float(tag="nt_x", default_value=round(px, 3), width=155, step=0)
+                dpg.add_text("Y:")
+                dpg.add_input_float(tag="nt_y", default_value=round(py, 3), width=155, step=0)
+            dpg.add_button(label="Usa posizione attuale  (aggiorna zona)", width=-1,
+                           callback=do_usa_pos)
+            dpg.add_spacer(height=6)
+            dpg.add_checkbox(tag="nt_vitale", label=" Task di VITALE importanza  [!]",
+                             default_value=False)
+            dpg.add_checkbox(tag="nt_due_p", label=" Richiede due giocatori  [2P]",
+                             default_value=False)
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Salva", width=190, callback=do_salva)
+                dpg.add_button(label="Annulla", width=190,
+                               callback=lambda *a: dpg.delete_item(tag)
+                               if dpg.does_item_exist(tag) else None)
+
+    # ---- Popup Modifica Task ----
+    def _apri_popup_modifica_task(self, task=None):
+        # task può essere passato direttamente (es. aperto da lista memoria)
+        # oppure viene risolto dalla listbox delle task registrate.
+        t = task if task is not None else self._get_selected_reg_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task da modificare"
+            return
+        tag = "popup_modifica_task"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        id_t = t['id']
+
+        def do_salva(*_):
+            nome_v   = dpg.get_value("mt_nome").strip()
+            x_v      = dpg.get_value("mt_x")
+            y_v      = dpg.get_value("mt_y")
+            vitale_v = dpg.get_value("mt_vitale")
+            due_p_v  = dpg.get_value("mt_due_p")
+            custom_v = dpg.get_value("mt_custom")
+            lung_v   = dpg.get_value("mt_lunghezza")
+            parent_v = dpg.get_value("mt_parent") if dpg.does_item_exist("mt_parent") else "— (nessuno)"
+            if not nome_v:
+                return
+            self.task_mgr.aggiorna(id_t, nome_v, x_v, y_v, vitale=vitale_v, due_giocatori=due_p_v, codice_custom=custom_v, lunghezza=lung_v)
+            # Estrai id del padre dal combo (formato "[ID] nome" o "— (nessuno)")
+            new_parent = None
+            if parent_v and parent_v.startswith("["):
+                try:
+                    new_parent = int(parent_v[1:parent_v.index("]")])
+                except Exception:
+                    new_parent = None
+            if not self.task_mgr.imposta_parent(id_t, new_parent):
+                self.auto_status_msg = f"Parent invalido (self-loop o padre già figlio): ignorato"
+            # Refresh di ENTRAMBE le liste: la modifica di una task registrata
+            # (nome, coordinate, parent) si riflette in qualunque voce della
+            # lista-memoria che la referenzia via (tipo, room_id).
+            self._refresh_reg_task_listbox()
+            self._refresh_mem_task_listbox()
+            self.auto_status_msg = f"Task [{id_t}] aggiornata"
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        def do_usa_pos(*_):
+            dpg.set_value("mt_x", round(self.pos_target[0], 3))
+            dpg.set_value("mt_y", round(self.pos_target[1], 3))
+
+        def do_apri_editor(*_):
+            # Chiudi il popup modale: l'editor è una finestra DPG autonoma
+            # e la dashboard deve continuare a renderizzare normalmente.
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+            def _on_save(id_salvata):
+                # Rigenera il file .py con le nuove azioni
+                self.task_mgr.crea_file_esecuzione(id_salvata)
+                # Il numero di azioni è mostrato sia nella lista registrate sia
+                # (indirettamente, come stato) nella lista memoria: refresh di entrambe.
+                self._refresh_reg_task_listbox()
+                self._refresh_mem_task_listbox()
+                self.auto_status_msg = f"Azioni task [{id_salvata}] salvate + file .py rigenerato"
+
+            self.action_editor.apri(id_t, on_save=_on_save)
+
+        with dpg.window(label=f"Modifica Task [{id_t}]", tag=tag, modal=True,
+                        no_resize=True, no_collapse=True, width=460, height=670,
+                        pos=(max(0, vp_w // 2 - 230), max(0, vp_h // 2 - 335))):
+
+            # ========== SEZIONE 1: IDENTITÀ ==========
+            dpg.add_text("IDENTITÀ", color=Colors.ACCENT)
+            dpg.add_separator()
+            dpg.add_text("Nome task:")
+            dpg.add_input_text(tag="mt_nome", default_value=t['nome'], width=-1)
+
+            dpg.add_spacer(height=4)
+            dpg.add_text("Coordinate posizione principale:")
+            with dpg.group(horizontal=True):
+                dpg.add_text("X:")
+                dpg.add_input_float(tag="mt_x", default_value=t['x'],
+                                    width=150, step=0, format="%.3f")
+                dpg.add_text("Y:")
+                dpg.add_input_float(tag="mt_y", default_value=t['y'],
+                                    width=150, step=0, format="%.3f")
+            dpg.add_button(label="Usa posizione attuale", width=-1, callback=do_usa_pos)
+
+            # Flag vitale / due giocatori
+            dpg.add_spacer(height=4)
+            with dpg.group(horizontal=True):
+                dpg.add_checkbox(tag="mt_vitale", label=" VITALE [!]",
+                                 default_value=bool(t.get('vitale', False)))
+                dpg.add_checkbox(tag="mt_due_p", label=" 2 giocatori [2P]",
+                                 default_value=bool(t.get('due_giocatori', False)))
+            
+            with dpg.group(horizontal=True):
+                dpg.add_text("Lunghezza:")
+                dpg.add_combo(items=["N/A", "Short", "Long", "Common"], tag="mt_lunghezza", default_value=t.get('lunghezza', 'N/A'), width=120)
+            
+            dpg.add_checkbox(tag="mt_custom", label=" Codice Custom (non sovrascrivere il .py)",
+                             default_value=bool(t.get('codice_custom', False)))
+
+            # ========== SEZIONE 2: FASI E FRATELLI ==========
+            dpg.add_spacer(height=8)
+            dpg.add_text("FASI E FRATELLI", color=Colors.ACCENT)
+            dpg.add_separator()
+            
+            def delete_fase(s, a, u):
+                self.task_mgr.aggiorna(id_t, dpg.get_value("mt_nome").strip() or t['nome'], dpg.get_value("mt_x"), dpg.get_value("mt_y"), dpg.get_value("mt_vitale"), dpg.get_value("mt_due_p"), dpg.get_value("mt_custom"), lunghezza=dpg.get_value("mt_lunghezza"))
+                self.task_mgr.rimuovi_fase(id_t, u)
+                self._apri_popup_modifica_task(task=self.task_mgr.get_by_id(id_t))
+                
+            def delete_fratello(s, a, u):
+                self.task_mgr.aggiorna(id_t, dpg.get_value("mt_nome").strip() or t['nome'], dpg.get_value("mt_x"), dpg.get_value("mt_y"), dpg.get_value("mt_vitale"), dpg.get_value("mt_due_p"), dpg.get_value("mt_custom"), lunghezza=dpg.get_value("mt_lunghezza"))
+                self.task_mgr.rimuovi_fratello(id_t, u)
+                self._apri_popup_modifica_task(task=self.task_mgr.get_by_id(id_t))
+
+            with dpg.group(horizontal=True):
+                with dpg.child_window(width=210, height=110):
+                    fasi = t.get('fasi', [])
+                    dpg.add_text(f"Fasi ({len(fasi)}):", color=Colors.TEXT_DIM)
+                    for i, f in enumerate(fasi):
+                        with dpg.group(horizontal=True):
+                            dpg.add_button(label="X", user_data=i, callback=delete_fase)
+                            dpg.add_text(f"[{i}] {f['nome'][:12]}..")
+                with dpg.child_window(width=210, height=110):
+                    fratelli = t.get('fratelli', [])
+                    dpg.add_text(f"Fratelli ({len(fratelli)}):", color=Colors.TEXT_DIM)
+                    for i, fr in enumerate(fratelli):
+                        with dpg.group(horizontal=True):
+                            dpg.add_button(label="X", user_data=i, callback=delete_fratello)
+                            dpg.add_text(f"[{i}] ({fr['x']:.1f}, {fr['y']:.1f})")
+
+            # ========== SEZIONE 3: EREDITARIETÀ AZIONI (padre/figlia) ==========
+            dpg.add_spacer(height=8)
+            dpg.add_text("AZIONI E EREDITARIETÀ", color=Colors.ACCENT)
+            dpg.add_separator()
+
+            azioni_proprie      = len(t.get('azioni', []))
+            azioni_eff, src_id  = self.task_mgr.get_azioni_effettive(id_t)
+
+            # Riga riepilogo origine azioni
+            if src_id is not None and src_id != id_t:
+                p_src = self.task_mgr.get_by_id(src_id)
+                p_src_nome = p_src['nome'] if p_src else '?'
+                dpg.add_text(
+                    f"Azioni proprie: {azioni_proprie}  →  in uso: {len(azioni_eff)} EREDITATE "
+                    f"dal padre [{src_id}] {p_src_nome}",
+                    color=(100, 220, 255), wrap=440)
+            elif azioni_proprie > 0:
+                dpg.add_text(
+                    f"Azioni proprie: {azioni_proprie}  →  in uso: {azioni_proprie} (nessuna ereditarietà)",
+                    color=Colors.TEXT_DIM, wrap=440)
+            else:
+                dpg.add_text(
+                    "Nessuna azione (né proprie né ereditate). "
+                    "Registra azioni con l'editor o scegli un padre qui sotto.",
+                    color=(255, 180, 100), wrap=440)
+
+            # Eventuali figli di questa task (info utile: non saranno scelti come padre)
+            figli = self.task_mgr.get_figli(id_t)
+            if figli:
+                nomi_figli = ", ".join(f"[{f['id']}] {f['nome']}" for f in figli[:3])
+                suffix = "" if len(figli) <= 3 else f" (+{len(figli)-3})"
+                dpg.add_text(f"Questa task è PADRE di {len(figli)} figli: {nomi_figli}{suffix}",
+                             color=Colors.TEXT_DIM, wrap=440)
+
+            dpg.add_spacer(height=4)
+            dpg.add_text("Scegli task padre (se vuota, le azioni locali hanno priorità):",
+                         color=Colors.TEXT_DIM, wrap=440)
+
+            # Costruzione candidati (vedi logica sopra)
+            candidati = ["— (nessuno)"]
+            for altro in self.task_mgr.task_list:
+                if altro['id'] == id_t:
+                    continue
+                if altro.get('parent_id') is not None:
+                    continue
+                n_az   = len(altro.get('azioni', []))
+                zona_a = altro.get('zone_nome') or "—"
+                candidati.append(f"[{altro['id']}] {altro['nome']} — A:{n_az} ({zona_a})")
+
+            default_parent = "— (nessuno)"
+            cur_parent = t.get('parent_id')
+            if cur_parent is not None:
+                p = self.task_mgr.get_by_id(cur_parent)
+                if p is not None:
+                    n_az   = len(p.get('azioni', []))
+                    zona_a = p.get('zone_nome') or "—"
+                    default_parent = f"[{p['id']}] {p['nome']} — A:{n_az} ({zona_a})"
+            dpg.add_combo(items=candidati, tag="mt_parent",
+                          default_value=default_parent, width=-1)
+
+            dpg.add_spacer(height=4)
+            dpg.add_button(label="APRI EDITOR AZIONI  (click / drag / zone / tempi)",
+                           width=-1, height=36, callback=do_apri_editor)
+
+            # ========== AZIONI FINALI ==========
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Salva", width=220, height=32, callback=do_salva)
+                dpg.add_button(label="Annulla", width=220, height=32,
+                               callback=lambda *a: dpg.delete_item(tag) if dpg.does_item_exist(tag) else None)
+
+    # ---- Popup Nuova Fase ----
+    def _apri_popup_nuova_fase(self):
+        t = self._get_selected_reg_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task a cui aggiungere una fase"
+            return
+        tag = "popup_nuova_fase"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+        px, py = self.pos_target
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        id_t = t['id']
+
+        def do_salva(*_):
+            nome_v = dpg.get_value("nf_nome").strip()
+            x_v = dpg.get_value("nf_x")
+            y_v = dpg.get_value("nf_y")
+            if not nome_v:
+                return
+            self.task_mgr.aggiungi_fase(id_t, nome_v, x_v, y_v)
+            self._refresh_reg_task_listbox()
+            self.auto_status_msg = f"Fase '{nome_v}' aggiunta a [{id_t}]"
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        def do_usa_pos(*_):
+            dpg.set_value("nf_x", round(self.pos_target[0], 3))
+            dpg.set_value("nf_y", round(self.pos_target[1], 3))
+
+        with dpg.window(label=f"Nuova Fase per [{id_t}] {t['nome']}", tag=tag,
+                        modal=True, no_resize=True, no_collapse=True,
+                        width=360, height=210,
+                        pos=(max(0, vp_w // 2 - 180), max(0, vp_h // 2 - 105))):
+            dpg.add_text("Nome fase (es. 'Parte 2 - Console'):")
+            dpg.add_input_text(tag="nf_nome", width=-1)
+            dpg.add_spacer(height=4)
+            dpg.add_text("Coordinate posizione fase:")
+            with dpg.group(horizontal=True):
+                dpg.add_text("X:"); dpg.add_input_float(tag="nf_x", default_value=round(px, 3), width=140, step=0)
+                dpg.add_text("Y:"); dpg.add_input_float(tag="nf_y", default_value=round(py, 3), width=140, step=0)
+            dpg.add_button(label="Usa posizione attuale", width=-1, callback=do_usa_pos)
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Aggiungi Fase", width=170, callback=do_salva)
+                dpg.add_button(label="Annulla", width=170,
+                               callback=lambda *a: dpg.delete_item(tag) if dpg.does_item_exist(tag) else None)
+
+    # ---- Popup Nuovo Fratello ----
+    def _apri_popup_nuovo_fratello(self):
+        t = self._get_selected_reg_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task a cui aggiungere un fratello"
+            return
+        tag = "popup_nuovo_fratello"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+        px, py = self.pos_target
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        id_t = t['id']
+
+        def do_salva(*_):
+            x_v = dpg.get_value("nfr_x")
+            y_v = dpg.get_value("nfr_y")
+            self.task_mgr.aggiungi_fratello(id_t, x_v, y_v)
+            self._refresh_reg_task_listbox()
+            self.auto_status_msg = f"Fratello aggiunto a [{id_t}]"
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        def do_usa_pos(*_):
+            dpg.set_value("nfr_x", round(self.pos_target[0], 3))
+            dpg.set_value("nfr_y", round(self.pos_target[1], 3))
+
+        with dpg.window(label=f"Nuovo Fratello per [{id_t}] {t['nome']}", tag=tag,
+                        modal=True, no_resize=True, no_collapse=True,
+                        width=360, height=170,
+                        pos=(max(0, vp_w // 2 - 180), max(0, vp_h // 2 - 85))):
+            dpg.add_text("Coordinate posizione alternativa:")
+            with dpg.group(horizontal=True):
+                dpg.add_text("X:"); dpg.add_input_float(tag="nfr_x", default_value=round(px, 3), width=140, step=0)
+                dpg.add_text("Y:"); dpg.add_input_float(tag="nfr_y", default_value=round(py, 3), width=140, step=0)
+            dpg.add_button(label="Usa posizione attuale", width=-1, callback=do_usa_pos)
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Aggiungi Fratello", width=170, callback=do_salva)
+                dpg.add_button(label="Annulla", width=170,
+                               callback=lambda *a: dpg.delete_item(tag) if dpg.does_item_exist(tag) else None)
+
+    def _imposta_game_zone_id(self):
+        """Popup per inserire manualmente il game_zone_id sulla zona selezionata."""
+        z = self._get_selected_zone()
+        if z is None:
+            self.auto_status_msg = "Seleziona una zona dalla lista"
+            return
+
+        tag = "popup_game_zone_id"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        id_zona    = z['id']
+        nome_zona  = z['nome']
+        curr_gzid  = z.get('game_zone_id', None)
+
+        def do_salva(*_):
+            raw = dpg.get_value("gzid_input").strip()
+            if raw == "":
+                self.zone_mgr.set_game_zone_id(id_zona, None)
+                self.auto_status_msg = f"ID rimosso da '{nome_zona}'"
+            else:
+                try:
+                    gzid = int(raw)
+                    # Controlla unicità
+                    esistente = self.zone_mgr.get_by_game_zone_id(gzid)
+                    if esistente and esistente['id'] != id_zona:
+                        self.auto_status_msg = (f"GZ:{gzid} già usato da "
+                                                f"'{esistente['nome']}' — scegli un altro")
+                        return
+                    self.zone_mgr.set_game_zone_id(id_zona, gzid)
+                    self._refresh_zone_list()
+                    self._refresh_reg_task_listbox()   # aggiorna label zone nei task
+                    self.auto_status_msg = f"'{nome_zona}' → GZ:{gzid}"
+                except ValueError:
+                    self.auto_status_msg = "Inserisci un numero intero"
+                    return
+            self._refresh_zone_list()
+            self._refresh_reg_task_listbox()
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        default_txt = str(curr_gzid) if curr_gzid is not None else ""
+        hint_txt    = f"Attuale: GZ:{curr_gzid}" if curr_gzid is not None else "Nessun ID impostato"
+
+        with dpg.window(label=f"ID Zona Gioco — {nome_zona}", tag=tag,
+                        modal=True, no_resize=True, no_collapse=True,
+                        width=360, height=165,
+                        pos=(max(0, vp_w // 2 - 180), max(0, vp_h // 2 - 82))):
+            dpg.add_text(hint_txt, color=Colors.TEXT_DIM)
+            dpg.add_text("Nuovo game_zone_id  (vuoto = rimuovi):")
+            dpg.add_input_text(tag="gzid_input", default_value=default_txt,
+                               width=-1, on_enter=True, callback=do_salva)
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Salva", width=170, callback=do_salva)
+                dpg.add_button(label="Annulla", width=170,
+                               callback=lambda *a: dpg.delete_item(tag)
+                               if dpg.does_item_exist(tag) else None)
+
+    def _apri_popup_link_zona(self):
+        """Popup per linkare/slinkare una task registrata a una zona tramite game_zone_id."""
+        t = self._get_selected_reg_task()
+        if t is None:
+            self.auto_status_msg = "Seleziona una task registrata"
+            return
+
+        tag = "popup_link_zona"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+        vp_w    = dpg.get_viewport_client_width()
+        vp_h    = dpg.get_viewport_client_height()
+        id_task = t['id']
+        nome_t  = t['nome']
+        curr_zid = t.get('zone_id', None)
+
+        # Costruisce la lista delle zone che hanno un game_zone_id
+        zone_con_id = [(z['nome'], z.get('game_zone_id'))
+                       for z in self.zone_mgr.zone if z.get('game_zone_id') is not None]
+        zone_con_id.sort(key=lambda x: x[1])
+
+        def do_salva(*_):
+            raw = dpg.get_value("lz_input").strip()
+            if raw == "" or raw.lower() == "nessuna":
+                self.task_mgr.set_zone_link(id_task, None)
+                self.auto_status_msg = f"Link zona rimosso da '{nome_t}'"
+            else:
+                try:
+                    gzid = int(raw)
+                    self.task_mgr.set_zone_link(id_task, gzid)
+                    z = self.zone_mgr.get_by_game_zone_id(gzid)
+                    z_nome = z['nome'] if z else "?"
+                    self.auto_status_msg = f"'{nome_t}' → zona '{z_nome}' (GZ:{gzid})"
+                except ValueError:
+                    self.auto_status_msg = "Inserisci un numero intero o lascia vuoto"
+                    return
+            self._refresh_reg_task_listbox()
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        curr_str  = f"GZ:{curr_zid}" if curr_zid is not None else "Nessuna"
+        curr_zona = self.zone_mgr.get_by_game_zone_id(curr_zid) if curr_zid is not None else None
+        curr_desc = (f"  ({curr_zona['nome']})" if curr_zona else "") if curr_zid is not None else ""
+
+        win_h = 180 + min(len(zone_con_id), 8) * 18
+        with dpg.window(label=f"Link Zona ↔ '{nome_t}'", tag=tag,
+                        modal=True, no_resize=True, no_collapse=True,
+                        width=380, height=win_h,
+                        pos=(max(0, vp_w // 2 - 190), max(0, vp_h // 2 - win_h // 2))):
+            dpg.add_text(f"Link attuale: {curr_str}{curr_desc}", color=Colors.TEXT_DIM)
+            dpg.add_spacer(height=4)
+
+            if zone_con_id:
+                dpg.add_text("Zone disponibili (GZ:ID — Nome):", color=Colors.TEXT_DIM)
+                for z_nome, z_gzid in zone_con_id:
+                    marker = " ◄ attuale" if z_gzid == curr_zid else ""
+                    dpg.add_text(f"  GZ:{z_gzid} — {z_nome}{marker}",
+                                 color=Colors.ACCENT if z_gzid == curr_zid else Colors.TEXT)
+            else:
+                dpg.add_text("Nessuna zona ha ancora un game_zone_id.",
+                             color=(220, 120, 30, 255))
+                dpg.add_text("Impostalo prima con 'Imposta ID Zona Gioco'.",
+                             color=Colors.TEXT_DIM)
+
+            dpg.add_spacer(height=6)
+            dpg.add_text("Inserisci GZ:ID da linkare  (vuoto = rimuovi link):")
+            default_lz = str(curr_zid) if curr_zid is not None else ""
+            dpg.add_input_text(tag="lz_input", default_value=default_lz,
+                               width=-1, on_enter=True, callback=do_salva)
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Salva", width=185, callback=do_salva)
+                dpg.add_button(label="Annulla", width=185,
+                               callback=lambda *a: dpg.delete_item(tag)
+                               if dpg.does_item_exist(tag) else None)
+
+    # ================= DIALOGHI MODALI =================
+    def _show_text_input(self, title, default_text, callback):
+        """Mostra un popup modale per inserimento testo. callback(str|None)."""
+        tag = "text_input_popup"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+        def do_ok(*_):
+            if not dpg.does_item_exist(f"{tag}_input"):
+                callback(None)
+                return
+            value = dpg.get_value(f"{tag}_input")
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+            if value and value.strip():
+                callback(value.strip())
+            else:
+                callback(None)
+
+        def do_cancel(*_):
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+            callback(None)
+
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        with dpg.window(label=title, tag=tag, modal=True, no_resize=True,
+                        no_collapse=True,
+                        width=340, height=135,
+                        pos=(max(0, vp_w // 2 - 170),
+                             max(0, vp_h // 2 - 68))):
+            dpg.add_input_text(tag=f"{tag}_input",
+                               default_value=default_text or "",
+                               width=-1, on_enter=True,
+                               callback=do_ok)
+            dpg.add_spacer(height=4)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="OK",      width=155, callback=do_ok)
+                dpg.add_button(label="Annulla", width=155, callback=do_cancel)
+
+        try:
+            dpg.focus_item(f"{tag}_input")
+        except Exception:
+            pass
+
+    def _show_confirm(self, message, callback):
+        """Mostra un popup modale di conferma. callback(bool)."""
+        tag = "confirm_popup"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+        def do_yes(*_):
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+            callback(True)
+
+        def do_no(*_):
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+            callback(False)
+
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        with dpg.window(label="Conferma", tag=tag, modal=True, no_resize=True,
+                        no_collapse=True,
+                        width=340, height=115,
+                        pos=(max(0, vp_w // 2 - 170),
+                             max(0, vp_h // 2 - 57))):
+            dpg.add_text(message)
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Si",  width=155, callback=do_yes)
+                dpg.add_button(label="No",  width=155, callback=do_no)
+
+    def _show_color_picker(self, zona):
+        """Popup con la palette: clicca un colore per applicarlo alla zona."""
+        tag = "color_picker_popup"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+        def pick(col_hex):
+            self.zone_mgr.cambia_colore(zona['id'], col_hex)
+            self._refresh_zone_list()
+            self.auto_status_msg = f"Colore di '{zona['nome']}' aggiornato"
+            if dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        cols_per_row = 4
+        rows = [GPSConfig.COLORI_ZONE[i:i + cols_per_row]
+                for i in range(0, len(GPSConfig.COLORI_ZONE), cols_per_row)]
+        n_rows = len(rows)
+        win_h = 70 + n_rows * 42
+
+        with dpg.window(label=f"Colore: {zona['nome']}", tag=tag, modal=True,
+                        no_resize=True, no_collapse=True,
+                        width=300, height=win_h,
+                        pos=(max(0, vp_w // 2 - 150),
+                             max(0, vp_h // 2 - win_h // 2))):
+            dpg.add_text("Scegli un colore:")
+            dpg.add_spacer(height=4)
+            for row in rows:
+                with dpg.group(horizontal=True):
+                    for col_hex in row:
+                        rgba = _hex_to_rgba(col_hex)
+                        btn_tag = f"{tag}_btn_{col_hex}"
+                        dpg.add_button(label=" ", tag=btn_tag,
+                                       width=60, height=32,
+                                       callback=lambda s, a, u=col_hex: pick(u))
+                        # Tema per colorare il bottone
+                        with dpg.theme() as th:
+                            with dpg.theme_component(dpg.mvButton):
+                                dpg.add_theme_color(dpg.mvThemeCol_Button, rgba)
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,
+                                                    (min(255, rgba[0] + 30),
+                                                     min(255, rgba[1] + 30),
+                                                     min(255, rgba[2] + 30), 255))
+                                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, rgba)
+                        dpg.bind_item_theme(btn_tag, th)
+            dpg.add_spacer(height=6)
+            dpg.add_button(label="Annulla", width=-1,
+                           callback=lambda *a: dpg.delete_item(tag)
+                                                if dpg.does_item_exist(tag) else None)
+
+    # ================= LOOP AUTO-MOVE =================
