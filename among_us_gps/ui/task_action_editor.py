@@ -769,3 +769,395 @@ class TaskActionEditor:
             "CLICK RETT: trascina sulla PREVIEW per disegnare il rettangolo.",
             (180, 255, 180))
 
+    def _chiudi_sequenza(self, *_):
+        durata = dpg.get_value(self.TAG_IN_DUR)
+        attesa = dpg.get_value(self.TAG_IN_PAUSE)
+
+        if self.stato == self.WAIT_MULTI:
+            if len(self.buffer_punti) >= 2:
+                self.azioni.append({
+                    "tipo":   "drag_multi",
+                    "punti":  [list(p) for p in self.buffer_punti],
+                    "durata": durata,
+                    "attesa": attesa,
+                })
+                self._imposta_istruzioni(
+                    f"Multi-drag aggiunto ({len(self.buffer_punti)} punti).")
+            else:
+                self._imposta_istruzioni("Servono almeno 2 punti.", (255, 100, 100))
+            self._reset_stato()
+
+        elif self.stato == self.WAIT_POLY:
+            if len(self.buffer_punti) >= 3:
+                self.azioni.append({
+                    "tipo":   "click_poly",
+                    "poly":   [list(p) for p in self.buffer_punti],
+                    "durata": durata,
+                    "attesa": attesa,
+                })
+                self._imposta_istruzioni(
+                    f"Click poligono aggiunto ({len(self.buffer_punti)} vertici).")
+            else:
+                self._imposta_istruzioni("Servono almeno 3 vertici.", (255, 100, 100))
+            self._reset_stato()
+
+        elif self.stato == self.WAIT_POLY_ZONE_A:
+            if len(self.buffer_punti) >= 3:
+                self.buffer_zone_a = list(self.buffer_punti)
+                self.buffer_punti = []
+                self.stato = self.WAIT_POLY_ZONE_B
+                self._imposta_istruzioni(
+                    f"ZONA A ok ({len(self.buffer_zone_a)} vertici). Ora disegna ZONA B.",
+                    (255, 200, 100))
+            else:
+                self._imposta_istruzioni("Zona A: servono almeno 3 vertici.",
+                                         (255, 100, 100))
+
+        elif self.stato == self.WAIT_POLY_ZONE_B:
+            if len(self.buffer_punti) >= 3:
+                self.azioni.append({
+                    "tipo":    "drag_zone",
+                    "zone_a":  [list(p) for p in self.buffer_zone_a],
+                    "zone_b":  [list(p) for p in self.buffer_punti],
+                    "durata":  durata,
+                    "attesa":  attesa,
+                })
+                self._imposta_istruzioni("Drag zona->zona aggiunto.")
+            else:
+                self._imposta_istruzioni("Zona B: servono almeno 3 vertici.",
+                                         (255, 100, 100))
+            self._reset_stato()
+        elif self.stato in (self.WAIT_SYNC_CHECK, self.WAIT_SYNC_BTN):
+            if len(self.buffer_sync) > 0:
+                self.azioni.append({
+                    "tipo": "sync_click",
+                    "punti": self.buffer_sync,
+                    "durata": durata,
+                    "attesa": attesa
+                })
+                self._imposta_istruzioni(f"Sync Click aggiunto ({len(self.buffer_sync)} coppie).")
+            else:
+                self._imposta_istruzioni("Nessuna coppia aggiunta.", (255, 100, 100))
+            self._reset_stato()
+
+        elif self.stato == self.WAIT_YOLO_POLY:
+            if len(self.buffer_punti) >= 3:
+                self.buffer_zone_a = list(self.buffer_punti)
+                self.buffer_punti = []
+                self.stato = self.WAIT_YOLO_DEST
+                self._imposta_istruzioni(f"ROI registrata ({len(self.buffer_zone_a)} vertici). Ora clicca la DESTINAZIONE sulla preview.", (255, 200, 100))
+            else:
+                self._imposta_istruzioni("Servono almeno 3 vertici per la ROI.", (255, 100, 100))
+
+        elif self.stato == self.WAIT_YOLO_ALL_POLY:
+            if len(self.buffer_punti) >= 3:
+                self.buffer_zone_a = list(self.buffer_punti)
+                self.buffer_punti = []
+                self.stato = self.WAIT_YOLO_ALL_DEST
+                self._imposta_istruzioni(f"ROI registrata ({len(self.buffer_zone_a)} vertici). Ora clicca la DESTINAZIONE sulla preview.", (255, 180, 100))
+            else:
+                self._imposta_istruzioni("Servono almeno 3 vertici per la ROI.", (255, 100, 100))
+
+        elif self.stato == self.WAIT_YOLO_CLICK_POLY:
+            if len(self.buffer_punti) >= 3:
+                self.azioni.append({
+                    "tipo": "yolo_click",
+                    "yolo_model": getattr(self, '_tmp_yolo_model', 'best.pt'),
+                    "roi_poly": [list(p) for p in self.buffer_punti],
+                    "durata": durata, "attesa": attesa
+                })
+                self._reset_stato()
+                self._imposta_istruzioni(f"Click YOLO aggiunto.", (100, 255, 100))
+            else:
+                self._imposta_istruzioni("Servono almeno 3 vertici per la ROI.", (255, 100, 100))
+
+        elif self.stato == self.WAIT_YOLO_CLICK_ALL_POLY:
+            if len(self.buffer_punti) >= 3:
+                self.azioni.append({
+                    "tipo": "yolo_click_all",
+                    "yolo_model": getattr(self, '_tmp_yolo_model', 'best.pt'),
+                    "roi_poly": [list(p) for p in self.buffer_punti],
+                    "durata": durata, "attesa": attesa
+                })
+                self._reset_stato()
+                self._imposta_istruzioni(f"Click ALL YOLO aggiunto.", (100, 255, 100))
+            else:
+                self._imposta_istruzioni("Servono almeno 3 vertici per la ROI.", (255, 100, 100))
+
+        elif self.stato == self.WAIT_YOLO_SEQ_POLY:
+            if len(self.buffer_punti) >= 3:
+                self.azioni.append({
+                    "tipo": "yolo_drag_seq",
+                    "yolo_model": getattr(self, '_tmp_yolo_model', 'best.pt'),
+                    "roi_poly": [list(p) for p in self.buffer_punti],
+                    "durata": durata, "attesa": attesa
+                })
+                self._reset_stato()
+                self._imposta_istruzioni(f"Drag Sequenziale YOLO aggiunto.", (100, 255, 100))
+            else:
+                self._imposta_istruzioni("Servono almeno 3 vertici per la ROI.", (255, 100, 100))
+
+        elif self.stato in (self.WAIT_CUC_CHK, self.WAIT_CUC_BTN):
+            if len(self.buffer_cuc) > 0:
+                self.azioni.append({
+                    "tipo": "click_until",
+                    "punti": self.buffer_cuc,
+                    "durata": durata,
+                    "attesa": attesa
+                })
+                self._imposta_istruzioni(f"Click Until aggiunto ({len(self.buffer_cuc)} coppie).")
+            else:
+                self._imposta_istruzioni("Nessuna coppia aggiunta.", (255, 100, 100))
+            self._reset_stato()
+
+        elif self.stato == self.WAIT_SIMON_DISPLAY:
+            if len(self.buffer_simon_d) > 0:
+                self.stato = self.WAIT_SIMON_KEYPAD
+                self._imposta_istruzioni(f"Display ok ({len(self.buffer_simon_d)} luci). Ora clicca ESATTAMENTE {len(self.buffer_simon_d)} BOTTONI corrispondenti. Poi CHIUDI PUNTI.", (255, 100, 255))
+            else:
+                self._imposta_istruzioni("Servono punti per il display.", (255, 100, 100))
+                
+        elif self.stato == self.WAIT_SIMON_KEYPAD:
+            if len(self.buffer_simon_k) == len(self.buffer_simon_d):
+                self.azioni.append({"tipo": "simon_says", "display": [list(p) for p in self.buffer_simon_d], "keypad": [list(p) for p in self.buffer_simon_k], "durata": durata, "attesa": attesa})
+                self._reset_stato()
+                self._imposta_istruzioni("Simon Says registrato correttamente!", (100, 255, 100))
+            else:
+                self._imposta_istruzioni(f"Errore: hai cliccato {len(self.buffer_simon_k)} bottoni ma le luci sono {len(self.buffer_simon_d)}.", (255, 100, 100))
+
+        elif self.stato in (self.WAIT_ANOMALY_CHK, self.WAIT_ANOMALY_BTN):
+            if len(self.buffer_anomaly) >= 3:
+                self.azioni.append({
+                    "tipo": "click_anomaly",
+                    "punti": self.buffer_anomaly,
+                    "durata": durata, "attesa": attesa
+                })
+                self._reset_stato()
+                self._imposta_istruzioni(f"Click Anomalia aggiunto ({len(self.buffer_anomaly)} coppie da valutare).", (100, 255, 100))
+            else:
+                self._imposta_istruzioni("Servono almeno 3 coppie per fare un confronto.", (255, 100, 100))
+                
+        elif self.stato == self.WAIT_NUM_MATCH_RECT:
+            if len(self.buffer_num_match) > 0:
+                self.azioni.append({
+                    "tipo": "number_match",
+                    "buttons": self.buffer_num_match,
+                    "durata": durata,
+                    "attesa": attesa
+                })
+                self._imposta_istruzioni(f"Number Match aggiunto ({len(self.buffer_num_match)} numeri in ordine).", (100, 255, 255))
+            else:
+                self._imposta_istruzioni("Nessun numero registrato.", (255, 100, 100))
+            self._reset_stato()
+
+        elif self.stato == self.WAIT_OCR_POLY:
+            if len(self.buffer_punti) >= 3:
+                self.buffer_zone_a = list(self.buffer_punti)
+                self.buffer_punti = []
+                self.stato = self.WAIT_OCR_KEYPAD
+                self._imposta_istruzioni("Zona OK. Ora clicca 10 TASTI in ordine da 0 a 9.", (255, 100, 255))
+            else:
+                self._imposta_istruzioni("Servono almeno 3 vertici per la zona display.", (255, 100, 100))
+
+        else:
+            self._imposta_istruzioni("Nessuna sequenza attiva.", (150, 150, 150))
+
+        self.aggiorna_lista()
+        self.aggiorna_preview()
+
+    def _annulla(self, *_):
+        self._reset_stato()
+        self._imposta_istruzioni("Annullato.", (150, 150, 150))
+
+    def _reset_stato(self):
+        self.stato = self.IDLE
+        self.buffer_punti = []
+        self.buffer_zone_a = []
+        self.buffer_w_l = []
+        self.buffer_w_r = []
+        self.buffer_w_c = []
+        self.buffer_sync = []
+        self.buffer_cuc = []
+        self.buffer_simon_d = []
+        self.buffer_simon_k = []
+        self.buffer_anomaly = []
+        self.buffer_num_match = []
+        self.buffer_keypad = []
+        self.rect_drag_active = False
+        self.rect_start = None
+        self.rect_end = None
+
+    # ======================= LISTA AZIONI =======================
+
+    def _descr_azione(self, a):
+        t = a.get("tipo")
+        if t == "click":
+            return f"Click @({a['rx']:.2f},{a['ry']:.2f})"
+        if t == "click_rect":
+            r = a.get("rect", [0, 0, 0, 0])
+            return f"ClickRect [{r[0]:.2f},{r[1]:.2f}]->[{r[2]:.2f},{r[3]:.2f}]"
+        if t == "click_poly":
+            return f"ClickPoly ({len(a.get('poly', []))} vertici)"
+        if t == "drag":
+            return f"Drag ({a['start_rx']:.2f},{a['start_ry']:.2f})->({a['end_rx']:.2f},{a['end_ry']:.2f})"
+        if t == "drag_multi":
+            return f"MultiDrag ({len(a.get('punti', []))} punti)"
+        if t == "drag_zone":
+            return f"DragZona ({len(a.get('zone_a', []))}v -> {len(a.get('zone_b', []))}v)"
+        if t == "drag_hold":
+            return (f"DragTieni ({a['start_rx']:.2f},{a['start_ry']:.2f})"
+                    f"->({a['end_rx']:.2f},{a['end_ry']:.2f})"
+                    f" H:{a.get('hold', 0):.2f}s")
+        if t == "wiring":
+            return f"Fix Wiring (4 cavi + visore colore)"
+        if t == "sync_click":
+            return f"Sync Click ({len(a.get('punti', []))} coppie)"
+        if t == "yolo_drag":
+            return f"Drag YOLO '{a.get('yolo_model')}' ROI({len(a.get('roi_poly', []))}v)"
+        if t == "yolo_drag_all":
+            return f"Drag ALL YOLO '{a.get('yolo_model')}' ROI({len(a.get('roi_poly', []))}v)"
+        if t == "yolo_click":
+            return f"Click YOLO '{a.get('yolo_model')}' ROI({len(a.get('roi_poly', []))}v)"
+        if t == "yolo_click_all":
+            return f"Click ALL YOLO '{a.get('yolo_model')}' ROI({len(a.get('roi_poly', []))}v)"
+        if t == "yolo_drag_seq":
+            return f"Drag Seq YOLO '{a.get('yolo_model')}' ROI({len(a.get('roi_poly', []))}v)"
+        if t == "click_until":
+            return f"Click Until ({len(a.get('punti', []))} coppie)"
+        if t == "simon_says":
+            return f"Simon Says ({len(a.get('display', []))} associazioni)"
+        if t == "click_anomaly":
+            return f"Click Anomalia ({len(a.get('punti', []))} coppie)"
+        if t == "number_match":
+            return f"Number Match ({len(a.get('buttons', []))} numeri)"
+        if t == "ocr_keypad":
+            return f"OCR Keypad (ROI + 10 tasti)"
+        if t == "cooldown":
+            return f"Cooldown / Cambio Fase ({a.get('durata', 0)}s)"
+        return str(t)
+
+    def aggiorna_lista(self):
+        if not dpg.does_item_exist(self.TAG_LIST):
+            return
+        dpg.delete_item(self.TAG_LIST, children_only=True)
+        for i, a in enumerate(self.azioni):
+            sel = (i == self.sel_idx)
+            col_testo = (255, 255, 0) if sel else (255, 255, 255)
+            prefix    = "> " if sel else "  "
+            with dpg.group(horizontal=True, parent=self.TAG_LIST):
+                dpg.add_text(f"{prefix}{i+1}. {self._descr_azione(a)}",
+                             color=col_testo)
+                dpg.add_button(label="^", user_data=i, callback=self._sposta_su, width=22)
+                dpg.add_button(label="v", user_data=i, callback=self._sposta_giu, width=22)
+                dpg.add_button(label="X", user_data=i, callback=self._elimina_azione, width=22)
+                _ts = (f"D:{a.get('durata',0):.2f}s"
+                       + (f" H:{a.get('hold',0):.2f}s"
+                          if a.get("tipo") == "drag_hold" else "")
+                       + f" P:{a.get('attesa',0):.2f}s")
+                dpg.add_text(_ts, color=(100, 200, 255))
+
+    def _sposta_su(self, sender, app_data, user_data):
+        i = user_data
+        if i > 0:
+            self.azioni[i], self.azioni[i-1] = self.azioni[i-1], self.azioni[i]
+            if self.sel_idx == i:
+                self.sel_idx = i - 1
+            elif self.sel_idx == i - 1:
+                self.sel_idx = i
+            self.aggiorna_lista(); self.aggiorna_preview()
+            self._aggiorna_pannello_selezione()
+
+    def _sposta_giu(self, sender, app_data, user_data):
+        i = user_data
+        if i < len(self.azioni) - 1:
+            self.azioni[i], self.azioni[i+1] = self.azioni[i+1], self.azioni[i]
+            if self.sel_idx == i:
+                self.sel_idx = i + 1
+            elif self.sel_idx == i + 1:
+                self.sel_idx = i
+            self.aggiorna_lista(); self.aggiorna_preview()
+            self._aggiorna_pannello_selezione()
+
+    def _elimina_azione(self, sender, app_data, user_data):
+        i = user_data
+        if 0 <= i < len(self.azioni):
+            self.azioni.pop(i)
+            if self.sel_idx == i:
+                self.sel_idx = -1
+            elif self.sel_idx > i:
+                self.sel_idx -= 1
+            self.aggiorna_lista(); self.aggiorna_preview()
+            self._aggiorna_pannello_selezione()
+
+    # ======================= PREVIEW LIVE =======================
+
+    def aggiorna_frame(self, forza=False):
+        if not self.e_aperto():
+            return
+        if not _WIN_OK:
+            return
+        if not self.is_live and not forza:
+            return
+        if self.frozen and not forza:
+            return
+
+        nome_finestra = dpg.get_value(self.TAG_IN_WIN_NAME)
+        hwnd = win32gui.FindWindow(None, nome_finestra)
+        if not hwnd:
+            return
+        rect = get_client_rect(hwnd)
+        if not rect or rect[2] <= 0 or rect[3] <= 0:
+            return
+
+        x, y, w, h = rect
+        try:
+            with mss.mss() as sct:
+                monitor = {"top": y, "left": x, "width": w, "height": h}
+                sct_img = np.array(sct.grab(monitor))
+        except Exception:
+            return
+        rgba = cv2.cvtColor(sct_img, cv2.COLOR_BGRA2RGBA)
+        texture_data = (rgba.astype(np.float32) / 255.0).ravel()
+
+        if self.texture_width != w or self.texture_height != h:
+            self.texture_width, self.texture_height = w, h
+            if dpg.does_item_exist(self.TAG_BG_TEX):
+                dpg.delete_item(self.TAG_BG_TEX)
+            dpg.add_dynamic_texture(width=w, height=h, default_value=texture_data,
+                                    tag=self.TAG_BG_TEX, parent=self.TAG_TEX_REG)
+            
+            self._ricalcola_dimensioni_preview()
+            self.aggiorna_preview()
+        else:
+            if dpg.does_item_exist(self.TAG_BG_TEX):
+                dpg.set_value(self.TAG_BG_TEX, texture_data)
+
+    def aggiorna_preview(self):
+        if not dpg.does_item_exist(self.TAG_CANVAS):
+            return
+        dpg.delete_item(self.TAG_CANVAS, children_only=True)
+
+        if self.texture_width > 0 and dpg.does_item_exist(self.TAG_BG_TEX):
+            dpg.draw_image(self.TAG_BG_TEX, (0, 0),
+                           (self.preview_w, self.preview_h),
+                           parent=self.TAG_CANVAS)
+        else:
+            dpg.draw_rectangle((0, 0), (self.preview_w, self.preview_h),
+                               color=(100, 100, 100, 255),
+                               fill=(40, 40, 40, 255),
+                               parent=self.TAG_CANVAS)
+
+        for i, a in enumerate(self.azioni):
+            self._disegna_azione(i, a, selezionato=(i == self.sel_idx))
+
+        self._disegna_buffer_corrente()
+
+        if self.frozen:
+            dpg.draw_rectangle((8, 8), (135, 34),
+                               color=(0, 0, 0, 200),
+                               fill=(0, 0, 0, 180),
+                               parent=self.TAG_CANVAS)
+            dpg.draw_text((14, 12), "FROZEN [F]",
+                          color=(100, 220, 255, 255), size=18,
+                          parent=self.TAG_CANVAS)
+
