@@ -1161,3 +1161,1328 @@ class TaskActionEditor:
                           color=(100, 220, 255, 255), size=18,
                           parent=self.TAG_CANVAS)
 
+    def _px(self, rx, ry):
+        return rx * self.preview_w, ry * self.preview_h
+
+    def _disegna_azione(self, idx, a, selezionato=False):
+        num = str(idx + 1)
+        t = a.get("tipo")
+        p = self.TAG_CANVAS
+        SEL_COL = (255, 255, 0, 255)
+        SEL_TH  = 3 
+
+        if t == "click":
+            x, y = self._px(a["rx"], a["ry"])
+            dpg.draw_circle((x, y), 8, color=(0, 255, 0), fill=(0, 200, 0), parent=p)
+            dpg.draw_text((x + 12, y - 12), num, color=(255, 255, 255), size=18, parent=p)
+            if selezionato:
+                dpg.draw_circle((x, y), 14, color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        elif t == "click_rect":
+            r = a["rect"]
+            x1, y1 = self._px(r[0], r[1])
+            x2, y2 = self._px(r[2], r[3])
+            dpg.draw_rectangle((x1, y1), (x2, y2),
+                               color=(180, 255, 180, 255),
+                               fill=(180, 255, 180, 40), parent=p)
+            dpg.draw_text((x1 + 4, y1 + 4), num, color=(180, 255, 180), size=18, parent=p)
+            if selezionato:
+                dpg.draw_rectangle((x1 - 3, y1 - 3), (x2 + 3, y2 + 3),
+                                   color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        elif t == "click_poly":
+            pts = [self._px(px, py) for px, py in a["poly"]]
+            if len(pts) >= 3:
+                dpg.draw_polygon(pts, color=(200, 180, 255, 255),
+                                 fill=(200, 180, 255, 40), parent=p)
+                dpg.draw_text(pts[0], num, color=(200, 180, 255), size=18, parent=p)
+                if selezionato:
+                    dpg.draw_polygon(pts, color=SEL_COL,
+                                     thickness=SEL_TH, parent=p)
+
+        elif t == "drag":
+            sx, sy = self._px(a["start_rx"], a["start_ry"])
+            ex, ey = self._px(a["end_rx"],   a["end_ry"])
+            dpg.draw_circle((sx, sy), 6, color=(255, 200, 0), fill=(255, 200, 0), parent=p)
+            dpg.draw_arrow((ex, ey), (sx, sy), color=(255, 50, 50),
+                           thickness=3, size=18, parent=p)
+            dpg.draw_text((sx + 12, sy - 12), num, color=(255, 255, 255), size=18, parent=p)
+            if selezionato:
+                dpg.draw_circle((sx, sy), 12, color=SEL_COL, thickness=SEL_TH, parent=p)
+                dpg.draw_circle((ex, ey), 12, color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        elif t == "drag_multi":
+            pts = [self._px(px, py) for px, py in a["punti"]]
+            for i in range(len(pts) - 1):
+                dpg.draw_arrow(pts[i+1], pts[i], color=(255, 120, 50),
+                               thickness=2, size=14, parent=p)
+            if pts:
+                dpg.draw_circle(pts[0], 6, color=(255, 200, 0),
+                                fill=(255, 200, 0), parent=p)
+                dpg.draw_text((pts[0][0] + 12, pts[0][1] - 12), num,
+                              color=(255, 255, 255), size=18, parent=p)
+                if selezionato:
+                    for pt in pts:
+                        dpg.draw_circle(pt, 11, color=SEL_COL,
+                                        thickness=SEL_TH, parent=p)
+
+        elif t == "drag_hold":
+            sx, sy = self._px(a["start_rx"], a["start_ry"])
+            ex, ey = self._px(a["end_rx"],   a["end_ry"])
+            hold   = a.get("hold", 0)
+            dpg.draw_circle((sx, sy), 6, color=(255, 140, 180),
+                            fill=(255, 140, 180), parent=p)
+            dpg.draw_arrow((ex, ey), (sx, sy), color=(255, 80, 160),
+                           thickness=3, size=18, parent=p)
+            hold_r = min(30, max(10, int(hold * 8 + 10)))
+            dpg.draw_circle((ex, ey), hold_r,
+                            color=(255, 80, 160, 140), fill=(255, 80, 160, 60), parent=p)
+            dpg.draw_text((ex + hold_r + 4, ey - 8),
+                          f"H:{hold:.1f}s", color=(255, 140, 180), size=16, parent=p)
+            dpg.draw_text((sx + 12, sy - 12), num,
+                          color=(255, 255, 255), size=18, parent=p)
+            if selezionato:
+                dpg.draw_circle((sx, sy), 12,
+                                color=SEL_COL, thickness=SEL_TH, parent=p)
+                dpg.draw_circle((ex, ey), hold_r + 4,
+                                color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        elif t == "drag_zone":
+            poly_a = [self._px(px, py) for px, py in a["zone_a"]]
+            poly_b = [self._px(px, py) for px, py in a["zone_b"]]
+            if len(poly_a) >= 3:
+                dpg.draw_polygon(poly_a, color=(255, 200, 0, 255),
+                                 fill=(255, 200, 0, 40), parent=p)
+            if len(poly_b) >= 3:
+                dpg.draw_polygon(poly_b, color=(255, 50, 50, 255),
+                                 fill=(255, 50, 50, 40), parent=p)
+            if poly_a and poly_b:
+                ca_x = sum(pt[0] for pt in poly_a) / len(poly_a)
+                ca_y = sum(pt[1] for pt in poly_a) / len(poly_a)
+                cb_x = sum(pt[0] for pt in poly_b) / len(poly_b)
+                cb_y = sum(pt[1] for pt in poly_b) / len(poly_b)
+                dpg.draw_arrow((cb_x, cb_y), (ca_x, ca_y),
+                               color=(255, 255, 255), thickness=2, size=14, parent=p)
+                dpg.draw_text((ca_x + 12, ca_y - 12), num,
+                              color=(255, 255, 255), size=18, parent=p)
+            if selezionato:
+                if len(poly_a) >= 3:
+                    dpg.draw_polygon(poly_a, color=SEL_COL,
+                                     thickness=SEL_TH, parent=p)
+                if len(poly_b) >= 3:
+                    dpg.draw_polygon(poly_b, color=SEL_COL,
+                                     thickness=SEL_TH, parent=p)
+                                     
+        elif t == "wiring":
+            for cx, cy in a.get("left", []):
+                pt = self._px(cx, cy)
+                dpg.draw_circle(pt, 5, color=(200, 255, 100), fill=(200, 255, 100), parent=p)
+            for cx, cy in a.get("right", []):
+                pt = self._px(cx, cy)
+                dpg.draw_circle(pt, 5, color=(255, 160, 50), fill=(255, 160, 50), parent=p)
+            for cx, cy in a.get("lights", []):
+                pt = self._px(cx, cy)
+                dpg.draw_circle(pt, 6, color=(255, 255, 100), fill=(255, 255, 100), parent=p)
+                dpg.draw_circle(pt, 10, color=(255, 255, 100), thickness=1, parent=p)
+                
+        elif t == "sync_click":
+            for i, (cx, cy, bx, by) in enumerate(a.get("punti", [])):
+                pc = self._px(cx, cy)
+                pb = self._px(bx, by)
+                dpg.draw_circle(pc, 5, color=(255, 255, 100), fill=(255, 255, 100), parent=p)
+                dpg.draw_circle(pb, 5, color=(255, 100, 100), fill=(255, 100, 100), parent=p)
+                dpg.draw_arrow(pb, pc, color=(255, 200, 150), thickness=2, size=10, parent=p)
+                if selezionato:
+                    dpg.draw_circle(pc, 10, color=SEL_COL, thickness=SEL_TH, parent=p)
+                    dpg.draw_circle(pb, 10, color=SEL_COL, thickness=SEL_TH, parent=p)
+                    
+        elif t == "yolo_drag":
+            ex, ey = self._px(a["end_rx"], a["end_ry"])
+            dpg.draw_circle((ex, ey), 8, color=(255, 100, 100), fill=(255, 100, 100, 100), parent=p)
+            dpg.draw_text((ex + 12, ey - 12), f"{num} (YOLO: {a.get('yolo_model')})", color=(255, 100, 100), size=16, parent=p)
+            
+            roi_poly = a.get("roi_poly", [])
+            if len(roi_poly) >= 3:
+                za = [self._px(px, py) for px, py in roi_poly]
+                dpg.draw_polygon(za, color=(255, 100, 255, 150), fill=(255, 100, 255, 40), parent=p)
+                cx = sum(pt[0] for pt in roi_poly) / len(roi_poly)
+                cy = sum(pt[1] for pt in roi_poly) / len(roi_poly)
+                c_px, c_py = self._px(cx, cy)
+                dpg.draw_arrow((ex, ey), (c_px, c_py), color=(255, 150, 255, 150), thickness=2, size=10, parent=p)
+
+            if selezionato:
+                dpg.draw_circle((ex, ey), 14, color=SEL_COL, thickness=SEL_TH, parent=p)
+                if len(roi_poly) >= 3:
+                    dpg.draw_polygon(za, color=SEL_COL, thickness=SEL_TH, parent=p)
+                    
+        elif t == "yolo_drag_all":
+            ex, ey = self._px(a["end_rx"], a["end_ry"])
+            dpg.draw_circle((ex, ey), 8, color=(255, 150, 50), fill=(255, 150, 50, 100), parent=p)
+            dpg.draw_text((ex + 12, ey - 12), f"{num} (ALL YOLO: {a.get('yolo_model')})", color=(255, 150, 50), size=16, parent=p)
+            
+            roi_poly = a.get("roi_poly", [])
+            if len(roi_poly) >= 3:
+                za = [self._px(px, py) for px, py in roi_poly]
+                dpg.draw_polygon(za, color=(255, 150, 50, 150), fill=(255, 150, 50, 40), parent=p)
+                cx = sum(pt[0] for pt in roi_poly) / len(roi_poly)
+                cy = sum(pt[1] for pt in roi_poly) / len(roi_poly)
+                c_px, c_py = self._px(cx, cy)
+                dpg.draw_arrow((ex, ey), (c_px, c_py), color=(255, 180, 100, 150), thickness=2, size=10, parent=p)
+
+            if selezionato:
+                dpg.draw_circle((ex, ey), 14, color=SEL_COL, thickness=SEL_TH, parent=p)
+                if len(roi_poly) >= 3:
+                    dpg.draw_polygon(za, color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        elif t == "yolo_click":
+            roi_poly = a.get("roi_poly", [])
+            if len(roi_poly) >= 3:
+                za = [self._px(px, py) for px, py in roi_poly]
+                dpg.draw_polygon(za, color=(100, 255, 100, 150), fill=(100, 255, 100, 40), parent=p)
+                cx = sum(pt[0] for pt in roi_poly) / len(roi_poly)
+                cy = sum(pt[1] for pt in roi_poly) / len(roi_poly)
+                c_px, c_py = self._px(cx, cy)
+                dpg.draw_circle((c_px, c_py), 8, color=(100, 255, 100), fill=(100, 255, 100, 100), parent=p)
+                dpg.draw_text((c_px + 12, c_py - 12), f"{num} (YOLO Click: {a.get('yolo_model')})", color=(100, 255, 100), size=16, parent=p)
+
+            if selezionato:
+                if len(roi_poly) >= 3:
+                    dpg.draw_polygon(za, color=SEL_COL, thickness=SEL_TH, parent=p)
+                    
+        elif t == "yolo_click_all":
+            roi_poly = a.get("roi_poly", [])
+            if len(roi_poly) >= 3:
+                za = [self._px(px, py) for px, py in roi_poly]
+                dpg.draw_polygon(za, color=(100, 255, 150, 150), fill=(100, 255, 150, 40), parent=p)
+                cx = sum(pt[0] for pt in roi_poly) / len(roi_poly)
+                cy = sum(pt[1] for pt in roi_poly) / len(roi_poly)
+                c_px, c_py = self._px(cx, cy)
+                dpg.draw_circle((c_px, c_py), 8, color=(100, 255, 150), fill=(100, 255, 150, 100), parent=p)
+                dpg.draw_text((c_px + 12, c_py - 12), f"{num} (ALL YOLO Click: {a.get('yolo_model')})", color=(100, 255, 150), size=16, parent=p)
+
+            if selezionato:
+                if len(roi_poly) >= 3:
+                    dpg.draw_polygon(za, color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        elif t == "yolo_drag_seq":
+            roi_poly = a.get("roi_poly", [])
+            if len(roi_poly) >= 3:
+                za = [self._px(px, py) for px, py in roi_poly]
+                dpg.draw_polygon(za, color=(255, 120, 200, 150), fill=(255, 120, 200, 40), parent=p)
+                cx = sum(pt[0] for pt in roi_poly) / len(roi_poly)
+                cy = sum(pt[1] for pt in roi_poly) / len(roi_poly)
+                c_px, c_py = self._px(cx, cy)
+                dpg.draw_circle((c_px, c_py), 8, color=(255, 120, 200), fill=(255, 120, 200, 100), parent=p)
+                dpg.draw_text((c_px + 12, c_py - 12), f"{num} (SEQ YOLO: {a.get('yolo_model')})", color=(255, 120, 200), size=16, parent=p)
+            if selezionato:
+                if len(roi_poly) >= 3:
+                    dpg.draw_polygon(za, color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        elif t == "click_until":
+            for i, (cx, cy, bx, by) in enumerate(a.get("punti", [])):
+                pc = self._px(cx, cy)
+                pb = self._px(bx, by)
+                dpg.draw_circle(pc, 5, color=(255, 255, 255), fill=(255, 255, 255), parent=p)
+                dpg.draw_circle(pb, 5, color=(100, 255, 255), fill=(100, 255, 255), parent=p)
+                dpg.draw_arrow(pb, pc, color=(200, 255, 255), thickness=2, size=10, parent=p)
+                if selezionato:
+                    dpg.draw_circle(pc, 10, color=SEL_COL, thickness=SEL_TH, parent=p)
+                    dpg.draw_circle(pb, 10, color=SEL_COL, thickness=SEL_TH, parent=p)
+                    
+        elif t == "simon_says":
+            for i, (dx, dy) in enumerate(a.get("display", [])):
+                pd = self._px(dx, dy)
+                pk = self._px(a["keypad"][i][0], a["keypad"][i][1])
+                dpg.draw_circle(pd, 6, color=(100, 200, 255), fill=(100, 200, 255), parent=p)
+                dpg.draw_circle(pk, 6, color=(255, 100, 255), fill=(255, 100, 255), parent=p)
+                dpg.draw_arrow(pk, pd, color=(200, 150, 255, 150), thickness=2, size=10, parent=p)
+                if selezionato:
+                    dpg.draw_circle(pd, 12, color=SEL_COL, thickness=SEL_TH, parent=p)
+                    dpg.draw_circle(pk, 12, color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        elif t == "click_anomaly":
+            for i, p_list in enumerate(a.get("punti", [])):
+                if len(p_list) == 4:
+                    cx, cy, bx, by = p_list
+                    pc = self._px(cx, cy)
+                    pb = self._px(bx, by)
+                    dpg.draw_circle(pc, 5, color=(255, 100, 200), fill=(255, 100, 200), parent=p)
+                    dpg.draw_circle(pb, 5, color=(255, 50, 100), fill=(255, 50, 100), parent=p)
+                    dpg.draw_arrow(pb, pc, color=(255, 150, 200), thickness=2, size=10, parent=p)
+                    dpg.draw_text((pc[0] + 10, pc[1] - 10), str(i+1), color=(255, 100, 200), size=14, parent=p)
+                    if selezionato:
+                        dpg.draw_circle(pc, 10, color=SEL_COL, thickness=SEL_TH, parent=p)
+                        dpg.draw_circle(pb, 10, color=SEL_COL, thickness=SEL_TH, parent=p)
+                elif len(p_list) == 2:
+                    cx, cy = p_list
+                    pc = self._px(cx, cy)
+                    dpg.draw_circle(pc, 5, color=(255, 100, 200), fill=(255, 100, 200), parent=p)
+                    dpg.draw_text((pc[0] + 10, pc[1] - 10), str(i+1) + " (old)", color=(255, 100, 200), size=14, parent=p)
+                    if selezionato:
+                        dpg.draw_circle(pc, 10, color=SEL_COL, thickness=SEL_TH, parent=p)
+                        
+        elif t == "number_match":
+            for k, btn in enumerate(a.get("buttons", [])):
+                r = btn["rect"]
+                x1, y1 = self._px(r[0], r[1])
+                x2, y2 = self._px(r[2], r[3])
+                dpg.draw_rectangle((x1, y1), (x2, y2), color=(100, 255, 255, 255), fill=(100, 255, 255, 40), parent=p)
+                dpg.draw_text((x1 + 4, y1 + 4), f"{num}.{k+1}", color=(100, 255, 255), size=14, parent=p)
+                if selezionato:
+                    dpg.draw_rectangle((x1 - 3, y1 - 3), (x2 + 3, y2 + 3),
+                                       color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        elif t == "ocr_keypad":
+            roi = a.get("roi_poly", [])
+            kp = a.get("keypad", [])
+            if len(roi) >= 3:
+                za = [self._px(px, py) for px, py in roi]
+                dpg.draw_polygon(za, color=(100, 255, 200, 150), fill=(100, 255, 200, 40), parent=p)
+                if selezionato: dpg.draw_polygon(za, color=SEL_COL, thickness=SEL_TH, parent=p)
+            for i, (kx, ky) in enumerate(kp):
+                pk = self._px(kx, ky)
+                dpg.draw_circle(pk, 7, color=(255, 100, 255), fill=(255, 100, 255), parent=p)
+                dpg.draw_text((pk[0]-4, pk[1]-6), str(i), color=(0, 0, 0, 255), size=12, parent=p)
+                if selezionato: dpg.draw_circle(pk, 11, color=SEL_COL, thickness=SEL_TH, parent=p)
+
+        if selezionato:
+            self._disegna_handles(a)
+
+    def _disegna_handles(self, a):
+        p = self.TAG_CANVAS
+        HANDLE_R    = 5
+        HANDLE_FILL = (255, 255, 255, 230)
+        HANDLE_EDGE = (30, 30, 30, 255)
+
+        def h(vx, vy):
+            x, y = self._px(vx, vy)
+            dpg.draw_circle((x, y), HANDLE_R, color=HANDLE_EDGE,
+                            fill=HANDLE_FILL, thickness=1, parent=p)
+
+        t = a.get("tipo")
+        if t == "click":
+            h(a["rx"], a["ry"])
+        elif t == "click_rect":
+            r = a["rect"]
+            h(r[0], r[1])
+            h(r[2], r[3])
+        elif t == "click_poly":
+            for vx, vy in a.get("poly", []):
+                h(vx, vy)
+        elif t in ("drag", "drag_hold"):
+            h(a["start_rx"], a["start_ry"])
+            h(a["end_rx"],   a["end_ry"])
+        elif t == "drag_multi":
+            for vx, vy in a.get("punti", []):
+                h(vx, vy)
+        elif t == "drag_zone":
+            for vx, vy in a.get("zone_a", []):
+                h(vx, vy)
+            for vx, vy in a.get("zone_b", []):
+                h(vx, vy)
+        elif t == "wiring":
+            for k, (vx, vy) in enumerate(a.get("left", [])):
+                h(vx, vy)
+            for k, (vx, vy) in enumerate(a.get("right", [])):
+                h(vx, vy)
+            for k, (vx, vy) in enumerate(a.get("lights", [])):
+                h(vx, vy)
+        elif t == "sync_click":
+            for k, (cx, cy, bx, by) in enumerate(a.get("punti", [])):
+                h(cx, cy)
+                h(bx, by)
+        elif t in ("yolo_drag", "yolo_drag_all"):
+            h(a["end_rx"], a["end_ry"])
+            for k, (vx, vy) in enumerate(a.get("roi_poly", [])):
+                h(vx, vy)
+        elif t in ("yolo_click", "yolo_click_all", "yolo_drag_seq"):
+            for k, (vx, vy) in enumerate(a.get("roi_poly", [])):
+                h(vx, vy)
+        elif t == "click_until":
+            for k, (cx, cy, bx, by) in enumerate(a.get("punti", [])):
+                h(cx, cy)
+                h(bx, by)
+        elif t == "simon_says":
+            for k, (dx, dy) in enumerate(a.get("display", [])):
+                h(dx, dy)
+            for k, (kx, ky) in enumerate(a.get("keypad", [])):
+                h(kx, ky)
+        elif t == "click_anomaly":
+            for k, p_list in enumerate(a.get("punti", [])):
+                if len(p_list) == 4:
+                    cx, cy, bx, by = p_list
+                    h(cx, cy)
+                    h(bx, by)
+                elif len(p_list) == 2:
+                    cx, cy = p_list
+                    h(cx, cy)
+        elif t == "number_match":
+            for btn in a.get("buttons", []):
+                r = btn["rect"]
+                h(r[0], r[1])
+                h(r[2], r[3])
+        elif t == "ocr_keypad":
+            for k, (vx, vy) in enumerate(a.get("roi_poly", [])):
+                h(vx, vy)
+            for k, (vx, vy) in enumerate(a.get("keypad", [])):
+                h(vx, vy)
+
+    def _disegna_buffer_corrente(self):
+        p = self.TAG_CANVAS
+
+        if self.stato in (self.WAIT_POLY,
+                          self.WAIT_POLY_ZONE_A,
+                          self.WAIT_POLY_ZONE_B,
+                          self.WAIT_YOLO_POLY,
+                          self.WAIT_YOLO_DEST,
+                          self.WAIT_YOLO_ALL_POLY,
+                          self.WAIT_YOLO_ALL_DEST,
+                          self.WAIT_YOLO_CLICK_POLY,
+                          self.WAIT_YOLO_CLICK_ALL_POLY,
+                          self.WAIT_YOLO_SEQ_POLY,
+                          self.WAIT_OCR_POLY):
+            pts = [self._px(rx, ry) for rx, ry in self.buffer_punti]
+            for pt in pts:
+                dpg.draw_circle(pt, 4, color=(255, 255, 0),
+                                fill=(255, 255, 0), parent=p)
+            for i in range(len(pts) - 1):
+                dpg.draw_line(pts[i], pts[i+1], color=(255, 255, 0), thickness=2, parent=p)
+
+            if self.stato == self.WAIT_POLY_ZONE_B and len(self.buffer_zone_a) >= 3:
+                za = [self._px(rx, ry) for rx, ry in self.buffer_zone_a]
+                dpg.draw_polygon(za, color=(255, 200, 0, 255),
+                                 fill=(255, 200, 0, 40), parent=p)
+
+            if self.stato == self.WAIT_YOLO_DEST and len(self.buffer_zone_a) >= 3:
+                za = [self._px(rx, ry) for rx, ry in self.buffer_zone_a]
+                dpg.draw_polygon(za, color=(255, 100, 255, 255),
+                                 fill=(255, 100, 255, 40), parent=p)
+
+            if self.stato == self.WAIT_YOLO_ALL_DEST and len(self.buffer_zone_a) >= 3:
+                za = [self._px(rx, ry) for rx, ry in self.buffer_zone_a]
+                dpg.draw_polygon(za, color=(255, 150, 50, 255),
+                                 fill=(255, 150, 50, 40), parent=p)
+            
+            if self.stato == self.WAIT_OCR_KEYPAD and len(self.buffer_zone_a) >= 3:
+                za = [self._px(rx, ry) for rx, ry in self.buffer_zone_a]
+                dpg.draw_polygon(za, color=(100, 255, 200, 255), fill=(100, 255, 200, 40), parent=p)
+
+        if self.stato == self.WAIT_MULTI:
+            pts = [self._px(rx, ry) for rx, ry in self.buffer_punti]
+            for pt in pts:
+                dpg.draw_circle(pt, 5, color=(255, 180, 100),
+                                fill=(255, 180, 100), parent=p)
+            for i in range(len(pts) - 1):
+                dpg.draw_arrow(pts[i+1], pts[i], color=(255, 180, 100),
+                               thickness=2, size=12, parent=p)
+
+        if self.stato == "WAIT_RECT_ON_CANVAS" and self.rect_start and self.rect_end:
+            x1, y1 = self._px(*self.rect_start)
+            x2, y2 = self._px(*self.rect_end)
+            dpg.draw_rectangle((x1, y1), (x2, y2),
+                               color=(180, 255, 180, 255),
+                               fill=(180, 255, 180, 40), parent=p)
+
+        if self.stato in (self.WAIT_DRAG_END, self.WAIT_DRAG_HOLD_END) and self.buffer_punti:
+            rx, ry = self.buffer_punti[0]
+            x, y = self._px(rx, ry)
+            col = (255, 200, 0) if self.stato == self.WAIT_DRAG_END else (255, 140, 180)
+            dpg.draw_circle((x, y), 6, color=col, fill=col, parent=p)
+            dpg.draw_text((x + 10, y - 10), "A", color=col, size=16, parent=p)
+
+        if self.stato in (self.WAIT_WIRING_L, self.WAIT_WIRING_R, self.WAIT_WIRING_C):
+            for (rx, ry) in self.buffer_w_l:
+                dpg.draw_circle(self._px(rx, ry), 5, color=(200, 255, 100), fill=(200, 255, 100), parent=p)
+            for (rx, ry) in self.buffer_w_r:
+                dpg.draw_circle(self._px(rx, ry), 5, color=(255, 160, 50), fill=(255, 160, 50), parent=p)
+            for (rx, ry) in self.buffer_w_c:
+                dpg.draw_circle(self._px(rx, ry), 6, color=(255, 255, 100), fill=(255, 255, 100), parent=p)
+
+        if self.stato in (self.WAIT_SYNC_CHECK, self.WAIT_SYNC_BTN):
+            for (cx, cy, bx, by) in self.buffer_sync:
+                pc = self._px(cx, cy)
+                pb = self._px(bx, by)
+                dpg.draw_circle(pc, 5, color=(255, 255, 100), fill=(255, 255, 100), parent=p)
+                dpg.draw_circle(pb, 5, color=(255, 100, 100), fill=(255, 100, 100), parent=p)
+                dpg.draw_arrow(pb, pc, color=(255, 200, 150), thickness=2, size=10, parent=p)
+            if self.stato == self.WAIT_SYNC_BTN and self.buffer_punti:
+                pc = self._px(self.buffer_punti[0][0], self.buffer_punti[0][1])
+                dpg.draw_circle(pc, 5, color=(255, 255, 100), fill=(255, 255, 100), parent=p)
+                
+        if self.stato in (self.WAIT_CUC_CHK, self.WAIT_CUC_BTN):
+            for (cx, cy, bx, by) in self.buffer_cuc:
+                pc = self._px(cx, cy)
+                pb = self._px(bx, by)
+                dpg.draw_circle(pc, 5, color=(255, 255, 255), fill=(255, 255, 255), parent=p)
+                dpg.draw_circle(pb, 5, color=(100, 255, 255), fill=(100, 255, 255), parent=p)
+                dpg.draw_arrow(pb, pc, color=(200, 255, 255), thickness=2, size=10, parent=p)
+            if self.stato == self.WAIT_CUC_BTN and self.buffer_punti:
+                pc = self._px(self.buffer_punti[0][0], self.buffer_punti[0][1])
+                dpg.draw_circle(pc, 5, color=(255, 255, 255), fill=(255, 255, 255), parent=p)
+                
+        if self.stato in (self.WAIT_SIMON_DISPLAY, self.WAIT_SIMON_KEYPAD):
+            for (rx, ry) in self.buffer_simon_d:
+                pd = self._px(rx, ry)
+                dpg.draw_circle(pd, 6, color=(100, 200, 255), fill=(100, 200, 255), parent=p)
+            for i, (rx, ry) in enumerate(self.buffer_simon_k):
+                pk = self._px(rx, ry)
+                dpg.draw_circle(pk, 6, color=(255, 100, 255), fill=(255, 100, 255), parent=p)
+                if i < len(self.buffer_simon_d):
+                    pd = self._px(self.buffer_simon_d[i][0], self.buffer_simon_d[i][1])
+                    dpg.draw_arrow(pk, pd, color=(200, 150, 255, 150), thickness=2, size=10, parent=p)
+                    
+        if self.stato in (self.WAIT_ANOMALY_CHK, self.WAIT_ANOMALY_BTN):
+            for (cx, cy, bx, by) in self.buffer_anomaly:
+                pc = self._px(cx, cy)
+                pb = self._px(bx, by)
+                dpg.draw_circle(pc, 5, color=(255, 100, 200), fill=(255, 100, 200), parent=p)
+                dpg.draw_circle(pb, 5, color=(255, 50, 100), fill=(255, 50, 100), parent=p)
+                dpg.draw_arrow(pb, pc, color=(255, 150, 200), thickness=2, size=10, parent=p)
+            if self.stato == self.WAIT_ANOMALY_BTN and self.buffer_punti:
+                pc = self._px(self.buffer_punti[0][0], self.buffer_punti[0][1])
+                dpg.draw_circle(pc, 5, color=(255, 100, 200), fill=(255, 100, 200), parent=p)
+                
+        if self.stato == self.WAIT_NUM_MATCH_RECT:
+            for i, btn in enumerate(self.buffer_num_match):
+                r = btn["rect"]
+                x1, y1 = self._px(r[0], r[1])
+                x2, y2 = self._px(r[2], r[3])
+                dpg.draw_rectangle((x1, y1), (x2, y2), color=(100, 255, 255, 255), fill=(100, 255, 255, 40), parent=p)
+                dpg.draw_text((x1 + 4, y1 + 4), f"{i+1}", color=(100, 255, 255), size=16, parent=p)
+            if self.rect_start and self.rect_end:
+                x1, y1 = self._px(*self.rect_start)
+                x2, y2 = self._px(*self.rect_end)
+                dpg.draw_rectangle((x1, y1), (x2, y2), color=(100, 255, 255, 255), fill=(100, 255, 255, 40), parent=p)
+                
+        if self.stato == self.WAIT_OCR_KEYPAD:
+            for i, (kx, ky) in enumerate(self.buffer_keypad):
+                pk = self._px(kx, ky)
+                dpg.draw_circle(pk, 7, color=(255, 100, 255), fill=(255, 100, 255), parent=p)
+                dpg.draw_text((pk[0]-4, pk[1]-6), str(i), color=(0, 0, 0, 255), size=12, parent=p)
+
+    # ======================= EVENTI MOUSE SULLA PREVIEW =======================
+
+    def _canvas_mouse_down(self, *_):
+        pos = dpg.get_drawing_mouse_pos()
+        rx = max(0.0, min(1.0, pos[0] / max(1, self.preview_w)))
+        ry = max(0.0, min(1.0, pos[1] / max(1, self.preview_h)))
+
+        if self.stato in ("WAIT_RECT_ON_CANVAS", self.WAIT_NUM_MATCH_RECT):
+            self.rect_start = (rx, ry)
+            self.rect_end   = (rx, ry)
+            self.rect_drag_active = True
+            threading.Thread(target=self._segui_mouse_rect, daemon=True).start()
+            return
+
+        inserimento_attivo = self.stato in (
+            self.WAIT_CLICK, self.WAIT_DRAG_START, self.WAIT_DRAG_END,
+            self.WAIT_MULTI, self.WAIT_POLY,
+            self.WAIT_POLY_ZONE_A, self.WAIT_POLY_ZONE_B,
+            self.WAIT_DRAG_HOLD_START, self.WAIT_DRAG_HOLD_END,
+            self.WAIT_WIRING_L, self.WAIT_WIRING_R, self.WAIT_WIRING_C,
+            self.WAIT_SYNC_CHECK, self.WAIT_SYNC_BTN,
+            self.WAIT_YOLO_POLY, self.WAIT_YOLO_DEST,
+            self.WAIT_YOLO_ALL_POLY, self.WAIT_YOLO_ALL_DEST,
+            self.WAIT_CUC_CHK, self.WAIT_CUC_BTN,
+            self.WAIT_YOLO_CLICK_POLY, self.WAIT_YOLO_CLICK_ALL_POLY,
+            self.WAIT_YOLO_SEQ_POLY,
+            self.WAIT_SIMON_DISPLAY, self.WAIT_SIMON_KEYPAD,
+            self.WAIT_ANOMALY_CHK, self.WAIT_ANOMALY_BTN,
+            self.WAIT_OCR_POLY, self.WAIT_OCR_KEYPAD
+        )
+        
+        # Se c'è un inserimento attivo, il click sulla preview registra il punto
+        if inserimento_attivo:
+            self._piazza_punto_rel(rx, ry)
+            return
+
+        # Altrimenti, gestiamo la selezione o il drag dei vertici
+        v_idx, v_key = self._hit_test_vertex(rx, ry)
+        if v_idx >= 0:
+            self._dragging_vertex = True
+            self._drag_vx_idx     = v_idx
+            self._drag_vx_key     = v_key
+            self.sel_idx          = v_idx
+            self._aggiorna_pannello_selezione()
+            threading.Thread(target=self._segui_mouse_vertex, daemon=True).start()
+            return
+
+        idx = self._hit_test(rx, ry)
+        self.sel_idx = idx
+        self._aggiorna_pannello_selezione()
+        self.aggiorna_preview()
+        self.aggiorna_lista()
+
+    def _piazza_punto_rel(self, rx, ry):
+        durata = dpg.get_value(self.TAG_IN_DUR)
+        attesa = dpg.get_value(self.TAG_IN_PAUSE)
+
+        if self.stato == self.WAIT_CLICK:
+            self.azioni.append({
+                "tipo": "click", "rx": rx, "ry": ry,
+                "durata": durata, "attesa": attesa,
+            })
+            self._reset_stato()
+            self._imposta_istruzioni("Click aggiunto.")
+
+        elif self.stato == self.WAIT_DRAG_START:
+            self.buffer_punti = [(rx, ry)]
+            self.stato = self.WAIT_DRAG_END
+            self._imposta_istruzioni("Ora CLICK sulla preview per ARRIVO drag.", (255, 100, 100))
+
+        elif self.stato == self.WAIT_DRAG_END:
+            sx, sy = self.buffer_punti[0]
+            self.azioni.append({
+                "tipo": "drag",
+                "start_rx": sx, "start_ry": sy,
+                "end_rx":   rx, "end_ry":   ry,
+                "durata": durata, "attesa": attesa,
+            })
+            self._reset_stato()
+            self._imposta_istruzioni("Drag aggiunto.")
+
+        elif self.stato == self.WAIT_DRAG_HOLD_START:
+            self.buffer_punti = [(rx, ry)]
+            self.stato = self.WAIT_DRAG_HOLD_END
+            self._imposta_istruzioni(
+                "Ora CLICK sulla preview per ARRIVO (verrà tenuto premuto).",
+                (255, 140, 180))
+
+        elif self.stato == self.WAIT_DRAG_HOLD_END:
+            sx, sy = self.buffer_punti[0]
+            hold = max(0.0, float(dpg.get_value(self.TAG_IN_HOLD)))
+            self.azioni.append({
+                "tipo":     "drag_hold",
+                "start_rx": sx,     "start_ry": sy,
+                "end_rx":   rx,     "end_ry":   ry,
+                "durata":   durata, "hold":     hold, "attesa": attesa,
+            })
+            self._reset_stato()
+            self._imposta_istruzioni(f"Drag+Tieni aggiunto (hold={hold:.2f}s).")
+
+        elif self.stato == self.WAIT_WIRING_L:
+            self.buffer_w_l.append((rx, ry))
+            if len(self.buffer_w_l) >= 4:
+                self.stato = self.WAIT_WIRING_R
+                self._imposta_istruzioni("Ora clicca sui 4 CONNETTORI A DESTRA (1/4)", (255, 160, 50))
+            else:
+                self._imposta_istruzioni(f"Cavo {len(self.buffer_w_l)+1}/4...", (200, 255, 100))
+
+        elif self.stato == self.WAIT_WIRING_R:
+            self.buffer_w_r.append((rx, ry))
+            if len(self.buffer_w_r) >= 4:
+                self.stato = self.WAIT_WIRING_C
+                self._imposta_istruzioni("Ora clicca sulle 4 LUCI INDICATRICI (1/4)", (255, 255, 100))
+            else:
+                self._imposta_istruzioni(f"Connettore {len(self.buffer_w_r)+1}/4...", (255, 160, 50))
+
+        elif self.stato == self.WAIT_WIRING_C:
+            self.buffer_w_c.append((rx, ry))
+            if len(self.buffer_w_c) >= 4:
+                self.azioni.append({
+                    "tipo": "wiring", "left": self.buffer_w_l,
+                    "right": self.buffer_w_r, "lights": self.buffer_w_c,
+                    "durata": durata, "attesa": attesa,
+                })
+                self._reset_stato()
+                self._imposta_istruzioni("Fix Wiring registrato correttamente!", (100, 255, 100))
+            else:
+                self._imposta_istruzioni(f"Luce {len(self.buffer_w_c)+1}/4...", (255, 255, 100))
+
+        elif self.stato == self.WAIT_SYNC_CHECK:
+            self.buffer_punti = [(rx, ry)]
+            self.stato = self.WAIT_SYNC_BTN
+            self._imposta_istruzioni("Ora clicca il BOTTONE DA PREMERE associato.", (255, 100, 100))
+
+        elif self.stato == self.WAIT_SYNC_BTN:
+            cx_rel, cy_rel = self.buffer_punti[0]
+            self.buffer_sync.append((cx_rel, cy_rel, rx, ry))
+            self.stato = self.WAIT_SYNC_CHECK
+            self._imposta_istruzioni(f"Coppia {len(self.buffer_sync)} aggiunta. Clicca nuovo PUNTO CHECK o 'CHIUDI PUNTI'.", (255, 255, 100))
+
+        elif self.stato == self.WAIT_YOLO_DEST:
+            self.azioni.append({
+                "tipo": "yolo_drag",
+                "yolo_model": getattr(self, '_tmp_yolo_model', 'best.pt'),
+                "roi_poly": [list(p) for p in self.buffer_zone_a],
+                "end_rx": rx, "end_ry": ry,
+                "durata": durata, "attesa": attesa
+            })
+            self._reset_stato()
+            self._imposta_istruzioni(f"Drag YOLO aggiunto.", (100, 255, 100))
+
+        elif self.stato == self.WAIT_YOLO_ALL_DEST:
+            self.azioni.append({
+                "tipo": "yolo_drag_all",
+                "yolo_model": getattr(self, '_tmp_yolo_model', 'best.pt'),
+                "roi_poly": [list(p) for p in self.buffer_zone_a],
+                "end_rx": rx, "end_ry": ry,
+                "durata": durata, "attesa": attesa
+            })
+            self._reset_stato()
+            self._imposta_istruzioni(f"Drag ALL YOLO aggiunto.", (100, 255, 100))
+
+        elif self.stato == self.WAIT_CUC_CHK:
+            self.buffer_punti = [(rx, ry)]
+            self.stato = self.WAIT_CUC_BTN
+            self._imposta_istruzioni("Ora clicca il BOTTONE DA PREMERE associato.", (100, 255, 255))
+
+        elif self.stato == self.WAIT_CUC_BTN:
+            cx_rel, cy_rel = self.buffer_punti[0]
+            self.buffer_cuc.append((cx_rel, cy_rel, rx, ry))
+            self.stato = self.WAIT_CUC_CHK
+            self._imposta_istruzioni(f"Coppia {len(self.buffer_cuc)} aggiunta. Clicca nuovo PUNTO CHECK o 'CHIUDI PUNTI'.", (255, 255, 255))
+
+        elif self.stato == self.WAIT_SIMON_DISPLAY:
+            self.buffer_simon_d.append((rx, ry))
+            self._imposta_istruzioni(f"Luce display {len(self.buffer_simon_d)} mappata.", (100, 200, 255))
+            
+        elif self.stato == self.WAIT_SIMON_KEYPAD:
+            self.buffer_simon_k.append((rx, ry))
+            self._imposta_istruzioni(f"Bottone tastierino {len(self.buffer_simon_k)} mappato.", (255, 100, 255))
+
+        elif self.stato == self.WAIT_ANOMALY_CHK:
+            self.buffer_punti = [(rx, ry)]
+            self.stato = self.WAIT_ANOMALY_BTN
+            self._imposta_istruzioni("Ora clicca il BOTTONE DA PREMERE associato all'anomalia.", (255, 50, 100))
+
+        elif self.stato == self.WAIT_ANOMALY_BTN:
+            cx_rel, cy_rel = self.buffer_punti[0]
+            self.buffer_anomaly.append((cx_rel, cy_rel, rx, ry))
+            self.stato = self.WAIT_ANOMALY_CHK
+            self._imposta_istruzioni(f"Coppia {len(self.buffer_anomaly)} aggiunta. Clicca nuovo CHECK o 'CHIUDI PUNTI'.", (255, 100, 200))
+            
+        elif self.stato == self.WAIT_OCR_KEYPAD:
+            self.buffer_keypad.append((rx, ry))
+            if len(self.buffer_keypad) == 10:
+                self.azioni.append({
+                    "tipo": "ocr_keypad",
+                    "roi_poly": [list(p) for p in self.buffer_zone_a],
+                    "keypad": [list(p) for p in self.buffer_keypad],
+                    "durata": durata, "attesa": attesa
+                })
+                self._reset_stato()
+                self._imposta_istruzioni("OCR Keypad salvato!", (100, 255, 100))
+            else:
+                self._imposta_istruzioni(f"Tasto {len(self.buffer_keypad)}/10 mappato.", (255, 100, 255))
+
+        elif self.stato in (self.WAIT_MULTI, self.WAIT_POLY,
+                            self.WAIT_POLY_ZONE_A, self.WAIT_POLY_ZONE_B,
+                            self.WAIT_YOLO_POLY,
+                            self.WAIT_YOLO_ALL_POLY,
+                            self.WAIT_YOLO_CLICK_POLY,
+                            self.WAIT_YOLO_CLICK_ALL_POLY,
+                          self.WAIT_YOLO_SEQ_POLY,
+                          self.WAIT_OCR_POLY):
+            self.buffer_punti.append((rx, ry))
+            self._imposta_istruzioni(
+                f"Punto {len(self.buffer_punti)} aggiunto.", (200, 200, 200))
+
+        self.aggiorna_lista()
+        self.aggiorna_preview()
+
+    def _segui_mouse_vertex(self):
+        if not _WIN_OK:
+            self._dragging_vertex = False
+            return
+        time.sleep(0.02)
+        while self._dragging_vertex:
+            lmb = (win32api.GetAsyncKeyState(win32con.VK_LBUTTON) & 0x8000) != 0
+            if not lmb:
+                break
+            try:
+                pos = dpg.get_drawing_mouse_pos()
+                rx = max(0.0, min(1.0, pos[0] / max(1, self.preview_w)))
+                ry = max(0.0, min(1.0, pos[1] / max(1, self.preview_h)))
+                self._muovi_vertice(self._drag_vx_idx, self._drag_vx_key, rx, ry)
+                self.aggiorna_preview()
+            except Exception:
+                pass
+            time.sleep(0.015)
+
+        self._dragging_vertex = False
+        self._drag_vx_idx     = -1
+        self._drag_vx_key     = None
+        try:
+            self.aggiorna_lista()
+            self.aggiorna_preview()
+            self._imposta_istruzioni("Vertice spostato.")
+        except Exception:
+            pass
+
+    # ======================= HIT-TEST SELEZIONE =======================
+
+    def _hit_test(self, rx, ry, tol_click=0.015, tol_line=0.012):
+        for i in range(len(self.azioni) - 1, -1, -1):
+            a = self.azioni[i]
+            t = a.get("tipo")
+            if t == "click":
+                if math.hypot(rx - a["rx"], ry - a["ry"]) <= tol_click:
+                    return i
+            elif t == "click_rect":
+                r = a["rect"]
+                if min(r[0], r[2]) <= rx <= max(r[0], r[2]) and \
+                   min(r[1], r[3]) <= ry <= max(r[1], r[3]):
+                    return i
+            elif t == "click_poly":
+                if point_in_polygon(rx, ry, a["poly"]):
+                    return i
+            elif t in ("drag", "drag_hold"):
+                if math.hypot(rx - a["start_rx"], ry - a["start_ry"]) <= tol_click:
+                    return i
+                if math.hypot(rx - a["end_rx"], ry - a["end_ry"]) <= tol_click:
+                    return i
+                if self._point_near_segment(rx, ry,
+                        a["start_rx"], a["start_ry"],
+                        a["end_rx"],   a["end_ry"], tol_line):
+                    return i
+            elif t == "drag_multi":
+                pts = a.get("punti", [])
+                for p in pts:
+                    if math.hypot(rx - p[0], ry - p[1]) <= tol_click:
+                        return i
+                for k in range(len(pts) - 1):
+                    if self._point_near_segment(rx, ry,
+                            pts[k][0], pts[k][1],
+                            pts[k+1][0], pts[k+1][1], tol_line):
+                        return i
+            elif t == "drag_zone":
+                if point_in_polygon(rx, ry, a.get("zone_a", [])):
+                    return i
+                if point_in_polygon(rx, ry, a.get("zone_b", [])):
+                    return i
+            elif t == "wiring":
+                for grp in ["left", "right", "lights"]:
+                    for p in a.get(grp, []):
+                        if math.hypot(rx - p[0], ry - p[1]) <= tol_click:
+                            return i
+            elif t == "sync_click":
+                for cx, cy, bx, by in a.get("punti", []):
+                    if math.hypot(rx - cx, ry - cy) <= tol_click: return i
+                    if math.hypot(rx - bx, ry - by) <= tol_click: return i
+            elif t in ("yolo_drag", "yolo_drag_all"):
+                if math.hypot(rx - a["end_rx"], ry - a["end_ry"]) <= tol_click:
+                    return i
+                if point_in_polygon(rx, ry, a.get("roi_poly", [])):
+                    return i
+            elif t in ("yolo_click", "yolo_click_all", "yolo_drag_seq"):
+                if point_in_polygon(rx, ry, a.get("roi_poly", [])):
+                    return i
+            elif t == "click_until":
+                for cx, cy, bx, by in a.get("punti", []):
+                    if math.hypot(rx - cx, ry - cy) <= tol_click: return i
+                    if math.hypot(rx - bx, ry - by) <= tol_click: return i
+            elif t == "simon_says":
+                for cx, cy in a.get("display", []):
+                    if math.hypot(rx - cx, ry - cy) <= tol_click: return i
+                for bx, by in a.get("keypad", []):
+                    if math.hypot(rx - bx, ry - by) <= tol_click: return i
+            elif t == "click_anomaly":
+                for p_list in a.get("punti", []):
+                    if len(p_list) == 4:
+                        cx, cy, bx, by = p_list
+                        if math.hypot(rx - cx, ry - cy) <= tol_click: return i
+                        if math.hypot(rx - bx, ry - by) <= tol_click: return i
+                    elif len(p_list) == 2:
+                        cx, cy = p_list
+                        if math.hypot(rx - cx, ry - cy) <= tol_click: return i
+            elif t == "number_match":
+                for btn in a.get("buttons", []):
+                    r = btn["rect"]
+                    if min(r[0], r[2]) <= rx <= max(r[0], r[2]) and min(r[1], r[3]) <= ry <= max(r[1], r[3]):
+                        return i
+            elif t == "ocr_keypad":
+                if point_in_polygon(rx, ry, a.get("roi_poly", [])): return i
+                for px, py in a.get("keypad", []):
+                    if math.hypot(rx - px, ry - py) <= tol_click: return i
+
+        return -1
+
+    @staticmethod
+    def _point_near_segment(px, py, ax, ay, bx, by, tol):
+        dx, dy = bx - ax, by - ay
+        lung2 = dx * dx + dy * dy
+        if lung2 < 1e-12:
+            return math.hypot(px - ax, py - ay) <= tol
+        t = ((px - ax) * dx + (py - ay) * dy) / lung2
+        t = max(0.0, min(1.0, t))
+        proj_x = ax + t * dx
+        proj_y = ay + t * dy
+        return math.hypot(px - proj_x, py - proj_y) <= tol
+
+    def _hit_test_vertex(self, rx, ry, tol=0.018):
+        best = (-1, None, float('inf'))
+        for i in range(len(self.azioni) - 1, -1, -1):
+            a = self.azioni[i]
+            t = a.get("tipo")
+
+            def check(px, py, key):
+                nonlocal best
+                d = math.hypot(rx - px, ry - py)
+                if d <= tol and d < best[2]:
+                    best = (i, key, d)
+
+            if t == "click":
+                check(a["rx"], a["ry"], 'c')
+            elif t == "click_rect":
+                r = a["rect"]
+                check(r[0], r[1], 'r1')
+                check(r[2], r[3], 'r2')
+            elif t == "click_poly":
+                for k, (vx, vy) in enumerate(a.get("poly", [])):
+                    check(vx, vy, f'p{k}')
+            elif t in ("drag", "drag_hold"):
+                check(a["start_rx"], a["start_ry"], 's')
+                check(a["end_rx"],   a["end_ry"],   'e')
+            elif t == "drag_multi":
+                for k, (vx, vy) in enumerate(a.get("punti", [])):
+                    check(vx, vy, f'm{k}')
+            elif t == "drag_zone":
+                for k, (vx, vy) in enumerate(a.get("zone_a", [])):
+                    check(vx, vy, f'a{k}')
+                for k, (vx, vy) in enumerate(a.get("zone_b", [])):
+                    check(vx, vy, f'b{k}')
+            elif t == "wiring":
+                for k, (vx, vy) in enumerate(a.get("left", [])):
+                    check(vx, vy, f'wl{k}')
+                for k, (vx, vy) in enumerate(a.get("right", [])):
+                    check(vx, vy, f'wr{k}')
+                for k, (vx, vy) in enumerate(a.get("lights", [])):
+                    check(vx, vy, f'wc{k}')
+            elif t == "sync_click":
+                for k, (cx, cy, bx, by) in enumerate(a.get("punti", [])):
+                    check(cx, cy, f'sc{k}')
+                    check(bx, by, f'sb{k}')
+            elif t in ("yolo_drag", "yolo_drag_all"):
+                check(a["end_rx"], a["end_ry"], 'e')
+                for k, (vx, vy) in enumerate(a.get("roi_poly", [])):
+                    check(vx, vy, f'yr{k}')
+            elif t in ("yolo_click", "yolo_click_all", "yolo_drag_seq"):
+                for k, (vx, vy) in enumerate(a.get("roi_poly", [])):
+                    check(vx, vy, f'yr{k}')
+            elif t == "click_until":
+                for k, (cx, cy, bx, by) in enumerate(a.get("punti", [])):
+                    check(cx, cy, f'uc{k}')
+                    check(bx, by, f'ub{k}')
+            elif t == "simon_says":
+                for k, (cx, cy) in enumerate(a.get("display", [])):
+                    check(cx, cy, f'sd{k}')
+                for k, (bx, by) in enumerate(a.get("keypad", [])):
+                    check(bx, by, f'sk{k}')
+            elif t == "click_anomaly":
+                for k, p_list in enumerate(a.get("punti", [])):
+                    if len(p_list) == 4:
+                        cx, cy, bx, by = p_list
+                        check(cx, cy, f'ac{k}')
+                        check(bx, by, f'ab{k}')
+                    elif len(p_list) == 2:
+                        cx, cy = p_list
+                        check(cx, cy, f'ac{k}')
+            elif t == "number_match":
+                for k, btn in enumerate(a.get("buttons", [])):
+                    r = btn["rect"]
+                    check(r[0], r[1], f'nm{k}_1')
+                    check(r[2], r[3], f'nm{k}_2')
+            elif t == "ocr_keypad":
+                for k, (vx, vy) in enumerate(a.get("roi_poly", [])):
+                    check(vx, vy, f'okp{k}')
+                for k, (vx, vy) in enumerate(a.get("keypad", [])):
+                    check(vx, vy, f'okk{k}')
+
+        return best[0], best[1]
+
+    def _muovi_vertice(self, idx, key, rx, ry):
+        if idx < 0 or idx >= len(self.azioni):
+            return
+        a = self.azioni[idx]
+        t = a.get("tipo")
+        if t == "click" and key == 'c':
+            a["rx"] = rx; a["ry"] = ry
+        elif t == "click_rect":
+            r = a["rect"]
+            if key == 'r1':
+                r[0] = rx; r[1] = ry
+            elif key == 'r2':
+                r[2] = rx; r[3] = ry
+        elif t == "click_poly" and key and key.startswith('p'):
+            try:
+                k = int(key[1:])
+                a["poly"][k] = [rx, ry]
+            except (ValueError, IndexError):
+                pass
+        elif t in ("drag", "drag_hold"):
+            if key == 's':
+                a["start_rx"] = rx; a["start_ry"] = ry
+            elif key == 'e':
+                a["end_rx"]   = rx; a["end_ry"]   = ry
+        elif t == "drag_multi" and key and key.startswith('m'):
+            try:
+                k = int(key[1:])
+                a["punti"][k] = [rx, ry]
+            except (ValueError, IndexError):
+                pass
+        elif t == "drag_zone" and key:
+            try:
+                if key.startswith('a'):
+                    k = int(key[1:])
+                    a["zone_a"][k] = [rx, ry]
+                elif key.startswith('b'):
+                    k = int(key[1:])
+                    a["zone_b"][k] = [rx, ry]
+            except (ValueError, IndexError):
+                pass
+        elif t == "wiring" and key:
+            try:
+                if key.startswith('wl'):
+                    k = int(key[2:])
+                    a["left"][k] = [rx, ry]
+                elif key.startswith('wr'):
+                    k = int(key[2:])
+                    a["right"][k] = [rx, ry]
+                elif key.startswith('wc'):
+                    k = int(key[2:])
+                    a["lights"][k] = [rx, ry]
+            except (ValueError, IndexError):
+                pass
+        elif t == "sync_click" and key:
+            try:
+                if key.startswith('sc'):
+                    k = int(key[2:])
+                    a["punti"][k] = [rx, ry, a["punti"][k][2], a["punti"][k][3]]
+                elif key.startswith('sb'):
+                    k = int(key[2:])
+                    a["punti"][k] = [a["punti"][k][0], a["punti"][k][1], rx, ry]
+            except (ValueError, IndexError):
+                pass
+        elif t in ("yolo_drag", "yolo_drag_all", "yolo_click", "yolo_click_all", "yolo_drag_seq"):
+            if key == 'e' and t in ("yolo_drag", "yolo_drag_all"):
+                a["end_rx"] = rx; a["end_ry"] = ry
+            elif key and key.startswith('yr'):
+                try:
+                    k = int(key[2:])
+                    a["roi_poly"][k] = [rx, ry]
+                except (ValueError, IndexError):
+                    pass
+        elif t == "click_until" and key:
+            try:
+                if key.startswith('uc'):
+                    k = int(key[2:])
+                    a["punti"][k] = [rx, ry, a["punti"][k][2], a["punti"][k][3]]
+                elif key.startswith('ub'):
+                    k = int(key[2:])
+                    a["punti"][k] = [a["punti"][k][0], a["punti"][k][1], rx, ry]
+            except (ValueError, IndexError):
+                pass
+        elif t == "simon_says" and key:
+            try:
+                if key.startswith('sd'):
+                    k = int(key[2:])
+                    a["display"][k] = [rx, ry]
+                elif key.startswith('sk'):
+                    k = int(key[2:])
+                    a["keypad"][k] = [rx, ry]
+            except (ValueError, IndexError):
+                pass
+        elif t == "click_anomaly" and key:
+            try:
+                if key.startswith('ac'):
+                    k = int(key[2:])
+                    a["punti"][k] = [rx, ry, a["punti"][k][2], a["punti"][k][3]]
+                elif key.startswith('ab'):
+                    k = int(key[2:])
+                    a["punti"][k] = [a["punti"][k][0], a["punti"][k][1], rx, ry]
+            except (ValueError, IndexError):
+                pass
+        elif t == "number_match" and key and key.startswith('nm'):
+            try:
+                parts = key[2:].split('_')
+                k = int(parts[0])
+                corner = int(parts[1])
+                r = a["buttons"][k]["rect"]
+                if corner == 1:
+                    r[0] = rx; r[1] = ry
+                else:
+                    r[2] = rx; r[3] = ry
+            except Exception:
+                pass
+        elif t == "ocr_keypad" and key:
+            try:
+                if key.startswith('okp'):
+                    k = int(key[3:])
+                    a["roi_poly"][k] = [rx, ry]
+                elif key.startswith('okk'):
+                    k = int(key[3:])
+                    a["keypad"][k] = [rx, ry]
+            except Exception:
+                pass
+
+    def _aggiorna_pannello_selezione(self):
+        if not dpg.does_item_exist("tae_sel_info"):
+            return
+        if self.sel_idx < 0 or self.sel_idx >= len(self.azioni):
+            dpg.set_value("tae_sel_info", "— nessuna azione selezionata —")
+            dpg.configure_item("tae_sel_info", color=(150, 150, 150))
+            # Nascondi il gruppo di modifica tempi: non c'è nulla su cui agire
+            if dpg.does_item_exist(self.TAG_EDIT_GROUP):
+                dpg.configure_item(self.TAG_EDIT_GROUP, show=False)
+        else:
+            a = self.azioni[self.sel_idx]
+            dpg.set_value("tae_sel_info",
+                          f"#{self.sel_idx + 1}: {self._descr_azione(a)}")
+            dpg.configure_item("tae_sel_info", color=(255, 200, 0))
+            # Pre-compila i campi tempi con i valori correnti dell'azione
+            # selezionata, così l'utente vede subito cosa sta modificando.
+            if dpg.does_item_exist(self.TAG_EDIT_DUR):
+                dpg.set_value(self.TAG_EDIT_DUR, float(a.get("durata", 0.0)))
+            if dpg.does_item_exist(self.TAG_EDIT_PAUSE):
+                dpg.set_value(self.TAG_EDIT_PAUSE, float(a.get("attesa", 0.0)))
+            if dpg.does_item_exist(self.TAG_EDIT_HOLD):
+                dpg.set_value(self.TAG_EDIT_HOLD, float(a.get("hold", 0.0)))
+            if dpg.does_item_exist(self.TAG_EDIT_GROUP):
+                dpg.configure_item(self.TAG_EDIT_GROUP, show=True)
+
+    def _applica_tempi_selezione(self, *_):
+        """
+        Aggiorna durata e attesa dell'azione selezionata senza toccarne la
+        geometria. Scritto come operazione in-place sulla lista azioni:
+        nessun pop/re-draw, nessun cambio di sel_idx.
+        """
+        if self.sel_idx < 0 or self.sel_idx >= len(self.azioni):
+            self._imposta_istruzioni("Seleziona prima un'azione.", (255, 150, 100))
+            return
+        dur_nuova   = max(0.0, float(dpg.get_value(self.TAG_EDIT_DUR)))
+        pausa_nuova = max(0.0, float(dpg.get_value(self.TAG_EDIT_PAUSE)))
+        self.azioni[self.sel_idx]["durata"] = dur_nuova
+        self.azioni[self.sel_idx]["attesa"] = pausa_nuova
+        _az = self.azioni[self.sel_idx]
+        if _az.get("tipo") == "drag_hold" and dpg.does_item_exist(self.TAG_EDIT_HOLD):
+            _az["hold"] = max(0.0, float(dpg.get_value(self.TAG_EDIT_HOLD)))
+        _h = (f", H={_az['hold']:.2f}s" if _az.get("tipo") == "drag_hold" else "")
+        self._imposta_istruzioni(
+            f"#{self.sel_idx + 1}: tempi aggiornati (D={dur_nuova:.2f}s{_h}, P={pausa_nuova:.2f}s)",
+            (150, 255, 150))
+        # La lista mostra i tempi per ogni azione: basta ridisegnarla.
+        self.aggiorna_lista()
+
+    # ======================= MODIFICA / ELIMINA SELEZIONE =======================
+
+    def _elimina_selezione(self, *_):
+        if self.sel_idx < 0 or self.sel_idx >= len(self.azioni):
+            self._imposta_istruzioni("Nessuna azione selezionata.", (255, 150, 100))
+            return
+        rimossa = self.azioni.pop(self.sel_idx)
+        self._imposta_istruzioni(
+            f"Eliminata: {self._descr_azione(rimossa)}", (255, 150, 100))
+        self.sel_idx = -1
+        self._aggiorna_pannello_selezione()
+        self.aggiorna_lista()
+        self.aggiorna_preview()
+
+    def _on_key_delete(self, *_):
+        if not self.e_aperto():
+            return
+        if self.sel_idx < 0:
+            return
+        self._elimina_selezione()
+
+    def _modifica_selezione(self, *_):
+        if self.sel_idx < 0 or self.sel_idx >= len(self.azioni):
+            self._imposta_istruzioni("Nessuna azione selezionata.", (255, 150, 100))
+            return
+        a = self.azioni.pop(self.sel_idx)
+        self.sel_idx = -1
+        
+        if dpg.does_item_exist(self.TAG_IN_DUR):
+            dpg.set_value(self.TAG_IN_DUR, a.get("durata", 0.2))
+        if dpg.does_item_exist(self.TAG_IN_PAUSE):
+            dpg.set_value(self.TAG_IN_PAUSE, a.get("attesa", 0.5))
+            
+        tipo = a.get("tipo")
+        if tipo == "click":
+            self._avvia(self.WAIT_CLICK,
+                        "MODIFICA: CLICK sulla preview per nuovo punto.", (0, 255, 0))
+        elif tipo == "drag":
+            self._avvia(self.WAIT_DRAG_START,
+                        "MODIFICA: CLICK sulla preview per PARTENZA drag.", (255, 200, 0))
+        elif tipo == "click_rect":
+            self._avvia_rect_click()
+            self._imposta_istruzioni(
+                "MODIFICA: trascina sulla PREVIEW per il nuovo rettangolo.",
+                (180, 255, 180))
+        elif tipo == "click_poly":
+            self._avvia_poly_click()
+            self._imposta_istruzioni(
+                "MODIFICA: CLICK per nuovi vertici, poi CHIUDI PUNTI.",
+                (200, 180, 255))
+        elif tipo == "drag_multi":
+            self._avvia_multi()
+            self._imposta_istruzioni(
+                "MODIFICA: CLICK per nuovi punti (>=2), poi CHIUDI PUNTI.",
+                (255, 180, 100))
+        elif tipo == "drag_hold":
+            self._avvia_drag_hold()
+            self._imposta_istruzioni(
+                "MODIFICA: CLICK per nuova PARTENZA, poi CLICK per nuovo ARRIVO.",
+                (255, 140, 180))
+        elif tipo == "drag_zone":
+            self._avvia_drag_zone()
+            self._imposta_istruzioni(
+                "MODIFICA: ridisegna ZONA A, poi ZONA B.", (255, 150, 200))
+        elif tipo == "wiring":
+            self._avvia_wiring()
+            self._imposta_istruzioni("MODIFICA: Ridisegna intero Fix Wiring.", (200, 255, 100))
+        elif tipo == "sync_click":
+            self._avvia_sync_click()
+            self._imposta_istruzioni("MODIFICA: Ridisegna intero Sync Click.", (200, 255, 100))
+        elif tipo == "yolo_drag":
+            self._tmp_yolo_model = a.get("yolo_model")
+            self.stato = self.WAIT_YOLO_POLY
+            self.buffer_punti = []
+            self.buffer_zone_a = []
+            self._imposta_istruzioni(f"MODIFICA YOLO '{self._tmp_yolo_model}': Ridisegna ZONA DI RICERCA, poi CHIUDI PUNTI.", (255, 100, 255))
+        elif tipo == "yolo_drag_all":
+            self._tmp_yolo_model = a.get("yolo_model")
+            self.stato = self.WAIT_YOLO_ALL_POLY
+            self.buffer_punti = []
+            self.buffer_zone_a = []
+            self._imposta_istruzioni(f"MODIFICA ALL YOLO '{self._tmp_yolo_model}': Ridisegna ZONA DI RICERCA, poi CHIUDI PUNTI.", (255, 150, 50))
+        elif tipo == "yolo_click":
+            self._tmp_yolo_model = a.get("yolo_model")
+            self.stato = self.WAIT_YOLO_CLICK_POLY
+            self.buffer_punti = []
+            self.buffer_zone_a = []
+            self._imposta_istruzioni(f"MODIFICA YOLO CLICK '{self._tmp_yolo_model}': Ridisegna ZONA DI RICERCA, poi CHIUDI PUNTI.", (100, 255, 100))
+        elif tipo == "yolo_click_all":
+            self._tmp_yolo_model = a.get("yolo_model")
+            self.stato = self.WAIT_YOLO_CLICK_ALL_POLY
+            self.buffer_punti = []
+            self.buffer_zone_a = []
+            self._imposta_istruzioni(f"MODIFICA ALL YOLO CLICK '{self._tmp_yolo_model}': Ridisegna ZONA DI RICERCA, poi CHIUDI PUNTI.", (100, 255, 150))
+        elif tipo == "yolo_drag_seq":
+            self._tmp_yolo_model = a.get("yolo_model")
+            self.stato = self.WAIT_YOLO_SEQ_POLY
+            self.buffer_punti = []
+            self.buffer_zone_a = []
+            self._imposta_istruzioni(f"MODIFICA SEQ YOLO '{self._tmp_yolo_model}': Ridisegna ZONA DI RICERCA, poi CHIUDI PUNTI.", (255, 120, 200))
+        elif tipo == "click_until":
+            self._avvia_click_until()
+            self._imposta_istruzioni("MODIFICA: Ridisegna intero Click Until.", (200, 255, 255))
+        elif tipo == "click_anomaly":
+            self._avvia_anomaly_click()
+            self._imposta_istruzioni("MODIFICA: Ridisegna intera Anomalia (>=3 coppie).", (255, 100, 200))
+        elif tipo == "number_match":
+            self._avvia_num_match()
+            self._imposta_istruzioni("MODIFICA: Ridisegna intera griglia Number Match.", (100, 255, 255))
+        elif tipo == "ocr_keypad":
+            self.stato = self.WAIT_OCR_POLY
+            self.buffer_punti = []
+            self.buffer_keypad = []
+            self._imposta_istruzioni("MODIFICA: Ridisegna ZONA SCHERMO (poly), poi i 10 tasti.", (100, 255, 200))
+        self._aggiorna_pannello_selezione()
+        self.aggiorna_lista()
+        self.aggiorna_preview()
+
+    def _segui_mouse_rect(self):
+        if not _WIN_OK:
+            return
+        time.sleep(0.02)
+        while self.rect_drag_active:
+            lmb = (win32api.GetAsyncKeyState(win32con.VK_LBUTTON) & 0x8000) != 0
+            if not lmb:
+                break
+            try:
+                pos = dpg.get_drawing_mouse_pos()
+                rx = max(0.0, min(1.0, pos[0] / max(1, self.preview_w)))
+                ry = max(0.0, min(1.0, pos[1] / max(1, self.preview_h)))
+                self.rect_end = (rx, ry)
+            except Exception:
+                pass
+            time.sleep(0.015)
+
+        if self.rect_start and self.rect_end:
+            x1, y1 = self.rect_start
+            x2, y2 = self.rect_end
+            if abs(x2 - x1) > 0.005 and abs(y2 - y1) > 0.005:
+                if self.stato == "WAIT_RECT_ON_CANVAS":
+                    durata = dpg.get_value(self.TAG_IN_DUR)
+                    attesa = dpg.get_value(self.TAG_IN_PAUSE)
+                    self.azioni.append({
+                        "tipo":   "click_rect",
+                        "rect":   [x1, y1, x2, y2],
+                        "durata": durata,
+                        "attesa": attesa,
+                    })
+                    self._imposta_istruzioni("Click-rect aggiunto.")
+                elif self.stato == self.WAIT_NUM_MATCH_RECT:
+                    hwnd = win32gui.FindWindow(None, dpg.get_value(self.TAG_IN_WIN_NAME))
+                    rect = get_client_rect(hwnd)
+                    if rect:
+                        cx, cy, cw, ch = rect
+                        px1, py1 = int(min(x1, x2)*cw), int(min(y1, y2)*ch)
+                        px2, py2 = int(max(x1, x2)*cw), int(max(y1, y2)*ch)
+                        ax1, ay1 = cx + px1, cy + py1
+                        ax2, ay2 = cx + px2, cy + py2
+                        try:
+                            import mss
+                            import cv2
+                            import numpy as np
+                            with mss.mss() as sct:
+                                img = np.array(sct.grab({"left": ax1, "top": ay1, "width": ax2-ax1, "height": ay2-ay1}))
+                                shape_blurred = _extract_pure_shape(img)
+                                self.buffer_num_match.append({
+                                    "rect": [x1, y1, x2, y2],
+                                    "template": shape_blurred.flatten().tolist()
+                                })
+                                self._imposta_istruzioni(f"Numero {len(self.buffer_num_match)} salvato. Trascina prossimo o CHIUDI PUNTI.", (100, 255, 255))
+                        except Exception as e:
+                            print("[Number Match] Errore salvataggio template:", e)
+            else:
+                if self.stato == "WAIT_RECT_ON_CANVAS":
+                    self._imposta_istruzioni("Rettangolo troppo piccolo, annullato.", (255, 150, 100))
+        self.rect_drag_active = False
+        if self.stato == "WAIT_RECT_ON_CANVAS":
+            self._reset_stato()
+        else:
+            self.rect_start = None
+            self.rect_end = None
+        try:
+            self.aggiorna_lista()
+            self.aggiorna_preview()
+        except Exception:
+            pass
+
+    # ======================= SALVA / TEST =======================
+
+    def _salva_e_chiudi(self, *_):
+        if self.id_task is None:
+            self.chiudi(); return
+        self.task_mgr.imposta_azioni(self.id_task, self.azioni)
+        if self.on_save_cb:
+            try:
+                self.on_save_cb(self.id_task)
+            except Exception as e:
+                print(f"[TaskActionEditor] on_save_cb error: {e}")
+        self.chiudi()
+
+    def _avvia_test(self, *_):
+        stop_flag.requested = False
+        if not _WIN_OK:
+            self._imposta_istruzioni("pyautogui/win32 non disponibili.", (255, 100, 100))
+            return
+        if not self.azioni:
+            self._imposta_istruzioni("Nessuna azione da testare.", (255, 100, 100))
+            return
+        threading.Thread(target=self._esegui_test_thread, daemon=True).start()
+
+    def _esegui_test_thread(self):
+        nome_finestra = dpg.get_value(self.TAG_IN_WIN_NAME)
+        hwnd = win32gui.FindWindow(None, nome_finestra)
+        if not hwnd:
+            return
+        try:
+            win32gui.SetForegroundWindow(hwnd)
+            time.sleep(0.5)
+        except Exception:
+            pass
+        esegui_azioni(self.azioni, hwnd, is_test=True)
+
