@@ -1,5 +1,66 @@
 # Changelog
 
+## v1.0.2 — Fix loop infinito su task non completata
+
+### Fix #5 — Loop quando il bot arriva "vicino ma non sopra" il punto della task
+
+**Sintomo:** quando il punto registrato di una task cade in una posizione
+non perfettamente raggiungibile (es. appena fuori dalla zona walkable
+mappata), il bot si blocca nelle vicinanze, fa stuck/replan, ma il path
+include sempre il goal esatto come ultimo waypoint, irraggiungibile.
+
+**Causa:** in `_plan_path`, dopo il calcolo A*, il goal esatto `goal_xy`
+veniva sempre aggiunto come ultimo waypoint del path, anche quando era
+fuori dalla griglia walkable. Risultato: l'A* termina sul "snap point"
+calpestabile piu' vicino, ma l'ultimo step tenta di camminare in
+diagonale verso un punto irraggiungibile -> stuck infinito.
+
+**Fix:** in `ui/gps_app.py::_plan_path`, il goal esatto viene aggiunto
+SOLO se e' raggiungibile in linea retta dal goal snapped (controllo con
+`pathfinder.line_walkable_coords`) e a distanza inferiore a 1 unita':
+
+```python
+dist_extra = math.hypot(last[0] - goal_xy[0], last[1] - goal_xy[1])
+if 0.05 < dist_extra < 1.0 and self.pathfinder.line_walkable_coords(last, goal_xy):
+    path.append(goal_xy)
+```
+
+Risultato: il bot considera "arrivato" sul snap point quando il goal
+esatto e' irraggiungibile, scatena `_on_arrival_callback`, e prova a
+premere SPAZIO. Se Among Us accetta l'interazione (la zona di proximity
+del minigioco e' generosa), il minigioco si apre. Altrimenti scatta il
+fix #6 sotto.
+
+### Fix #6 — Cooldown di sicurezza contro l'Auto-All in loop
+
+**Sintomo:** in modalita' Auto-Quest, se una task viene "eseguita" dal
+bot (subprocess termina con exit 0) ma in RAM rimane non-done — perche'
+il minigioco non si e' mai aperto, oppure il bot e' arrivato fuori dalla
+zona di interazione, oppure c'e' stato un problema di hwnd —, l'Auto-All
+ricalcolando subito i candidati trova ANCORA la stessa task (e' la piu'
+vicina). Risultato: la rilancia subito, identico, e il loop continua.
+
+**Causa:** in `_controlla_processo_task`, dopo `ret == 0` veniva
+applicato un cooldown SOLO se la task aveva un campo `cooldown` esplicito
+nel JSON. Per le task normali, niente cooldown -> rilancio immediato.
+
+**Fix:** dopo che il subprocess termina, controlla se la task corrispondente
+in RAM e' done. Se NON lo e', applica un cooldown di sicurezza di 8 secondi
+(non sovrascrive cooldown piu' lunghi gia' presenti). Cosi' Auto-All
+selezionera' un'altra task in attesa, e la stessa potra' essere ritentata
+dopo qualche secondo (magari dopo che la posizione del player e' cambiata,
+o dopo un eventuale replan):
+
+```python
+if not task_done_in_ram:
+    safety_cd = time.time() + 8.0
+    if safety_cd > self.task_cooldowns.get(id_task, 0):
+        self.task_cooldowns[id_task] = safety_cd
+```
+
+Vedrai nei log: `[Loop guard] Task non completata in RAM — cooldown di sicurezza 8s`.
+
+
 ## v1.0.1 — Bug fix dopo riorganizzazione
 
 Quattro bug introdotti dalla suddivisione del `main.py` monolitico in package
