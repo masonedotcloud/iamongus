@@ -14,10 +14,11 @@ class PoiManager:
     """
     Gestisce i Punti di Interesse (POI).
 
-    Formato: ``{id, nome, x, y, zone_id, zone_local_id, zone_nome}``.
+    Formato: ``{id, nome, x, y, id_zona, id_zona_locale, nome_zona}``.
     """
 
     def __init__(self, file_path):
+        """Inizializza l'istanza con i valori di default."""
         self.file_path   = file_path
         self.poi_list    = []
         self.prossimo_id = 1
@@ -28,10 +29,12 @@ class PoiManager:
     # ------------------------------------------------------------------
 
     def carica(self):
+        """Carica da file."""
         if not os.path.exists(self.file_path):
             return
         try:
             with open(self.file_path, 'r') as f:
+                # Carica e deserializza JSON da file
                 data = json.load(f)
             self.poi_list = data.get('poi_list', [])
             self.prossimo_id = max((p['id'] for p in self.poi_list), default=0) + 1
@@ -40,8 +43,10 @@ class PoiManager:
             print(f"Errore caricamento POI ({e}).")
 
     def salva(self):
+        """Salva su file."""
         try:
             with open(self.file_path, 'w') as f:
+                # Serializza in JSON e scrive su file
                 json.dump({'poi_list': self.poi_list}, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"Errore salvataggio POI ({e}).")
@@ -51,15 +56,16 @@ class PoiManager:
     # ------------------------------------------------------------------
 
     def aggiungi(self, nome, x, y,
-                 zone_id=None, zone_local_id=None, zone_nome=None):
+                 id_zona=None, id_zona_locale=None, nome_zona=None):
+        """Aggiunge."""
         poi = {
             'id':            self.prossimo_id,
             'nome':          nome,
             'x':             float(x),
             'y':             float(y),
-            'zone_id':       zone_id,
-            'zone_local_id': zone_local_id,
-            'zone_nome':     zone_nome,
+            'id_zona':       id_zona,
+            'id_zona_locale': id_zona_locale,
+            'nome_zona':     nome_zona,
         }
         self.poi_list.append(poi)
         self.prossimo_id += 1
@@ -67,23 +73,26 @@ class PoiManager:
         return poi
 
     def aggiorna(self, id_poi, nome, x, y,
-                 zone_id=None, zone_local_id=None, zone_nome=None):
+                 id_zona=None, id_zona_locale=None, nome_zona=None):
+        """Aggiorna."""
         for p in self.poi_list:
             if p['id'] == id_poi:
                 p['nome']          = nome
                 p['x']             = float(x)
                 p['y']             = float(y)
-                p['zone_id']       = zone_id
-                p['zone_local_id'] = zone_local_id
-                p['zone_nome']     = zone_nome
+                p['id_zona']       = id_zona
+                p['id_zona_locale'] = id_zona_locale
+                p['nome_zona']     = nome_zona
                 break
         self.salva()
 
     def rimuovi(self, id_poi):
+        """Rimuove."""
         self.poi_list = [p for p in self.poi_list if p['id'] != id_poi]
         self.salva()
 
     def get_by_id(self, id_poi):
+        """Ritorna by id."""
         for p in self.poi_list:
             if p['id'] == id_poi:
                 return p

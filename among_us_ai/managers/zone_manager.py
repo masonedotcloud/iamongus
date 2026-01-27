@@ -1,8 +1,8 @@
 """
 Gestione delle zone nominate disegnate a mano sulla mappa.
 
-Ogni zona è un poligono freehand con un nome, un colore e (opzionalmente)
-l'ID della zona corrispondente nel gioco. Il file di persistenza è un
+Ogni zona e' un poligono freehand con un nome, un colore e (opzionalmente)
+l'ID della zona corrispondente nel gioco. Il file di persistenza e' un
 JSON con la lista di zone e l'ID progressivo del prossimo elemento.
 """
 
@@ -21,6 +21,7 @@ class ZoneManager:
     """
 
     def __init__(self, file_path):
+        """Inizializza l'istanza con i valori di default."""
         self.file_path = file_path
         self.zone = []
         self.prossimo_id = 1
@@ -31,10 +32,12 @@ class ZoneManager:
     # ------------------------------------------------------------------
 
     def carica(self):
+        """Carica da file."""
         if not os.path.exists(self.file_path):
             return
         try:
             with open(self.file_path, 'r') as f:
+                # Carica e deserializza JSON da file
                 data = json.load(f)
             raw = data.get('zone', [])
             self.zone = []
@@ -52,8 +55,10 @@ class ZoneManager:
             print(f"Errore caricamento zone ({e}).")
 
     def salva(self):
+        """Salva su file."""
         try:
             with open(self.file_path, 'w') as f:
+                # Serializza in JSON e scrive su file
                 json.dump({
                     'zone': self.zone,
                     'prossimo_id': self.prossimo_id,
@@ -66,6 +71,7 @@ class ZoneManager:
     # ------------------------------------------------------------------
 
     def aggiungi(self, nome, punti, colore=None):
+        """Aggiunge."""
         if colore is None:
             idx = (self.prossimo_id - 1) % len(GPSConfig.COLORI_ZONE)
             colore = GPSConfig.COLORI_ZONE[idx]
@@ -81,10 +87,12 @@ class ZoneManager:
         return zona
 
     def rimuovi(self, id_zona):
+        """Rimuove."""
         self.zone = [z for z in self.zone if z['id'] != id_zona]
         self.salva()
 
     def rinomina(self, id_zona, nuovo_nome):
+        """Rinomina l'elemento."""
         for z in self.zone:
             if z['id'] == id_zona:
                 z['nome'] = nuovo_nome
@@ -92,6 +100,7 @@ class ZoneManager:
         self.salva()
 
     def aggiorna_forma(self, id_zona, punti):
+        """Aggiorna forma."""
         for z in self.zone:
             if z['id'] == id_zona:
                 z['punti'] = [[float(p[0]), float(p[1])] for p in punti]
@@ -99,6 +108,7 @@ class ZoneManager:
         self.salva()
 
     def cambia_colore(self, id_zona, colore):
+        """Cambia il colore dell'elemento."""
         for z in self.zone:
             if z['id'] == id_zona:
                 z['colore'] = colore
@@ -133,6 +143,7 @@ class ZoneManager:
 
     @staticmethod
     def centroide(zona):
+        """Calcola il centroide di un poligono."""
         pts = zona.get('punti', [])
         if not pts:
             return (0.0, 0.0)
@@ -142,6 +153,7 @@ class ZoneManager:
 
     @staticmethod
     def bbox(zona):
+        """Calcola il bounding box di un poligono."""
         pts = zona.get('punti', [])
         if not pts:
             return (0.0, 0.0, 0.0, 0.0)
