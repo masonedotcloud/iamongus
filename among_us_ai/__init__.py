@@ -15,7 +15,7 @@ Struttura del package:
                     autonomi nei ``tasks_exec/``.
 - ``ui``          : dashboard principale (DearPyGui) ed editor azioni.
 
-Entry point: ``python -m among_us_gps``  oppure  ``python main.py``.
+Entry point: ``python -m among_us_ai``  oppure  ``python main.py``.
 """
 
 __version__ = "2.2.61"

@@ -3,7 +3,7 @@ Centralizza l'import delle librerie Windows-specifiche e di OpenCV/PyAutoGUI.
 
 Alcuni moduli (input simulato, scanner YOLO, OCR) funzionano solo su Windows
 con l'eseguibile di Among Us in foreground. Gli import vengono tentati una
-volta sola e il flag `WIN_OK` indica se l'ambiente è completo.
+volta sola e il flag `WIN_OK` indica se l'ambiente e' completo.
 
 Il resto del codice importa da qui invece di ripetere try/except sparsi.
 """

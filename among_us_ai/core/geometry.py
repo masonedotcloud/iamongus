@@ -2,8 +2,9 @@
 Utility geometriche e di sistema condivise tra editor, manager e renderer.
 
 Funzioni "pure" (no side-effects): point-in-polygon, sampling random,
-conversione colori. Più `get_client_rect()` che usa l'API Windows ma è
-qui per comodità di import.
+# Ottiene il rect (x, y, w, h) dell'area client del gioco
+conversione colori. Piu' `get_client_rect()` che usa l'API Windows ma e'
+qui per comodita' di import.
 """
 
 import random as _random
@@ -17,6 +18,7 @@ def hex_to_rgba(hex_str, alpha=255):
     return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), alpha)
 
 
+# Ottiene il rect (x, y, w, h) dell'area client del gioco
 def get_client_rect(hwnd):
     """
     Ritorna (x, y, w, h) dell'area client della finestra bersaglio.
@@ -37,6 +39,7 @@ def get_client_rect(hwnd):
         return None
 
 
+# Test point-in-polygon (Ray casting)
 def point_in_polygon(px, py, poly):
     """Ray casting. `poly = [(x, y), ...]` in coordinate qualunque."""
     n = len(poly)
@@ -76,6 +79,7 @@ def random_point_in_poly(poly, max_tries=40):
     for _ in range(max_tries):
         rx = _random.uniform(x1, x2)
         ry = _random.uniform(y1, y2)
+        # Test point-in-polygon (Ray casting)
         if point_in_polygon(rx, ry, poly):
             return rx, ry
     return sum(xs) / len(xs), sum(ys) / len(ys)

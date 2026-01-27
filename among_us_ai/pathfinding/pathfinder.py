@@ -2,10 +2,10 @@
 Pathfinder A* su griglia di celle "calpestabili".
 
 Le celle sono ricavate dal trail registrato dal mapper: il bot si muove
-solo dove un giocatore umano è effettivamente passato (`visitati_coords`).
+solo dove un giocatore umano e' effettivamente passato (`visitati_coords`).
 
-Funzionalità principali:
-- A* con costo euclideo, prevenzione del corner-cutting e penalità per
+Funzionalita' principali:
+- A* con costo euclideo, prevenzione del corner-cutting e penalita' per
   stare lontani dai muri.
 - Path smoothing tramite funnel/string-pulling con hitbox a croce.
 - Supporto per ostacoli dinamici (porte) tramite `dynamic_obstacles`.
@@ -20,10 +20,11 @@ from ..core.config import GPSConfig
 class Pathfinder:
     """
     Lavora su celle intere: key = (int(round(x/STEP)), int(round(y/STEP))).
-    `walkable` è il set di queste chiavi, costruito dalle celle visitate.
+    `walkable` e' il set di queste chiavi, costruito dalle celle visitate.
     """
 
     def __init__(self, step):
+        """Inizializza l'istanza con i valori di default."""
         self.step = step
         self.walkable = set()
         self.dynamic_obstacles = set()
@@ -35,36 +36,38 @@ class Pathfinder:
 
     def rebuild(self, visitati_coords):
         """
-        Rigenera il set di celle calpestabili e calcola le penalità per
+        Rigenera il set di celle calpestabili e calcola le penalita' per
         stare lontani dai muri.
         """
         base = set()
         for x, y in visitati_coords:
             base.add(self._key(x, y))
 
-        # NB: nessuna dilatazione — il bot cammina rigorosamente solo dove
-        # è stato registrato il passaggio, evitando di "sbordare" nei muri.
+        # NB: nessuna dilatazione - il bot cammina rigorosamente solo dove
+        # e' stato registrato il passaggio, evitando di "sbordare" nei muri.
         self.walkable = base
 
-        # Precalcola penalità per tenere il bot al centro dei corridoi.
+        # Precalcola penalita' per tenere il bot al centro dei corridoi.
         self.penalties.clear()
         for cell in self.walkable:
             p = 0.0
             for dx in (-1, 0, 1):
                 for dy in (-1, 0, 1):
                     if (cell[0] + dx, cell[1] + dy) not in self.walkable:
-                        p += 0.4  # penalità morbida → percorsi più dritti
+                        p += 0.4  # penalita' morbida -> percorsi piu' dritti
             if p > 0:
                 self.penalties[cell] = p
 
     def _key(self, x, y):
+        """Funzione di chiave per ordinare gli elementi."""
         return (int(round(x / self.step)), int(round(y / self.step)))
 
     def _coord(self, key):
+        """Converte coordinate."""
         return (key[0] * self.step, key[1] * self.step)
 
     def nearest_walkable(self, x, y, radius=80):
-        """Trova la cella calpestabile più vicina entro un dato raggio."""
+        """Trova la cella calpestabile piu' vicina entro un dato raggio."""
         start = self._key(x, y)
         if start in self.walkable:
             return start
@@ -76,6 +79,7 @@ class Pathfinder:
                     c = (start[0] + dx, start[1] + dy)
                     if c in self.walkable:
                         return c
+        # Goal irraggiungibile o limite nodi superato
         return None
 
     # ------------------------------------------------------------------
@@ -83,7 +87,9 @@ class Pathfinder:
     # ------------------------------------------------------------------
 
     def astar(self, start_xy, goal_xy, max_nodes=20000):
+        """Algoritmo A*: trova il percorso piu' corto da start a goal."""
         if not self.walkable:
+            # Goal irraggiungibile o limite nodi superato
             return None
 
         start = self.nearest_walkable(start_xy[0], start_xy[1], GPSConfig.NEAREST_SEARCH_RADIUS)
@@ -91,9 +97,11 @@ class Pathfinder:
         if start is None or goal is None or start == goal:
             if start == goal and start is not None:
                 return [self._coord(start)]
+            # Goal irraggiungibile o limite nodi superato
             return None
 
         def h(a, b):
+            """Funzione di euristica per l'algoritmo A*."""
             return math.hypot(a[0] - b[0], a[1] - b[1])
 
         open_heap = [(h(start, goal), 0, start)]
@@ -120,9 +128,11 @@ class Pathfinder:
                 path = self._smooth(path)  # string-pulling
                 return [self._coord(k) for k in path]
 
+            # Marca il nodo come visitato (chiuso)
             closed.add(current)
             visited_count += 1
             if visited_count > max_nodes:
+                # Goal irraggiungibile o limite nodi superato
                 return None
 
             for dx, dy, cost in neighbors:
@@ -147,7 +157,9 @@ class Pathfinder:
                     came_from[nb] = current
                     g_score[nb] = tentative
                     f = tentative + h(nb, goal)
+                    # Inserisce nodo nella priority queue (ordinato per costo f)
                     heapq.heappush(open_heap, (f, tentative, nb))
+        # Goal irraggiungibile o limite nodi superato
         return None
 
     # ------------------------------------------------------------------
@@ -182,6 +194,7 @@ class Pathfinder:
         return False
 
     def line_walkable_coords(self, start_xy, end_xy):
+        """Verifica se la linea da A a B passa solo per celle calpestabili."""
         a = self._key(start_xy[0], start_xy[1])
         b = self._key(end_xy[0], end_xy[1])
         return self._line_walkable(a, b)

@@ -5,7 +5,7 @@ Due classi separate per posizione del giocatore e task in corso:
 - `AmongUsMemoryReader`  -> coordinate (x, y) del player locale
 - `AmongUsTaskReader`    -> lista delle task assegnate al player locale
 
-Tutti gli offset sono per la versione di Among Us su cui è stato sviluppato
+Tutti gli offset sono per la versione di Among Us su cui e' stato sviluppato
 questo bot e provengono dagli script `task_lista.py` / `find_task_memoria.py`.
 Se Among Us aggiorna la build, gli offset vanno rivisti qui.
 """
@@ -28,6 +28,7 @@ class AmongUsMemoryReader:
     """Legge la posizione (x, y) del giocatore locale dalla RAM."""
 
     def __init__(self):
+        """Inizializza l'istanza con i valori di default."""
         self.process_name = "Among Us.exe"
         self.module_name  = "GameAssembly.dll"
         self.pm = None
@@ -41,6 +42,7 @@ class AmongUsMemoryReader:
         self.OFFSET_Y             = 0x50
 
     def connect(self):
+        """Stabilisce la connessione al processo del gioco."""
         if not _PYMEM_OK:
             return False
         try:
@@ -53,32 +55,40 @@ class AmongUsMemoryReader:
             return False
 
     def get_position(self):
+        """Ritorna position."""
         if not self.pm or not self.game_assembly_base:
             if not self.connect():
+                # Goal irraggiungibile o limite nodi superato
                 return None
         try:
             player_control_class_addr = self.pm.read_int(
                 self.game_assembly_base + self.PLAYER_CONTROL_CLASS)
             if player_control_class_addr == 0:
+                # Goal irraggiungibile o limite nodi superato
                 return None
             static_fields_ptr = self.pm.read_int(
                 player_control_class_addr + self.STATIC_FIELDS)
             if static_fields_ptr == 0:
+                # Goal irraggiungibile o limite nodi superato
                 return None
             local_player_addr = self.pm.read_int(
                 static_fields_ptr + self.OFFSET_LOCAL_PLAYER)
             if local_player_addr == 0:
+                # Goal irraggiungibile o limite nodi superato
                 return None
             net_transform_addr = self.pm.read_int(
                 local_player_addr + self.OFFSET_NET_TRANSFORM)
             if net_transform_addr == 0:
+                # Goal irraggiungibile o limite nodi superato
                 return None
             pos_x = self.pm.read_float(net_transform_addr + self.OFFSET_X)
             pos_y = self.pm.read_float(net_transform_addr + self.OFFSET_Y)
             return (pos_x, pos_y)
         except pymem.exception.MemoryReadError:
+            # Goal irraggiungibile o limite nodi superato
             return None
         except Exception:
+            # Goal irraggiungibile o limite nodi superato
             return None
 
 
@@ -111,20 +121,24 @@ class AmongUsTaskReader:
     OFFSET_MAX_STEP      = 0x34
 
     def __init__(self, tasks_json_path="tasks.json"):
+        """Inizializza l'istanza con i valori di default."""
         self.pm                 = None
         self.game_assembly_base = None
         self.skeld_tasks        = self._load_tasks_def(tasks_json_path)
         self._connected         = False
 
     def _load_tasks_def(self, path):
+        """Carica le definizioni delle task da tasks.json."""
         try:
             with open(path, 'r') as f:
+                # Carica e deserializza JSON da file
                 raw = json.load(f)
             return {int(k): v for k, v in raw.items()}
         except Exception:
             return {}
 
     def _connect(self):
+        """Stabilisce la connessione al processo del gioco."""
         if not _PYMEM_OK:
             return False
         try:
@@ -144,15 +158,18 @@ class AmongUsTaskReader:
         Usa 'tipo' (Task Type ID) come vero identificatore univoco.
         """
         if not _PYMEM_OK:
+            # Goal irraggiungibile o limite nodi superato
             return None
         if not self.pm:
             if not self._connect():
+                # Goal irraggiungibile o limite nodi superato
                 return None
         try:
             base_ptr      = self.pm.read_uint(self.game_assembly_base + self.PLAYER_CONTROL_CLASS)
             static_fields = self.pm.read_uint(base_ptr + self.STATIC_FIELDS)
             player        = self.pm.read_uint(static_fields + self.OFFSET_LOCAL_PLAYER)
             if player == 0:
+                # Goal irraggiungibile o limite nodi superato
                 return None
 
             m_ptr = self.pm.read_uint(player + self.OFFSET_MY_TASKS)
@@ -168,7 +185,7 @@ class AmongUsTaskReader:
                     continue
 
                 tipo    = self.pm.read_int(t_ptr + self.OFFSET_TYPE)
-                room_id = self.pm.read_int(t_ptr + self.OFFSET_ROOM_ID)
+                id_stanza = self.pm.read_int(t_ptr + self.OFFSET_ROOM_ID)
                 step    = self.pm.read_int(t_ptr + self.OFFSET_STEP)
                 mstep   = self.pm.read_int(t_ptr + self.OFFSET_MAX_STEP)
 
@@ -185,10 +202,11 @@ class AmongUsTaskReader:
                     "prog":    f"{step}/{mstep}",
                     "done":    (step >= mstep) if mstep > 0 else False,
                     "tipo":    tipo,      # Task Type ID (univoco per tipologia)
-                    "room_id": room_id,
+                    "id_stanza": id_stanza,
                 })
             return tasks
         except Exception:
             self.pm         = None
             self._connected = False
+            # Goal irraggiungibile o limite nodi superato
             return None

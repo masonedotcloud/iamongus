@@ -8,6 +8,7 @@ modificati in un solo posto.
 
 
 class GPSConfig:
+    """Configurazione globale: dimensioni finestra, file path, costanti timing, soglie pathfinding."""
     # --- Mappa / finestra ---
     MAP_FILE = "mappa_skeld.json"
     DEFAULT_SCALE = 60
@@ -27,10 +28,10 @@ class GPSConfig:
     WAYPOINT_ADVANCE       = 0.55    # Raggio ampio per transizioni fluide tra i punti
     AUTO_ARRIVAL_THRESHOLD = 0.25    # Maggiore precisione per l'arrivo finale
     AUTO_AXIS_THRESHOLD    = 0.10    # sotto cui non premo il tasto
-    AUTO_STUCK_TIME        = 0.8     # Tempo ridotto per un replan più rapido
+    AUTO_STUCK_TIME        = 0.8     # Tempo ridotto per un replan piu' rapido
     AUTO_STUCK_DELTA       = 0.06
     AUTO_REPLAN_ON_STUCK   = True
-    NEAREST_SEARCH_RADIUS  = 80      # ricerca cella calpestabile più vicina
+    NEAREST_SEARCH_RADIUS  = 80      # ricerca cella calpestabile piu' vicina
     ASTAR_MAX_NODES        = 20000   # safety limit
 
     # --- Zone nominate ---
@@ -40,9 +41,18 @@ class GPSConfig:
     ZONA_PUNTO_DIST_PX = 8
 
     # --- Task ---
-    TASK_FILE = "task_registrate.json"   # JSON dove vengono salvate le task custom
-    TASKS_DEF_FILE = "tasks.json"         # JSON con le definizioni originali (task_lista.py)
-    TASK_ICON_RADIUS = 8
+    # Formato v2.1: dettagli (struttura) + esecuzione (azioni) separati.
+    TASK_DETTAGLI_FILE  = "tasks_dettagli.json"
+    TASK_ESECUZIONE_DIR = "tasks_esecuzione"
+    # Vecchio formato monolitico (v2.0): se esiste e tasks_dettagli.json no,
+    # parte la migrazione automatica.
+    TASK_LEGACY_FILE    = "task_registrate.json"
+
+    TASKS_DEF_FILE      = "tasks.json"  # definizioni originali (task_lista.py)
+    TASK_ICON_RADIUS    = 8
+
+    # Alias retro-compatibilita': alcuni mixin/log si riferiscono a TASK_FILE.
+    TASK_FILE = TASK_LEGACY_FILE
 
     # --- AI / Modelli YOLO ---
     YOLO_PLAYER_MODEL = "yolo_players.pt"

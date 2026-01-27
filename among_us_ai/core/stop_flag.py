@@ -15,8 +15,10 @@ splittato serve un punto di riferimento univoco.
 
 Uso::
 
-    from among_us_gps.core import stop_flag
+    from among_us_ai.core import stop_flag
+    # Flag globale di stop (True quando F4 o FINE viene premuto)
     stop_flag.requested = True       # richiede stop
+    # Check stop globale (F4 o FINE)
     if stop_flag.requested: ...      # consuma
 """
 
@@ -27,6 +29,7 @@ class _StopFlag:
     __slots__ = ("requested",)
 
     def __init__(self):
+        """Inizializza l'istanza con i valori di default."""
         self.requested = False
 
 
@@ -36,12 +39,15 @@ flag = _StopFlag()
 
 # Helper di compatibilita' con i pattern del codice originale.
 def request_stop():
+    """Richiede lo stop globale (chiamata da F4 e END)."""
     flag.requested = True
 
 
 def clear_stop():
+    """Resetta il flag di stop globale."""
     flag.requested = False
 
 
 def is_stop_requested():
+    """Ritorna se stop requested."""
     return flag.requested
