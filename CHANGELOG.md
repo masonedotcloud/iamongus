@@ -1,5 +1,82 @@
 # Changelog
 
+## v2.0.1 — Fix import nei mixin + ulteriore split dei file UI
+
+### Fix bloccante: NameError nei mixin di GPSVisualizerPro
+
+**Sintomo:** dopo l'apertura della prima task in modalita' Auto-Quest:
+```
+File "...\among_us_ai\ui\mixins\tasks_lifecycle.py", line 128, in on_arrivo
+    self._task_launch_steps = (TaskManager.STATI_LAUNCH ...)
+NameError: name 'TaskManager' is not defined
+```
+
+**Causa:** quando ho splittato `gps_app.py` in mixin (v2.0), ho propagato
+gli import "ovvi" (`dpg`, `time`, `GPSConfig`, ...) tramite il facade
+`mixins/_imports.py`, ma mi sono dimenticato di includere `TaskManager`,
+`ZoneManager`, `PoiManager`, `Pathfinder`, `AmongUsMemoryReader` e
+`AmongUsTaskReader`. Funzionavano nel monolite originale come globali del
+modulo, e in `app.py` (dove vengono instanziati nell'__init__), ma
+nessun mixin li vedeva.
+
+Tre mixin in particolare li usavano:
+- `tasks_lifecycle.py`: `TaskManager.STATI_LAUNCH` (costante di classe)
+- `zones.py`: `ZoneManager.centroide()` e `.bbox()` (staticmethod)
+- e potenzialmente altri tramite accessi successivi.
+
+**Fix:** aggiunti tutti i manager + reader + Pathfinder al facade
+`mixins/_imports.py`. Verificato con scan AST automatico che nessun mixin
+abbia piu' simboli non risolti.
+
+### Ulteriore split dei mixin grossi
+
+Tre mixin erano ancora oltre 500 righe; li ho divisi:
+
+| Prima                           | Dopo                                                   |
+|---------------------------------|--------------------------------------------------------|
+| `tasks_popups.py` (982 righe)   | `tasks_popups_register.py` (424) + `_edit.py` (339) + `_subitem.py` (235) |
+| `rendering.py` (611 righe)      | `rendering_world.py` (299) + `rendering_entities.py` (319) |
+| `tasks_lifecycle.py` (578 righe)| `tasks_launch.py` (268) + `tasks_process.py` (317)     |
+
+Adesso `GPSVisualizerPro` eredita da **19 mixin** (erano 15) tutti sotto
+le 432 righe. Nessuno degli effetti precedenti e' cambiato (mixin
+disgiunti, stesso comportamento).
+
+### Split del TaskActionEditor
+
+`task_action_editor.py` (2488 righe, 60 metodi) era il file singolo piu'
+grosso del progetto. L'ho splittato come `GPSVisualizerPro`:
+
+- `editor.py` (224 righe): classe principale con `__init__`, `apri`,
+  `chiudi`, `aggiorna_frame` e poco altro.
+- `editor_mixins/`: 7 mixin tematici (UI build, start actions, sequence,
+  canvas input, drawing, list panel, save/test).
+
+Gli unici due file dell'editor ancora "grossi" sono `canvas_input.py`
+(636 righe) e `drawing.py` (537), ma sono intrinsecamente cosi' perche'
+il primo gestisce tutta la macchina a stati del click/drag/vertex-move
+sul canvas e il secondo tutto il rendering DPG dell'editor — splittarli
+ulteriormente romperebbe i metodi che si chiamano fra loro condividendo
+buffer locali.
+
+### File rinominato
+
+`among_us_ai/ui/task_action_editor.py` -> `among_us_ai/ui/editor.py`.
+Se hai script personalizzati che facevano:
+
+    from among_us_ai.ui.task_action_editor import TaskActionEditor
+
+vanno cambiati in:
+
+    from among_us_ai.ui.editor import TaskActionEditor
+
+oppure (preferito):
+
+    from among_us_ai.ui import TaskActionEditor
+
+che funziona da sempre.
+
+
 ## v2.0.0 — Riorganizzazione UI in mixin + separazione struttura/codegen task
 
 Riorganizzazione strutturale, ZERO modifiche a logica e funzionamento.
