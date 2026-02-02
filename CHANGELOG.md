@@ -1,5 +1,61 @@
 # Changelog
 
+## v2.0.0 — Riorganizzazione UI in mixin + separazione struttura/codegen task
+
+Riorganizzazione strutturale, ZERO modifiche a logica e funzionamento.
+Verificato: i file `.py` generati per le task sono byte-per-byte identici
+a quelli prodotti dalla v1, sia per task semplici che per task con
+parent/figlio (ereditarieta' delle azioni).
+
+### Rinominato `among_us_gps` -> `among_us_ai`
+
+Tutti gli import sono stati aggiornati. Se hai script personalizzati che
+fanno `from among_us_gps import ...`, vanno cambiati in
+`from among_us_ai import ...`.
+
+### `GPSVisualizerPro` distribuito su 15 mixin tematici
+
+Il file `ui/gps_app.py` (5300 righe, 114 metodi) era una "god class".
+Adesso e' diviso in:
+
+- `ui/app.py` (331 righe): solo `__init__`, `aggiorna_frame`, `run` +
+  l'eredita' multipla che assembla i mixin.
+- `ui/mixins/` (15 file): metodi raggruppati per tema (rendering,
+  pathfinding, task lifecycle, UI setup, ...).
+
+I mixin sono **disgiunti** (nessun metodo definito in piu' di uno) e
+condividono lo stato `self.*` inizializzato in `app.py::__init__`.
+L'ordine MRO non ha effetti sul comportamento perche' non ci sono
+sovrapposizioni.
+
+Vantaggio: un nuovo gruppo di funzionalita' ha il suo file dedicato; per
+modificare il rendering basta toccare `mixins/rendering.py` senza
+scorrere altre 4500 righe di codice non correlato.
+
+Per evitare di duplicare 30 righe di import in ogni mixin, c'e' un modulo
+facade `mixins/_imports.py` che ognuno importa con
+`from ._imports import *`. Pattern standard per progetti con molti mixin.
+
+### `TaskManager` -> separazione struttura/generazione codice
+
+Il metodo `crea_file_esecuzione` (147 righe) e' stato spostato in un
+nuovo modulo `execution/task_writer.py`. Cosi':
+
+- `managers/task_manager.py` si occupa SOLO della struttura task: CRUD,
+  parenting/inheritance, persistenza JSON, sync con la RAM.
+- `execution/task_writer.py` si occupa SOLO della generazione del file
+  `.py` autonomo. E' una funzione pura (nessuno stato): riceve un dict
+  task e produce un file.
+
+`TaskManager.crea_file_esecuzione` e' diventato un thin wrapper di ~30
+righe che risolve l'ereditarieta' parent->figlio e poi chiama
+`genera_file_esecuzione`.
+
+Vantaggio: per cambiare il formato dei file generati (es. aggiungere un
+nuovo campo a `TASK_META`, cambiare il commento di intestazione) basta
+toccare `task_writer.py` senza rischiare di rompere il CRUD delle task.
+
+
 ## v1.0.2 — Fix loop infinito su task non completata
 
 ### Fix #5 — Loop quando il bot arriva "vicino ma non sopra" il punto della task
@@ -141,12 +197,12 @@ _click_hold  = esegui_click_hold
 
 **Causa:** nell'originale `main.py` era nella radice del progetto, quindi
 `os.path.dirname(os.path.abspath(__file__))` puntava alla radice. Nel
-package, `__file__` e' dentro `among_us_gps/ui/` o `among_us_gps/execution/`,
+package, `__file__` e' dentro `among_us_ai/ui/` o `among_us_ai/execution/`,
 quindi il `dirname` punta in quelle sottocartelle.
 
 **Fix:** sostituito con `os.getcwd()` (o `_os.getcwd()` per i rami template-style),
 che ritorna la directory di lancio del bot — dove l'utente fa
-`python main.py` o `python -m among_us_gps`.
+`python main.py` o `python -m among_us_ai`.
 
 Punti modificati:
 
