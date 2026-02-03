@@ -1,5 +1,44 @@
 # Changelog
 
+## v2.0.2 — Fix costanti di classe perse durante lo split del TaskActionEditor
+
+### Fix bloccante: AttributeError 'IDLE'
+
+**Sintomo:**
+```
+File "...\among_us_ai\ui\editor.py", line 65, in __init__
+    self.stato = self.IDLE
+                 ^^^^^^^^^
+AttributeError: 'TaskActionEditor' object has no attribute 'IDLE'
+```
+
+**Causa:** quando ho splittato `TaskActionEditor` in mixin (v2.0.1), il
+mio script di split prendeva solo i metodi (`ast.FunctionDef`) ma ha
+ignorato gli **assignment di livello classe** (`ast.Assign` direttamente
+sotto la `ClassDef`). L'editor originale aveva 47 costanti di classe:
+
+- 32 costanti di stato della macchina di interazione (`IDLE`,
+  `WAIT_CLICK`, `WAIT_DRAG_START`, ...).
+- 15 tag DPG dei widget (`TAG_CANVAS`, `TAG_LIST`, `TAG_IST`, ...).
+
+Tutte erano definite come `IDLE = "IDLE"` ecc. all'inizio della classe e
+referenziate dai metodi come `self.IDLE`, `self.TAG_CANVAS`, ecc. Lo
+split le ha lasciate fuori dal nuovo `editor.py`, e al primo accesso da
+`__init__` (`self.stato = self.IDLE`) Python alza `AttributeError`.
+
+**Fix:** ripristinate tutte le 47 costanti di classe in cima a
+`TaskActionEditor` in `editor.py`, prima di `__init__`. Verificato con
+scan AST sul file originale del v1 che siano state recuperate tutte e
+47 senza modifiche di valore.
+
+**Verifica:** ho controllato sistematicamente TUTTI gli altri file della
+v2 alla ricerca di costanti di classe potenzialmente perse: l'unico caso
+era `TaskActionEditor` (perche' e' l'unica classe che ho splittato in
+mixin oltre a `GPSVisualizerPro`, e quest'ultima per fortuna non aveva
+costanti di classe). I manager, i reader e il pathfinder hanno costanti
+ma non sono stati splittati, quindi sono a posto.
+
+
 ## v2.0.1 — Fix import nei mixin + ulteriore split dei file UI
 
 ### Fix bloccante: NameError nei mixin di GPSVisualizerPro
