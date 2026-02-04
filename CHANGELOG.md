@@ -1,5 +1,39 @@
 # Changelog
 
+## v2.0.4 — Fix label dei pulsanti accidentalmente cambiate
+
+**Sintomo riportato:** "Sembra che manchino dei pulsanti/opzioni"
+
+**Causa:** nella v2.0.3 (riorganizzazione grafica del pannello) avevo
+rinominato per pigrizia alcune label per farle stare nei nuovi gruppi
+con `width=-1`:
+
+- "Avvia Task" -> "Avvia"
+- "Altri giocatori (YOLO)" -> "Altri giocatori"
+- "Porte chiuse rilevate (YOLO)" -> "Porte chiuse rilevate"
+- "Auto-calibra YOLO (movimento)" -> "Auto-calibra (movimento)"
+- "Smoothing" (slider) -> "" (label vuota)
+
+I pulsanti c'erano sempre tutti — niente era stato perso a livello di
+funzionalita' — ma le label diverse facevano sembrare che alcune opzioni
+fossero sparite.
+
+**Fix:** ripristinate tutte le label originali al 100%.
+
+**Verifica fatta:** confronto AST sistematico fra il pannello v1
+(`gps_app.py`) e il pannello v2.0.4 (`ui_setup.py`):
+
+- Bottoni:  41 -> 41  ✓ identici
+- Checkbox: 16 -> 16  ✓ identici
+- Slider:    3 -> 3   ✓ identici
+- Listbox:   5 -> 5   ✓ identici
+
+Tutte le 65 coppie (label/tag, callback method) sono identiche al
+pannello originale: ogni pulsante chiama esattamente lo stesso metodo
+con lo stesso testo. Cambia solo l'organizzazione visuale (tab e
+collapsing header) introdotta in v2.0.3.
+
+
 ## v2.0.3 — Riorganizzazione grafica del pannello laterale
 
 **Solo modifiche grafiche, ZERO cambiamenti alla logica.** Tutti i tag, i
