@@ -1,5 +1,76 @@
 # Changelog
 
+## v2.0.3 — Riorganizzazione grafica del pannello laterale
+
+**Solo modifiche grafiche, ZERO cambiamenti alla logica.** Tutti i tag, i
+callback, i widget e gli ID DPG sono identici a prima — cambia solo come
+sono raggruppati visualmente.
+
+### Cosa cambia nel layout
+
+Prima il pannello laterale era una lista lunga da 8 sezioni separate da
+`add_separator`, tutta da scorrere con la rotella per arrivare in fondo.
+Adesso e' organizzato cosi':
+
+```
+SEZIONE FISSA (sempre visibile in cima):
+  - Telecamera   (Follow / Libera / Tutta)
+  - Zoom         (slider + pulsanti -/+/Reset)
+  - AUTO-MOVEMENT  (checkbox + stato + Stop)
+
+TAB BAR (cliccabile):
+  [Zone] [Task] [POI] [Vista] [Stats]
+    |
+    +-- Zone:   Zone nominate (collassabile)
+    |           Zone Porte / filtro YOLO (collassabile, chiuso default)
+    |
+    +-- Task:   "Relazioni Padre <-> Figlia" (sempre visibile)
+    |           Task in memoria RAM (collassabile, aperto)
+    |           Task registrate (collassabile, chiuso)
+    |
+    +-- POI:    Lista POI + bottoni
+    |
+    +-- Vista:  Livelli visibili (collassabile, aperto)
+    |           Rilevamento YOLO (collassabile, chiuso)
+    |           Smoothing (collassabile, chiuso)
+    |
+    +-- Stats:  Tabella statistiche (distanza, tempo, celle, trail)
+
+FOOTER:
+  Scorciatoie tastiera (collassabile, chiuso default)
+```
+
+### Vantaggi pratici
+
+1. **Niente piu' scroll infinito**: i comandi piu' usati (telecamera,
+   zoom, auto-move) sono sempre in alto. Il resto e' raggiungibile
+   cliccando un tab.
+
+2. **Cassetti collassabili**: dentro ogni tab i `collapsing_header`
+   permettono di nascondere temporaneamente cio' che non serve. Le sotto-
+   sezioni meno usate (Zone Porte, Task registrate, YOLO config) partono
+   chiuse di default.
+
+3. **Statistiche in tabella**: la sezione Stats ora usa una tabella DPG
+   con due colonne allineate (etichetta a sinistra, valore a destra)
+   invece di N righe alternate, piu' leggibile.
+
+4. **Bottoni con `width=-1`**: i bottoni dentro `group(horizontal=True)`
+   ora si allargano automaticamente per riempire lo spazio. Prima avevano
+   `width=85` o `width=125` hardcoded che lasciavano spazi vuoti se
+   l'utente ridimensionava la finestra.
+
+### Cosa NON cambia
+
+- Tutti i `tag=` dei widget sono uguali (zone_listbox, mem_task_listbox,
+  auto_state_label, ecc.). I metodi `_refresh_*_listbox`, `_get_selected_*`
+  e tutti i callback DPG continuano a funzionare senza modifiche.
+- I callback dei bottoni puntano agli stessi metodi di prima.
+- Il tema, i colori, le scorciatoie da tastiera e la barra di stato in
+  basso (X / Y / FPS / Mode / Zoom / Auto) sono identici.
+- Il menu in alto (File / Vista / Auto-move / Strumenti / ?) e' immutato.
+
+
 ## v2.0.2 — Fix costanti di classe perse durante lo split del TaskActionEditor
 
 ### Fix bloccante: AttributeError 'IDLE'
