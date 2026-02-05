@@ -1,5 +1,66 @@
 # Changelog
 
+## v2.0.6 — Fix bottoni invisibili nei gruppi orizzontali
+
+**Sintomo riportato:** "Nella sezione task per quelle in memoria sembrano
+mancare dei pulsanti."
+
+**Causa:** in v2.0.3, riorganizzando il pannello in tab e collapsing
+header, avevo cambiato le larghezze dei pulsanti dentro i
+`dpg.group(horizontal=True)` da valori espliciti in pixel (es. `width=85`
+o `width=120`) a `width=-1` (riempi tutto lo spazio disponibile).
+
+In DearPyGui questa e' una scelta che funziona se hai UN solo widget nel
+gruppo, ma quando ne metti DUE o TRE in un `group(horizontal=True)` con
+`width=-1` su ognuno, il **primo** prende tutto lo spazio disponibile e
+i successivi vengono spinti fuori dal viewport orizzontalmente (oppure si
+sovrappongono e il rendering diventa incoerente).
+
+In particolare nella sezione "Task in memoria":
+
+```
+[Vai (A*)] [Avvia Task] [Registra ?]      <- 3 bottoni width=-1
+```
+
+A seconda della larghezza effettiva del side panel (340 px), il primo
+bottone si "mangiava" tutto e gli altri due rischiavano di non essere
+visibili.
+
+**Fix:** ripristinate le larghezze in pixel come nel pannello v1, con
+adattamenti per il nuovo layout:
+
+| Sezione                          | Larghezze
+|----------------------------------|-----------
+| Telecamera (3 bottoni)           | 100 / 100 / 100
+| Zoom (- / + / Reset)             |  70 /  70 / 160
+| Zone (Centra/Naviga)             | 150 / 150
+| Zone (Forma/Colore)              | 150 / 150
+| Zone (Rinomina/Adatta/Elimina)   | 100 / 100 / 100
+| Zone Porte (Centra/Forma/Colore) | 100 / 100 / 100
+| Zone Porte (Rinomina/Elimina)    | 150 / 150
+| Task RAM (Vai/Avvia/Registra)    | 100 / 100 / 100
+| Task RAM (Modifica/Stop)         | 150 / 150
+| Task reg (Nuova/Modifica)        | 150 / 150
+| Task reg (+Fase/+Fratello)       | 150 / 150
+| Task reg (Vai/Elimina)           | 150 / 150
+| Task reg (Genera .py + status)   | 150 + auto
+| POI (Nuovo/Modifica)             | 150 / 150
+| POI (Vai/Elimina)                | 150 / 150
+
+Tutti i bottoni in righe da soli (es. `▶ Esegui TUTTE le Task`,
+`Imposta ID Zona Gioco`, `+ Nuova Zona [N]`, `+ Disegna Zona Porta`,
+`+ Nuovo POI` se da solo) restano `width=-1` perche' in quel caso
+funziona bene = riempi tutta la riga.
+
+**Verifica:** scan AST automatico per controllare:
+- 41 bottoni ↔ 41 bottoni — ✓ identici per (label, callback method)
+- 16 checkbox ↔ 16 checkbox — ✓ identici
+- 3 slider, 5 listbox — ✓ identici
+
+Niente e' davvero mai stato perso a livello di codice — i pulsanti
+c'erano sempre — ma erano nascosti dal layout. Ora si vedono tutti.
+
+
 ## v2.0.5 — Verifica completa: nessun elemento mancante in nessuna sezione
 
 **Sintomo riportato:** "manca qualcosa nell'interfaccia base in zone, task,
