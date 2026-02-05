@@ -1,5 +1,56 @@
 # Changelog
 
+## v2.0.5 — Verifica completa: nessun elemento mancante in nessuna sezione
+
+**Sintomo riportato:** "manca qualcosa nell'interfaccia base in zone, task,
+poi, vista, stats — ricontrolla bene tutte le sezioni"
+
+**Causa:** Riguardando il pannello con piu' attenzione tramite diff AST,
+ho trovato altre piccole rinominazioni gratuite della v2.0.3 che non avevo
+ripristinato in v2.0.4:
+
+1. La label di testo sopra la listbox `mem_task_listbox` era stata
+   cambiata da "Task in memoria:" a "Da fare:".
+2. La label di testo sopra la listbox `reg_task_listbox` era stata
+   cambiata da "Task Registrate:" a "Salvate:".
+3. Avevo aggiunto un testo informativo nella sezione Smoothing
+   ("Velocita' di smoothing della camera") che non era nell'originale.
+
+Niente di funzionalmente rotto, ma far sembrare che la sezione fosse
+diversa quando in realta' era la stessa.
+
+**Fix:** label di testo e descrizioni ripristinate al 100% identiche al
+pannello v1. Verificato con scan AST automatico:
+
+- 41 bottoni  → 41 bottoni  ✓ stesse label, stessi callback
+- 16 checkbox → 16 checkbox ✓ stesse label, stessi callback
+- 3 slider    → 3 slider    ✓ stesse etichette
+- 5 listbox   → 5 listbox   ✓ stessi tag
+
+**Tutti i testi `dpg.add_text(...)` informativi sono identici al vecchio
+pannello.** Cambiano solo:
+
+- gli header colorati (`CONTROLLI`, `AUTO-MOVEMENT`, `ZONE`, `ZONE PORTE`,
+  `TASK`, `PUNTI DI INTERESSE`, `STATISTICHE`, `SCORCIATOIE`,
+  `Livelli visibili`) che ora sono **tab cliccabili** o **collapsing
+  header** invece di scritte statiche;
+- i `dpg.add_separator()` decorativi che venivano duplicati attorno a ogni
+  header: ora ce n'e' uno solo (DPG aggiunge gia' la sua separazione
+  visuale per tab e collapsing).
+
+Riepilogo per sezione:
+
+- **Tab Zone**: 12 widget — Zone nominate (8) + Zone Porte (8) — INVARIATI
+- **Tab Task**: 19 widget — bottone relazioni + lista RAM (6) + lista
+  registrate (8) + bottoni utility — INVARIATI
+- **Tab POI**: 6 widget — INVARIATI
+- **Tab Vista**: 14 widget — Livelli (7) + YOLO (4) + Smoothing (1) +
+  HUD (1) — INVARIATI (Cam Height conta come 1 widget)
+- **Tab Stats**: 5 valori in tabella — INVARIATI
+- **Sezione fissa in alto** (Camera + Zoom + Auto-move): 14 widget —
+  INVARIATI
+
+
 ## v2.0.4 — Fix label dei pulsanti accidentalmente cambiate
 
 **Sintomo riportato:** "Sembra che manchino dei pulsanti/opzioni"
