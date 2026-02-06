@@ -1,5 +1,91 @@
 # Changelog
 
+## v2.0.7 — Refactoring estetico del pannello laterale
+
+**Solo modifiche grafiche.** Tutti i 41 bottoni, 16 checkbox, 3 slider e
+5 listbox conservano gli stessi callback e gli stessi tag DPG. Cambiano
+solo i testi delle label e la disposizione visuale.
+
+### Cosa cambia
+
+**1. Niente piu' icone Unicode.** Sostituite con testo descrittivo
+chiaro e professionale:
+
+| Vecchia label             | Nuova label
+|---------------------------|------------
+| `▶ Esegui TUTTE le Task`  | `Esegui automaticamente tutte le task`
+| `⏹ Stop Task`             | `Ferma esecuzione`
+| `Stop (ESC)`              | `Annulla movimento (ESC)`
+| `Relazioni Padre ↔ Figlia`| `Gestione relazioni padre / figlia`
+| `Link Zona ↔ Task`        | `Collega task a zona di gioco`
+| `+ Nuova Zona [N]`        | `Disegna nuova zona  [N]`
+| `+ Disegna Zona Porta`    | `Disegna nuova zona porta`
+| `+ Fase`                  | `Aggiungi fase`
+| `+ Fratello`              | `Aggiungi fratello`
+| `+ Nuovo POI`             | `Nuovo POI`
+| `Registra ?`              | `Registra nuova`
+| `Genera .py`              | `Genera file .py`
+| `Imposta ID Zona Gioco`   | `Imposta ID zona di gioco`
+
+**2. Label dei controlli camera/zoom rinominate per chiarezza:**
+
+| Vecchio | Nuovo
+|---------|-------
+| `Follow` | `Segui`
+| ` - ` ` + ` `Reset` | `Riduci` `Aumenta` `Predefinito`
+| `Vai (A*)` | `Naviga (A*)` (per tutti i 4 bottoni "Vai")
+| `Forma` | `Modifica forma`
+| `Colore` | `Cambia colore`
+| `Avvia Task` | `Avvia task`
+| `Modifica` (per task RAM) | `Modifica task`
+| `Elimina` (per task reg.) | `Elimina task`
+
+**3. Aggiunti testi descrittivi sotto ogni header** (in `Colors.TEXT_DIM`
+per non disturbare):
+
+- "Aree definite a mano sulla mappa." (Zone nominate)
+- "Aree dove ignorare le porte rilevate." (Zone porte)
+- "Task lette dal gioco in tempo reale." (Task in memoria)
+- "Task salvate dall'utente con azioni custom." (Task registrate)
+- "Punti di interesse sulla mappa." (POI)
+- "Mostra o nascondi i livelli sulla mappa." (Livelli visibili)
+- "Visualizza giocatori e porte rilevati." (Rilevamento YOLO)
+- "Velocita' di interpolazione del movimento." (Smoothing)
+- "Statistiche della sessione corrente." (Stats)
+
+**4. Spaziatura uniforme.** Tutti gli `add_spacer` ora seguono una
+scala coerente (4, 6, 8, 10, 12 px) invece di valori arbitrari. Ogni
+collapsing header inizia con uno spacer di 4 px e finisce con 2 px.
+
+**5. Stato auto-movimento in tabella allineata.** Etichette `Stato:`,
+`Target:`, `Percorso:` e i loro valori sono ora in una `dpg.table` a 2
+colonne (35% / 65% di larghezza) invece che in 3 group orizzontali
+non allineati.
+
+**6. Larghezze pulsanti uniformi:**
+
+- 3 bottoni in riga: 104 px ciascuno (totale 312 px)
+- 2 bottoni in riga: 156 px ciascuno (totale 312 px)
+- 1 bottone in riga: `width=-1` (riempi)
+
+Cosi' qualunque combinazione di bottoni in `group(horizontal=True)`
+allinea perfettamente al margine destro del side panel.
+
+**7. Header di sezione rinominati con maiuscolo elegante:**
+
+- `AUTO-MOVEMENT` -> `AUTO-MOVIMENTO`
+
+### Cosa NON cambia
+
+- Tutti i 65 widget hanno gli **stessi callback** del pannello v1
+  (verificato con scan AST automatico: 46 chiamate a metodi `self._...`,
+  perfettamente identiche).
+- Tutti i tag DPG (`zone_listbox`, `mem_task_listbox`,
+  `auto_state_label`, `processo_status`, ecc.) sono **invariati**.
+- Le scorciatoie da tastiera continuano a funzionare uguali.
+- Il numero di bottoni/checkbox/slider/listbox e' identico.
+
+
 ## v2.0.6 — Fix bottoni invisibili nei gruppi orizzontali
 
 **Sintomo riportato:** "Nella sezione task per quelle in memoria sembrano
