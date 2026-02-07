@@ -1,5 +1,131 @@
 # Changelog
 
+## v2.1.1 — Normalizzazione nomi (italiano coerente)
+
+Rinominazione mirata di metodi, attributi, campi JSON e label per avere
+**italiano coerente** in tutto il codice business. Niente rinominazioni
+gratuite: ho toccato solo cose che avevano un misto italiano/inglese o
+che erano poco chiare.
+
+### Campi JSON delle task
+
+Vecchio formato (vario):
+```json
+{
+  "room_id": 6,
+  "zone_id": 0,
+  "zone_local_id": 19,
+  "zone_nome": "Admin",
+  "parent_id": null,
+  "fratelli": [],
+  "codice_custom": false,
+  "esecuzione": { "params": {} }
+}
+```
+
+Nuovo formato (italiano):
+```json
+{
+  "id_stanza": 6,
+  "id_zona": 0,
+  "id_zona_locale": 19,
+  "nome_zona": "Admin",
+  "id_padre": null,
+  "alternativi": [],
+  "codice_personalizzato": false,
+  "esecuzione": { "parametri": {} }
+}
+```
+
+I campi gergali del minigioco (`tipo`, `poly`, `rect`, `keypad`, `lights`,
+`buttons`, `display`, ecc. nelle azioni) **non sono stati toccati**:
+sono nomi del dominio del gioco e cambiarli renderebbe meno chiaro
+il codice, non piu' chiaro.
+
+### Migrazione automatica dei dati
+
+La migrazione del primo avvio (gia' presente in v2.1.0) e' stata estesa
+per accettare **entrambi i formati** in input:
+
+```python
+'id_stanza':  _get('id_stanza', 'room_id'),
+'id_padre':   _get('id_padre', 'parent_id'),
+'alternativi': _get('alternativi', 'fratelli', default=[]),
+# ...
+```
+
+Cosi' la migrazione funziona da `task_registrate.json` sia in formato
+v2.0 (con `room_id`, `parent_id`, ecc.) che gia' italianizzato.
+
+### Metodi del manager
+
+| Vecchio                    | Nuovo
+|----------------------------|------
+| `imposta_parent`           | `imposta_padre`
+| `set_zone_link`            | `imposta_collegamento_zona`
+| `aggiungi_fratello`        | `aggiungi_alternativo`
+| `rimuovi_fratello`         | `rimuovi_alternativo`
+| `set_codice_custom`        | `set_codice_personalizzato`
+| `is_codice_custom`         | `is_codice_personalizzato`
+
+Le firme dei kwargs:
+
+| Vecchio                | Nuovo
+|------------------------|------
+| `find_registered(room_id=...)` | `find_registered(id_stanza=...)`
+| `aggiungi(..., room_id=...)`   | `aggiungi(..., id_stanza=...)`
+| `aggiungi(..., zone_id=...)`   | `aggiungi(..., id_zona=...)`
+| `aggiorna(..., codice_custom=...)` | `aggiorna(..., codice_personalizzato=...)`
+
+### Mixin di GPSVisualizerPro
+
+| Vecchio                            | Nuovo
+|------------------------------------|------
+| `_apri_popup_link_zona`            | `_apri_popup_collegamento_zona`
+| `_apri_popup_nuovo_fratello`       | `_apri_popup_nuovo_alternativo`
+| `_apri_popup_relazioni_task`       | `_apri_popup_padre_figlia`
+| `_cerca_glow_fratelli`             | `_cerca_glow_alternativi`
+| `_get_raw_task_id`                 | `_get_id_task_da_riga`
+
+### Attributi di stato
+
+| Vecchio                       | Nuovo
+|-------------------------------|------
+| `self._task_fratelli_pendenti` | `self._task_alternativi_pendenti`
+
+### Label visibili a video
+
+L'unica label cambiata: `Aggiungi fratello` -> `Aggiungi alternativo`.
+Tutte le altre label erano gia' state italianizzate in v2.0.7.
+
+### Cosa NON e' cambiato
+
+- Le costanti tecniche di basso livello (`OFFSET_ROOM_ID`, `OFFSET_X`,
+  `MAX_PREVIEW_W`, `STATUS_BAR_H`, ecc.): sono interne, non utente.
+- I tag DPG (`zone_listbox`, `mem_task_listbox`, `auto_state_label`,
+  ecc.): cambiarli rompe il `dpg.set_value` sparso nel codice.
+- I tipi di azione (`click_poly`, `drag_zone`, `yolo_drag_all`, ecc.)
+  e i campi delle azioni (`poly`, `rect`, `rx`, `ry`, ecc.): sono il
+  formato che il template inline `task_template.txt` legge dai file
+  `.py` autonomi. Cambiarli vorrebbe dire toccare anche il template
+  e tutti i file gia' generati.
+- `_avvia_subprocess_task`: `subprocess` e' termine tecnico Python
+  consolidato, italianizzarlo e' grottesco.
+
+### Verifica
+
+8 test funzionali post-rinominazione:
+
+- import package OK
+- TaskManager carica 56 task con migrazione automatica
+- ereditarieta' parent->figlia (`task 4` figlia di `task 2`) OK
+- `aggiungi_alternativo` / `imposta_collegamento_zona` / `imposta_padre`
+  funzionanti
+- `get_memory_tasks_info` riceve `id_stanza` dalla RAM correttamente
+- File `.py` generato e' Python valido (~48 KB)
+- Tutti i 19 mixin di GPSVisualizerPro caricati senza errori
+
+
 ## v2.1.0 — Separazione struttura task / esecuzione
 
 Tre cambiamenti coerenti, tutti orientati a tenere "i dati" separati dal
