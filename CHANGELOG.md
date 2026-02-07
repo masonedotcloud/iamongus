@@ -1,5 +1,108 @@
 # Changelog
 
+## v2.1.0 — Separazione struttura task / esecuzione
+
+Tre cambiamenti coerenti, tutti orientati a tenere "i dati" separati dal
+"come si esegue", senza alterare il comportamento del bot.
+
+### 1) Separazione del JSON in due formati
+
+Prima:
+
+```
+task_registrate.json    # tutto in uno: dettagli + azioni + esecuzione
+```
+
+Adesso:
+
+```
+tasks_dettagli.json              # struttura task: id, nome, x/y, tipo,
+                                 # room_id, parent_id, fasi, fratelli, zone
+tasks_esecuzione/
+  ├── task_001.json              # azioni + codice_custom + esecuzione
+  ├── task_002.json
+  └── ...                        # un file per task
+```
+
+I dettagli sono "leggeri" e raramente modificati, le azioni sono "pesanti"
+e cambiano spesso (ogni volta che usi l'editor). Tenerli separati significa:
+
+- `tasks_dettagli.json` resta piccolo (~23 KB invece di 388 KB) e puoi
+  vederlo a colpo d'occhio.
+- I file di `tasks_esecuzione/` sono indipendenti: backup mirati, diff
+  Git puliti, possibilita' di copiare azioni da una task all'altra
+  semplicemente copiando il file.
+- Modifiche concorrenti gestibili: due processi che editano dettagli e
+  azioni non si pestano i piedi.
+
+### 2) Migrazione automatica al primo avvio
+
+Al primo lancio della v2.1 il bot rileva l'eventuale `task_registrate.json`
+del formato vecchio e lo splitta automaticamente nel nuovo formato:
+
+```
+[Migrazione] Splitto 56 task da task_registrate.json...
+[Migrazione] Completata. Backup: task_registrate.json.bak
+```
+
+Il vecchio file viene rinominato `.bak` come safety net. Niente da fare
+manualmente: la prima volta che apri il bot dopo l'aggiornamento, vedi
+i tuoi 56 task esattamente come prima.
+
+### 3) Separazione dei manager Python
+
+Il `TaskManager` (~600 righe) gestiva sia struttura che esecuzione.
+Adesso e' una **facade** sottile (~457 righe) che delega a due manager
+specifici:
+
+```
+managers/
+├── task_manager.py             # facade, espone l'API che i 19 mixin gia' usano
+├── task_dettagli_manager.py    # CRUD struttura: aggiungi, rinomina,
+│                               # parenting, fasi, fratelli, zone link
+└── task_esecuzione_manager.py  # CRUD azioni: imposta_azioni,
+                                # set_codice_custom, stato_esecuzione,
+                                # invalidazione del file .py
+```
+
+L'API pubblica del `TaskManager` e' **invariata**: i 19 mixin di
+`GPSVisualizerPro` continuano a fare `self.task_mgr.aggiungi(...)`,
+`self.task_mgr.imposta_azioni(...)`, `self.task_mgr.aggiungi_fase(...)`
+ecc. senza dover sapere che dietro le quinte ci sono due manager separati.
+
+Vantaggi pratici:
+
+- Per modificare la **struttura** (es. aggiungere un campo "tags" alle
+  task) tocchi solo `task_dettagli_manager.py`.
+- Per modificare l'**esecuzione** (es. aggiungere un nuovo formato di
+  azioni) tocchi solo `task_esecuzione_manager.py`.
+- Per testare i due aspetti in isolamento, puoi usarli direttamente
+  senza coinvolgere l'altro:
+
+```python
+from among_us_ai.managers import TaskDettagliManager
+dm = TaskDettagliManager('tasks_dettagli.json')
+print([t['nome'] for t in dm.task_list])
+```
+
+### Generazione del file `.py`: invariata
+
+Verificato sui 56 task del task_registrate.json originale: la generazione
+dei file `.py` autonomi nella cartella `tasks_exec/` produce file
+**byte-per-byte identici** alla v2.0 (e quindi anche al monolite v1).
+Le task figlie (es. task 4 con parent_id=2) continuano a generare il file
+del padre, senza duplicazioni.
+
+### Configurazione: nuovi campi in `GPSConfig`
+
+```python
+TASK_DETTAGLI_FILE  = "tasks_dettagli.json"
+TASK_ESECUZIONE_DIR = "tasks_esecuzione"
+TASK_LEGACY_FILE    = "task_registrate.json"   # solo per migrazione
+TASK_FILE           = TASK_LEGACY_FILE          # alias retro-compat
+```
+
+
 ## v2.0.7 — Refactoring estetico del pannello laterale
 
 **Solo modifiche grafiche.** Tutti i 41 bottoni, 16 checkbox, 3 slider e
