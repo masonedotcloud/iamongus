@@ -1,5 +1,70 @@
 # Changelog
 
+## v2.1.2 — Sostituzione caratteri Unicode con ASCII
+
+**Sintomo riportato:** "Ci sono molti '?' nei testi"
+
+**Causa:** DearPyGui usa di default un font che non contiene i glifi
+Unicode estesi (lettere accentate italiane, frecce, simboli). Ogni
+volta che una stringa conteneva uno di questi caratteri, DPG rendeva
+un placeholder `?`. Esempi: `e'sec` -> `e'sec`, `Padre <-> Figlia` ->
+`Padre ? Figlia`, `> Avvio` -> `? Avvio`.
+
+**Fix:** sostituite **253 occorrenze** di 18 caratteri Unicode in 33
+file Python con equivalenti ASCII.
+
+### Mappa di sostituzione applicata
+
+Lettere accentate italiane (sostituite con apostrofo, stile "vecchia
+macchina da scrivere"):
+
+| Unicode | ASCII |
+|---------|-------|
+| `a' a' e' e' i' o' u'`     | `a' a' e' e' i' o' u'` (apostrofo) |
+
+Simboli e frecce:
+
+| Unicode | ASCII |
+|---------|-------|
+| `-` (em dash)        | `-` (hyphen) |
+| `<-` `->`            | `<-` `->` |
+| `<->`                | `<->` |
+| `<` (triangolino)    | `<` |
+| `>` (triangolino)    | `>` |
+| `[X]` (stop)              | `[X]` |
+| `*`               | `*` |
+| `OK`               | `OK` |
+| `X`               | `X` |
+
+### Esempi visibili nel pannello
+
+Prima -> Dopo:
+
+- `Modalita' telecamera`     -> `Modalita' telecamera`
+- `Velocita' di interpolazione` -> `Velocita' di interpolazione`
+- `e' AUTONOMO`              -> `e' AUTONOMO`
+- `Esecuzione cosi' completata` -> `Esecuzione cosi' completata`
+- `Padre <-> Figlia`              -> `Padre <-> Figlia`
+- `> Avvio sequenza`         -> `> Avvio sequenza`
+- `[X] Stop`                  -> `[X] Stop`
+- `OK Task completata`        -> `OK Task completata`
+
+### Cosa NON e' cambiato
+
+- Tutti i caratteri ASCII originali (lettere semplici, numeri, simboli
+  tipici di programmazione). Solo le 18 categorie elencate sopra.
+- I file `.py` generati nella cartella `tasks_exec/`: le `TASK_META`
+  non contengono caratteri Unicode — il problema era solo nei testi
+  visibili in DPG.
+- Tutti i 41 bottoni, 16 checkbox, 3 slider, 5 listbox del pannello:
+  stessi callback, stessi tag.
+
+### Verifica fatta
+
+Scan automatico post-sostituzione: zero residui non-ASCII nelle
+stringhe di tutti i file Python del package.
+
+
 ## v2.1.1 — Normalizzazione nomi (italiano coerente)
 
 Rinominazione mirata di metodi, attributi, campi JSON e label per avere
