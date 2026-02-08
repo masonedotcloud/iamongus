@@ -1,5 +1,42 @@
 # Changelog
 
+## v2.1.3 — Rimozione scrollbar globale del main_win
+
+**Sintomo riportato:** "Lo slider che gestisce sia sidebar che mappa come
+se fosse un unico blocco nella finestra"
+
+**Causa:** la finestra principale `main_win` (che contiene mappa + side
+panel + status bar come unico blocco) aveva `no_scrollbar=True` ma non
+`no_scroll_with_mouse=True`. In DearPyGui questi sono due flag distinti:
+
+- `no_scrollbar=True` nasconde la scrollbar visiva.
+- `no_scroll_with_mouse=True` impedisce alla rotellina di SCROLLARE
+  l'intera finestra quando il cursore non e' sul canvas.
+
+Con solo il primo, anche se la scrollbar visiva era nascosta, in alcune
+condizioni (viewport ridimensionato sotto la dimensione minima dei
+contenuti, oppure rotellina sul margine fra canvas e side panel) DPG
+mostrava comunque uno scrollbar verticale che faceva scorrere
+l'intero blocco mappa+sidebar.
+
+**Fix:** aggiunto `no_scroll_with_mouse=True` a `main_win`.
+
+```python
+with dpg.window(tag="main_win", no_title_bar=True, no_resize=True,
+                no_move=True,
+                no_scrollbar=True, no_scroll_with_mouse=True,  # <- nuovo
+                no_bring_to_front_on_focus=True):
+```
+
+### Cosa NON e' cambiato
+
+- La scrollbar **interna del side panel** (necessaria perche' i 5 tab e
+  i collapsing header possono superare l'altezza disponibile): resta.
+- La rotella sul **canvas centrale** (per zoom): resta, perche' il
+  callback `_on_mouse_wheel` lo intercetta solo se il cursore e' sopra
+  il canvas (`dpg.is_item_hovered("canvas")`).
+
+
 ## v2.1.2 — Sostituzione caratteri Unicode con ASCII
 
 **Sintomo riportato:** "Ci sono molti '?' nei testi"
