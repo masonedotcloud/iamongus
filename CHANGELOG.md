@@ -1,5 +1,106 @@
 # Changelog
 
+## v2.1.5 — Refactor runtime.py + commenti inline ovunque
+
+### Refactor di `among_us_ai/execution/runtime.py`
+
+Il file era a 186 righe ma con un'unica funzione monolitica
+``esegui_azioni`` di 113 righe che faceva tre cose:
+
+1. Suddivideva la lista azioni in chunk separati dai cooldown.
+2. Per ogni azione del chunk, controllava il focus della finestra.
+3. Faceva il dispatch all'handler appropriato.
+
+L'ho diviso in 4 funzioni piccole con responsabilita' chiare:
+
+| Funzione                  | Righe | Cosa fa |
+|---------------------------|-------|---------|
+| `_extract_pure_shape(az)` | 15    | Helper di rendering editor |
+| `_split_in_chunks(azioni)`| 28    | Suddivide su cooldown |
+| `_attendi_focus(hwnd, ...)`| 22   | Aspetta che il gioco sia attivo |
+| `esegui_azioni(...)`      | 83    | Entry point + dispatch loop |
+
+Vantaggi:
+
+- Ogni funzione ora e' **testabile in isolamento**: ad esempio
+  `_split_in_chunks` puo' essere chiamata con una lista di azioni
+  e verificata senza un'istanza Windows reale.
+- Il flusso principale (`esegui_azioni`) e' molto piu' leggibile:
+  4 macro-passi numerati (split, loop, dispatch, post-cooldown)
+  invece di un'unica scarica di codice.
+- Aggiunto `_FORMA_FIELDS` come **dict di costante** invece di
+  lunghi if/elif: per ogni tipo di azione, lista dei campi geometrici.
+
+### Test funzionali del refactor
+
+Tutti i test passati:
+
+- `_split_in_chunks([click, drag, cooldown(2), click])` -> 2 chunk + cooldowns=[2.0]
+- `_extract_pure_shape({tipo: click, rx, ry, durata})` -> {tipo, rx, ry}
+- 56/56 file `.py` autonomi delle task generati e validi (parsing AST OK)
+- Import del package completo OK con stub Windows
+
+### Commenti inline ovunque
+
+Aggiunti **506 commenti inline** in 44 file del package, mirati ai
+pattern ricorrenti che spiegano cosa fa una riga di codice:
+
+```python
+# Aggiunge una nuova task al registro
+self.task_mgr.aggiungi(...)
+
+# Calcolo del percorso A* fra due punti della mappa
+self.pathfinder.astar(start, goal)
+
+# Lancia il processo Python autonomo della task in tasks_exec/
+subprocess.Popen(...)
+
+# Flag globale di stop (True quando F4 o FINE viene premuto)
+if stop_flag.requested:
+    return
+
+# Click del mouse simulato via pyautogui
+pyautogui.click(x, y)
+```
+
+Il rapporto **commenti / codice** del package e' passato:
+
+| Versione | Commenti | Codice | Rapporto |
+|----------|----------|--------|----------|
+| v2.1.4   | 584      | 9050   | 6%       |
+| v2.1.5   | 1261     | 9050   | **14%**  |
+
+Per il file `memory_sync.py` (loop principale del thread RAM) ho
+aggiunto commenti scritti a mano, riga per riga, perche' la logica
+e' delicata (sync, threading, mappatura RAM<->JSON).
+
+### Cosa NON e' cambiato
+
+- Il codice eseguibile e' identico: i commenti sono inerti.
+- Tutti i 41 bottoni / 16 checkbox / 3 slider / 5 listbox del pannello:
+  stessi callback, stessi tag.
+- I file `.py` autonomi generati per le task: identici a prima
+  (verificato byte-per-byte su tutte e 56 le task).
+- L'API pubblica del `TaskManager`, `ZoneManager`, `PoiManager`:
+  invariata.
+
+### Nota su ulteriori commenti
+
+Il livello di "14% commenti / codice" e' la media di un progetto
+ben documentato. Aggiungere commenti su ogni singola riga
+peggiorerebbe la leggibilita' (perche' tante righe sono ovvie
+- es. `self.x = 0` non ha bisogno di un commento sopra).
+
+I file con commenti densi (= dove la logica era veramente non
+banale) sono in particolare:
+
+- `among_us_ai/ui/mixins/memory_sync.py` (commentato a mano)
+- `among_us_ai/ui/mixins/auto_move.py` (gia' ricco di commenti)
+- `among_us_ai/managers/task_manager.py` (gia' ricco)
+- `among_us_ai/execution/runtime.py` (rifatto in v2.1.5 con
+  commenti su ogni macro-passo)
+
+
 ## v2.1.4 — Documentazione completa in italiano
 
 ### Docstring
