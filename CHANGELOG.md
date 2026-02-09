@@ -1,5 +1,111 @@
 # Changelog
 
+## v2.1.4 — Documentazione completa in italiano
+
+### Docstring
+
+Aggiunta una docstring italiana a **tutto** il package `among_us_ai/`:
+
+- **56 moduli**: 56/56 hanno gia' un docstring di modulo (100%).
+- **45 classi**: 34 docstring aggiunte automaticamente, le 11 esistenti
+  (gia' ricche) preservate. **45/45 (100%)**.
+- **358 funzioni/metodi**: 263 docstring aggiunte automaticamente, le
+  95 esistenti preservate. **358/358 (100%)**.
+
+Le docstring auto-generate usano un mapping intelligente prefisso ->
+verbo italiano:
+
+| Prefisso del nome metodo  | Verbo italiano             |
+|---------------------------|----------------------------|
+| `_apri_popup_*`           | "Apre il popup ..."        |
+| `_naviga_a_*`             | "Avvia la navigazione A* verso ..." |
+| `_avvia_*`                | "Avvia ..."                |
+| `_modifica_*`             | "Modifica ..."             |
+| `_elimina_*`              | "Elimina ..."              |
+| `_render_*` / `_disegna_*`| "Disegna su DPG ..."       |
+| `_on_*`                   | "Callback per l'evento ..." |
+| `aggiungi_*` / `_aggiungi_*` | "Aggiunge ..."          |
+| ... (35 prefissi totali)  |                            |
+
+I metodi con nomi non standard (callback inner di popup, helper) sono
+stati rifiniti uno per uno con docstring specifiche per il contesto:
+
+- `do_salva` -> "Callback del bottone Salva del popup."
+- `do_usa_pos` -> "Callback del bottone Usa posizione attuale."
+- `delete_alternativo` -> "Callback: elimina un alternativo dalla task in modifica."
+- `astar` -> "Algoritmo A*: trova il percorso piu' corto da start a goal."
+- `centroide` -> "Calcola il centroide di un poligono."
+- ...e 80+ altre.
+
+### Esempi di docstring (campione)
+
+```python
+class GPSVisualizerPro(...):
+    """Classe principale dell'applicazione: orchestra rendering,
+    pathfinding, lettura RAM, scanner YOLO, esecuzione task."""
+
+class ZonesMixin:
+    """Mixin con i metodi di zones di GPSVisualizerPro."""
+
+class TaskManager:
+    """Facade: GPSVisualizerPro parla solo con questa classe.
+    Internamente delega a TaskDettagliManager (struttura) e
+    TaskEsecuzioneManager (azioni)."""
+
+def _vai_a_zona(self):
+    """Centra la camera sulla zona selezionata e adatta lo zoom."""
+
+def _apri_popup_nuovo_alternativo(self):
+    """Apre il popup nuovo alternativo."""
+
+def aggiungi_alternativo(self, id_task, x, y):
+    """Aggiunge alternativo."""
+```
+
+### README riscritto a due sezioni
+
+`README.md` ora ha due sezioni distinte:
+
+1. **Sezione utente**: come si installa, come si usa, scorciatoie
+   tastiera, descrizione del pannello, file di configurazione e di
+   asset, esempi di workflow ("come si registra una task", "modalita'
+   Auto-Quest").
+
+2. **Sezione sviluppatore**: architettura ad alto livello (con diagramma
+   ASCII), struttura del package, le tre classi principali, pattern dei
+   mixin, come aggiungere funzionalita' (nuovo bottone, nuova azione,
+   nuovo manager), formato JSON v2.1, dettaglio della migrazione
+   automatica, generazione del file `.py` autonomo, gestione dello
+   stop globale, convenzioni di codice, testing manuale.
+
+### Nuovo file `ASSETS.md`
+
+Documentazione separata per i file binari e JSON che non possono
+contenere commenti al loro interno:
+
+- 7 modelli YOLO (`.pt`): cosa rilevano, dove sono usati nel codice.
+- 4 file JSON di mappa/zone/POI: formato e significato dei campi.
+- File task v2.0 (legacy) e v2.1 (nuovo): differenze, migrazione.
+- Tipi di azione: tabella completa dei 19 tipi (`click`, `drag`,
+  `wiring`, `yolo_drag_seq`, ecc.) con descrizione.
+
+### Cosa NON e' cambiato
+
+- Il codice eseguibile e' identico: docstring sono solo metadati,
+  non influenzano runtime.
+- Tutti i 41 bottoni / 16 checkbox / 3 slider / 5 listbox del pannello
+  hanno gli stessi callback e gli stessi tag.
+- Il file `.py` generato per le task: identico, byte-per-byte.
+
+### Verifica copertura finale
+
+```
+Moduli:     56/ 56 (100%)
+Classi:     45/ 45 (100%)
+Funzioni:  358/358 (100%)
+```
+
+
 ## v2.1.3 — Rimozione scrollbar globale del main_win
 
 **Sintomo riportato:** "Lo slider che gestisce sia sidebar che mappa come
