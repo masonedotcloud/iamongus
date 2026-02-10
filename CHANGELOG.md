@@ -1,5 +1,116 @@
 # Changelog
 
+## v2.1.6 — Pulizia e commenti per i file delle task
+
+### Template del motore inline (`task_template.txt`)
+
+Il template che genera i file `.py` autonomi nei `tasks_exec/` era a
+1034 righe con **0% di commenti**. L'ho riorganizzato e commentato
+mantenendo lo stesso identico funzionamento:
+
+- **Header generale** del file con glossario delle convenzioni
+  (rx, ry, sx, sy, cw, ch, poly, rect, hwnd...) e descrizione
+  dell'architettura.
+- **Helper geometrici** (`_client_rect`, `_point_in_polygon`,
+  `_random_in_rect`, `_random_in_poly`, `_click_hold`): commento
+  per ogni funzione che spiega cosa fa e perche'.
+- **Helper di drag/click** (`_drag_umano`, `_drag_multi`,
+  `_extract_pure_shape`, `_drag_seq_tappe`, `_drag_e_tieni`): commenti
+  step-by-step (Bezier quadratica, easing, anti-detection).
+- **Dispatcher principale** (`esegui_azioni`): commento header con
+  spiegazione dei 3 macro-passi (split chunks, loop principale,
+  dispatch).
+- **18 rami del macroswitch** (`if tipo == 'click'`, `elif tipo ==
+  'drag'`, ...): per ogni tipo, un commento header che spiega cosa
+  fa quel ramo e per quale minigioco di Among Us e' pensato.
+
+  Esempi:
+  ```python
+  # --- Wiring: cablaggio per "Fix Wiring" ---
+  # Ha 4 fili a sinistra, 4 connettori a destra, 4 luci-indicatore.
+  # Il bot legge il colore del filo a sinistra (`pyautogui.pixel`),
+  # poi lo trascina sul connettore destro dello stesso colore.
+  elif tipo == 'wiring':
+
+  # --- Sync click: clicca quando un riferimento visivo cambia ---
+  # Per minigiochi tipo "Calibrate Distributor" dove c'e' una
+  # lancetta che gira e bisogna cliccare quando passa per una zona.
+  elif tipo == 'sync_click':
+
+  # --- Click anomaly: clicca l'elemento "diverso" dagli altri ---
+  # Per minigiochi tipo "Detect Anomaly" dove ci sono N elementi
+  # tutti uguali tranne uno che e' diverso.
+  elif tipo == 'click_anomaly':
+  ```
+
+- **Lifecycle finale** (`setup`, `run_task`, `teardown`, main block):
+  commento descrittivo per ogni hook + esempio CLI con exit code
+  attesi.
+
+Da **0%** a **37%** di commenti nel template, codice invariato (sempre
+905 righe di codice).
+
+### Header del file generato (`task_writer.py::_build_header`)
+
+Migliorato il commento di intestazione che il `task_writer` mette in
+cima a ogni file `.py` generato. Adesso e' tutto in italiano coerente
+e include un mini-manuale d'uso per chi apre il file:
+
+```python
+# =============================================================
+# FILE ESECUZIONE TASK - generato automaticamente dal bot
+# =============================================================
+# Task ID         : 1
+# Nome            : Swipe Card
+# Posizione mappa : (6.510, -6.609)
+# Zona            : Admin
+# Tipo RAM gioco  : 5  |  ID stanza: 6
+# Vitale          : False
+# Due giocatori   : False
+# ID padre        : None
+# Numero azioni   : 2
+# =============================================================
+# Questo file e' AUTONOMO: non importa nulla dal package
+# `among_us_ai`. Si esegue da CLI o si importa per chiamare
+# `run_task(ctx)`.
+#
+# Uso da CLI:
+#     python task_<id>_<nome>.py [--step N]
+#
+# Le modifiche manuali a questo file saranno SOVRASCRITTE al
+# prossimo salvataggio dalla dashboard del bot. Per evitare
+# la sovrascrittura, abilita 'codice personalizzato' nella
+# scheda della task.
+# =============================================================
+```
+
+Aggiunti commenti **anche al blocco import** del file generato:
+gli import standard sono raggruppati e commentati, il parsing
+argomenti CLI ha una nota che spiega lo scopo dello step
+(quale chunk di azioni eseguire), gli import Windows hanno
+commenti sulla disponibilita' opzionale.
+
+### Verifica fatta
+
+Test funzionali completi:
+
+- 56/56 file `.py` autonomi generati, tutti **Python validi**
+  (parsing AST OK su tutti).
+- Import del package completo OK con stub Windows.
+- Template come stringa: caricabile, nessuna eccezione di parsing.
+- L'header di un file generato apparenza ricca: ID, posizione,
+  zona, tipo, ID stanza, fasi tutte mostrate.
+
+### Cosa NON e' cambiato
+
+- **Comportamento runtime identico**: il codice eseguibile e' lo
+  stesso, ho aggiunto SOLO commenti `#` (inerti per Python).
+- Gli **handler** del runtime live (in `among_us_ai/execution/handlers/*.py`)
+  non sono stati toccati: erano gia' commentati in v2.1.5.
+- I file `.json` (struttura task + esecuzione): formato invariato.
+- I file di configurazione (mappa, zone, POI): invariati.
+
+
 ## v2.1.5 — Refactor runtime.py + commenti inline ovunque
 
 ### Refactor di `among_us_ai/execution/runtime.py`
