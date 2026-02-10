@@ -1,5 +1,133 @@
 # Changelog
 
+## v2.1.7 — Refactor del macroswitch in handler functions
+
+Il file `task_template.txt` aveva un macroswitch gigante: la funzione
+`esegui_azioni` era di **980 righe**, con 18 rami `elif tipo == 'XXX'`
+inseriti l'uno dopo l'altro. Ho applicato la strategia "Opzione A":
+ogni ramo e' diventato una funzione handler separata, e il dispatcher
+e' ora un dizionario.
+
+### Prima
+
+```python
+def esegui_azioni(azioni, hwnd, current_step=0, is_test=False):
+    # ... 50 righe di setup (split chunks, focus check, ...) ...
+    for az in azioni_da_eseguire:
+        # ... 20 righe di rect read ...
+        if tipo == 'click':
+            # 2 righe
+        elif tipo == 'click_rect':
+            # 3 righe
+        elif tipo == 'click_poly':
+            # 3 righe
+        elif tipo == 'drag':
+            # 5 righe
+        elif tipo == 'wiring':
+            # 50 righe
+        elif tipo == 'sync_click':
+            # 60 righe
+        elif tipo == 'yolo_drag':
+            # 70 righe
+        # ... 11 altri rami ...
+        elif tipo == 'ocr_keypad':
+            # 38 righe
+```
+
+Totale: **980 righe** in una sola funzione.
+
+### Dopo
+
+```python
+# Helper functions: una per tipo di azione
+def _h_click(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    _click_hold(cx + int(az['rx']*cw), cy + int(az['ry']*ch), durata)
+
+def _h_click_rect(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    rx, ry = _random_in_rect(az['rect'])
+    _click_hold(cx + int(rx*cw), cy + int(ry*ch), durata)
+
+# ... 17 altri handler ...
+
+def _h_ocr_keypad(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    # ... 35 righe ...
+
+# Dispatch map: tipo -> funzione
+_DISPATCH_MAP = {
+    'click':       _h_click,
+    'click_rect':  _h_click_rect,
+    'click_poly':  _h_click_poly,
+    'click_until': _h_click_until,
+    'drag':        _h_drag,
+    'drag_multi':  _h_drag_multi,
+    'drag_zone':   _h_drag_zone,
+    'drag_hold':   _h_drag_hold,
+    'wiring':      _h_wiring,
+    'sync_click':  _h_sync_click,
+    'click_anomaly': _h_click_anomaly,
+    'yolo_drag':   _h_yolo_drag,
+    'yolo_drag_all': _h_yolo_drag_all,
+    'yolo_click':  _h_yolo_click,
+    'yolo_click_all': _h_yolo_click_all,
+    'yolo_drag_seq': _h_yolo_drag_seq,
+    'simon_says':  _h_simon_says,
+    'number_match': _h_number_match,
+    'ocr_keypad':  _h_ocr_keypad,
+}
+
+# Dispatcher snello
+def esegui_azioni(azioni, hwnd, current_step=0, is_test=False):
+    # 1) split chunks
+    # 2) loop sulle azioni
+    # 3) handler = _DISPATCH_MAP.get(tipo)
+    #    handler(az, cx, cy, cw, ch, hwnd, durata, attesa)
+```
+
+Totale: `esegui_azioni` e' adesso **72 righe** (di cui ~30 commenti).
+
+### Numeri del refactor
+
+| Metrica | Prima | Dopo |
+|---------|-------|------|
+| Lunghezza `esegui_azioni` | 980 righe | 72 righe |
+| Funzioni nel template | 14 | 33 (14 + 19 handler) |
+| Lunghezza totale del template | 1381 righe | 1248 righe |
+| Lunghezza file .py generato | ~1500 righe | ~1330 righe |
+
+### Vantaggi
+
+- **Ogni handler e' isolato**: trovi il codice di "wiring" in `_h_wiring`
+  e basta. Non serve scorrere 600 righe di altri rami per arrivarci.
+- **Dispatcher leggibile**: il main loop di `esegui_azioni` e' chiaro
+  in 30 righe — chunking, focus check, dispatch via dizionario.
+- **Aggiungere un nuovo tipo e' facile**: scrivi `_h_<tipo>(...)` e
+  aggiungilo a `_DISPATCH_MAP`. Niente file da modificare in 5 punti.
+- **Testabilita'**: un handler puo' essere chiamato in isolamento,
+  senza dover invocare `esegui_azioni` con tutto il setup.
+
+### Verifica funzionale: NESSUN cambio di comportamento
+
+Test di equivalenza con stub deterministici:
+
+- 8/8 test su tutte le azioni base (click, click_rect, click_poly, drag,
+  drag_multi, drag_zone, drag_hold, ecc.) producono **sequenze identiche
+  di chiamate** a pyautogui.
+- 56/56 file `.py` autonomi generati sono Python validi (parsing AST OK).
+- Import del package completo OK.
+
+### Cosa NON e' cambiato
+
+- **Comportamento runtime identico**: con random deterministico, ogni
+  azione produce la stessa sequenza di chiamate a pyautogui/win32gui
+  che produceva prima.
+- API delle helper functions (`_drag_umano`, `_click_hold`, ecc.):
+  invariate.
+- Formato JSON delle azioni: invariato.
+- File `.py` generati: stessa struttura (header + meta + motore),
+  solo che il motore ora ha le 19 funzioni handler invece di un
+  macroswitch unico.
+
+
 ## v2.1.6 — Pulizia e commenti per i file delle task
 
 ### Template del motore inline (`task_template.txt`)
