@@ -1,5 +1,143 @@
 # Changelog
 
+## v2.1.8 — Thin wrapper: file task da 1330 a 74 righe
+
+I file `.py` autonomi nella cartella `tasks_exec/` erano di **1330 righe
+ognuno**. Su 28 file unici, questo significa 28 × 1043 righe = ~30.000
+righe duplicate sul disco (codice motore identico per tutti).
+
+### Soluzione: separare motore e dati
+
+Adesso la cartella `tasks_exec/` ha questa struttura:
+
+```
+tasks_exec/
++-- _motore.py                    <- codice comune (~1266 righe)
++-- task_001_Swipe_Card.py        <- thin wrapper (74 righe)
++-- task_002_Download_Data.py     <- thin wrapper (74 righe)
++-- task_003_Empty_Garbage.py     <- thin wrapper (74 righe)
++-- ...
+```
+
+Il file `_motore.py` contiene tutto il codice condiviso:
+- 10 helper geometriche (`_client_rect`, `_drag_umano`, ...)
+- 19 handler functions (`_h_click`, `_h_wiring`, ...)
+- `_DISPATCH_MAP` (tipo -> handler)
+- `esegui_azioni(...)` dispatcher principale
+- `run_task(task_meta, azioni, ctx)` lifecycle parametrizzato
+
+I file task sono **thin wrapper** che contengono SOLO i dati specifici:
+- Header con metadati (id, nome, posizione, zona, ...)
+- Parsing args CLI
+- `TASK_META` (dict)
+- `AZIONI` (list)
+- 5 righe di import + 1 chiamata: `_motore.esegui_lifecycle(TASK_META, AZIONI)`
+
+### Esempio di thin wrapper completo
+
+```python
+# =============================================================
+# FILE ESECUZIONE TASK - generato automaticamente dal bot
+# =============================================================
+# Task ID         : 1
+# Nome            : Swipe Card
+# Posizione mappa : (5.915, -8.535)
+# Zona            : Admin
+# ...
+# =============================================================
+# Questo file e' un THIN WRAPPER: contiene solo i dati specifici
+# della task (TASK_META e AZIONI), il codice del motore comune
+# e' in `_motore.py` nella stessa cartella.
+# =============================================================
+
+# --- Parsing argomenti CLI ---
+import argparse
+_parser = argparse.ArgumentParser()
+_parser.add_argument('--step', type=int, default=0)
+_args, _ = _parser.parse_known_args()
+CURRENT_STEP = _args.step
+
+# --- Metadati della task ---
+TASK_META = {
+    'id': 1, 'nome': 'Swipe Card',
+    'x': 5.915, 'y': -8.535, 'tipo': 5, 'id_stanza': 6,
+    ...
+    'step': CURRENT_STEP,
+}
+
+# --- Lista azioni della task ---
+AZIONI = [{'tipo': 'click_poly', ...}, {'tipo': 'drag_zone', ...}]
+
+# --- Import del motore comune ---
+import os, sys
+_DIR = os.path.dirname(os.path.abspath(__file__))
+if _DIR not in sys.path:
+    sys.path.insert(0, _DIR)
+import _motore
+
+# --- Entry point ---
+if __name__ == '__main__':
+    _motore.esegui_lifecycle(TASK_META, AZIONI)
+```
+
+### Numeri
+
+| Metrica | Prima | Dopo | Variazione |
+|---|---|---|---|
+| Righe per file task | 1330 | **74** | -94% |
+| Cartella `tasks_exec/` | ~2 MB | **212 KB** | -89% |
+| File totali | 28 | 28 + 1 (`_motore.py`) | +1 |
+
+### Vantaggi
+
+- **Modificare il motore aggiorna automaticamente tutte le task**:
+  basta rigenerare `_motore.py` (lo fa il task_writer al primo
+  `genera_file_esecuzione`).
+- **File task leggibili a colpo d'occhio**: 74 righe dove TASK_META e
+  AZIONI sono visibili senza scrollare.
+- **Cartella `tasks_exec/` portable**: puoi copiarla su un altro
+  computer, basta avere Python + dipendenze; non serve installare
+  il package `among_us_ai`.
+- **Dispatch handler resta isolato per tipo** (vedi v2.1.7): nel motore
+  ogni tipo di azione ha la sua funzione `_h_<tipo>`.
+
+### Modifiche al codice
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_template.txt` | NUOVO: template del motore comune (1266 righe) |
+| `among_us_ai/execution/task_template.txt` | INVARIATO: vecchio template per file autonomi (legacy/fallback) |
+| `among_us_ai/execution/task_template.py` | aggiunta funzione `get_motore_modulo()` |
+| `among_us_ai/execution/task_writer.py` | RISCRITTO: genera thin wrapper + scrive `_motore.py` |
+
+### Aggiornamento automatico
+
+Quando il bot rigenera un file task (es. l'utente edita le azioni):
+1. Il `task_writer` controlla se `tasks_exec/_motore.py` esiste e
+   se e' aggiornato (confronto byte-per-byte col template).
+2. Se non esiste o e' obsoleto, lo riscrive.
+3. Riscrive il thin wrapper della task.
+
+### Cosa NON e' cambiato
+
+- **Comportamento runtime identico**: il motore e' lo stesso codice
+  della v2.1.7, solo che vive in un file separato invece di essere
+  ripetuto in ogni task.
+- API pubblica del `TaskManager`, `task_writer`, `task_template`:
+  invariate (aggiunta solo `get_motore_modulo`).
+- Il vecchio `task_template.txt` resta presente: puo' essere usato
+  per generare file completamente autonomi se serve.
+- Formato JSON delle task: invariato.
+
+### Verifica fatta
+
+- 56/56 thin wrapper Python validi (parsing AST OK)
+- `_motore.py` Python valido (1266 righe)
+- Test funzionale: import del motore + chiamata `run_task` -> OK
+- Tutte le 5 funzioni pubbliche del motore esposte:
+  `esegui_azioni, esegui_lifecycle, run_task, setup, teardown`
+
+
 ## v2.1.7 — Refactor del macroswitch in handler functions
 
 Il file `task_template.txt` aveva un macroswitch gigante: la funzione
