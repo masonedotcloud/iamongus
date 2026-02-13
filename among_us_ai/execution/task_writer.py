@@ -1,43 +1,52 @@
 """
 Generazione dei file di esecuzione delle task in ``tasks_exec/``.
 
-Architettura del modello "thin wrapper" (v2.1.8):
+Architettura del modello "thin wrapper" (v2.1.9):
 
     tasks_exec/
-        _motore.py                    <- codice comune (~1100 righe)
-        task_001_Swipe_Card.py        <- thin wrapper (~100 righe)
+        _motore/                      <- package modulare con il motore comune
+            __init__.py               <- API pubblica (run_task, esegui_lifecycle, ...)
+            geometria.py              <- helper geometriche (poligono, rect)
+            input_mouse.py            <- click + drag con movimenti umani
+            handlers_clicks.py        <- handler per click/click_rect/click_poly/click_until
+            handlers_drags.py         <- handler per drag/drag_multi/drag_zone/drag_hold
+            handlers_wiring.py        <- handler per Fix Wiring
+            handlers_sync.py          <- handler per Calibrate Distributor (sync_click)
+            handlers_anomaly.py       <- handler per Detect Anomaly
+            handlers_yolo.py          <- 5 handler YOLO
+            handlers_simon.py         <- handler per Simon Says
+            handlers_ocr.py           <- handler per OCR/keypad
+            dispatcher.py             <- _DISPATCH_MAP + esegui_azioni
+            lifecycle.py              <- setup, run_task, teardown, esegui_lifecycle
+        task_001_Swipe_Card.py        <- thin wrapper (~74 righe)
         task_002_Download_Data.py     <- thin wrapper
         ...
 
-Il file ``_motore.py`` contiene tutto il codice condiviso:
-- 10 helper geometriche (`_client_rect`, `_drag_umano`, ...)
-- 19 handler per i tipi di azione (`_h_click`, `_h_drag`, ...)
-- ``_DISPATCH_MAP`` (tipo -> handler)
-- ``esegui_azioni(...)`` dispatcher principale
-- ``run_task(task_meta, azioni, ctx)`` lifecycle parametrizzato
+Il package ``_motore/`` viene COPIATO da ``among_us_ai/execution/_motore_pkg/``
+nella cartella ``tasks_exec/`` come ``_motore/``. I thin wrapper fanno
+``import _motore`` e poi ``_motore.esegui_lifecycle(TASK_META, AZIONI)``.
 
-I file ``task_<id>_<nome>.py`` sono THIN WRAPPER che contengono solo:
-- ``TASK_META`` (dict con id, nome, posizione, fasi, ecc.)
-- ``AZIONI`` (lista delle azioni)
-- import relativo di ``_motore`` + chiamata a ``run_task``
-
-Vantaggi:
-- File task da ~1300 righe a ~100 righe (-90%)
-- Modificare il motore aggiorna automaticamente tutte le task
-- Cartella ``tasks_exec/`` portable (basta copiarla intera)
+Vantaggi del package modulare:
+- ogni handler vive nel suo file, leggibile in isolamento
+- modificare un singolo handler non tocca gli altri file
+- il `__init__.py` espone solo l'API pubblica
 
 API pubblica:
     genera_file_esecuzione(task, azioni_effettive, src_id, tasks_exec_dir)
-        -> filepath  (oppure None in caso di errore)
+        -> filepath (oppure None)
 """
 
 import os
+import shutil
 
 from .task_template import get_motore_modulo
 
 
-# Nome del file motore comune. Importato dai thin wrapper come `_motore`.
-NOME_FILE_MOTORE = "_motore.py"
+# Nome della cartella del package motore in tasks_exec/
+NOME_DIR_MOTORE = "_motore"
+
+# Path della cartella sorgente del package nel codice sorgente del bot
+_SRC_PKG_DIR = os.path.join(os.path.dirname(__file__), "_motore_pkg")
 
 
 def genera_file_esecuzione(task, azioni_effettive, src_id, tasks_exec_dir):
@@ -76,30 +85,50 @@ def genera_file_esecuzione(task, azioni_effettive, src_id, tasks_exec_dir):
 
 def _scrivi_motore_se_necessario(tasks_exec_dir):
     """
-    Scrive ``tasks_exec/_motore.py`` se non esiste o se e' obsoleto.
+    Copia il package ``_motore_pkg/`` (contenuto in
+    ``among_us_ai/execution/``) come ``tasks_exec/_motore/``, sovrascrivendo
+    se gia' presente.
 
-    Confronto contenuto byte-per-byte: se il file esistente e' identico
-    al template, non riscrive (preserva timestamp e evita rewrite inutili).
+    Confronto file-per-file: se tutti i file sono identici, non riscrive
+    (preserva timestamp).
     """
-    path = os.path.join(tasks_exec_dir, NOME_FILE_MOTORE)
-    nuovo = get_motore_modulo()
+    dst_dir = os.path.join(tasks_exec_dir, NOME_DIR_MOTORE)
 
-    # Se esiste e identico, non riscrivere
-    if os.path.exists(path):
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                if f.read() == nuovo:
-                    return  # gia' aggiornato
-        except Exception:
-            # Errore di lettura: meglio sovrascrivere
-            pass
+    # Verifica che la sorgente esista
+    if not os.path.isdir(_SRC_PKG_DIR):
+        print(f"[TaskWriter] !! Package motore sorgente non trovato: {_SRC_PKG_DIR}")
+        return
 
-    try:
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(nuovo)
-        print(f"[TaskWriter] Motore aggiornato: {path}")
-    except Exception as e:
-        print(f"[TaskWriter] Errore scrittura {NOME_FILE_MOTORE}: {e}")
+    # Se la destinazione e' identica alla sorgente, salta
+    if _package_identico(_SRC_PKG_DIR, dst_dir):
+        return
+
+    # Pulisci la destinazione e ricopia
+    if os.path.isdir(dst_dir):
+        shutil.rmtree(dst_dir)
+    shutil.copytree(_SRC_PKG_DIR, dst_dir)
+    print(f"[TaskWriter] Motore package aggiornato: {dst_dir}/")
+
+
+def _package_identico(src_dir, dst_dir):
+    """
+    Ritorna True se ``dst_dir`` esiste e contiene file con lo stesso
+    nome e contenuto di ``src_dir`` (compresi __pycache__ esclusi).
+    """
+    if not os.path.isdir(dst_dir):
+        return False
+    src_files = sorted(f for f in os.listdir(src_dir)
+                       if f.endswith('.py') and f != '__pycache__')
+    dst_files = sorted(f for f in os.listdir(dst_dir)
+                       if f.endswith('.py') and f != '__pycache__')
+    if src_files != dst_files:
+        return False
+    for fn in src_files:
+        with open(os.path.join(src_dir, fn), 'rb') as a, \
+             open(os.path.join(dst_dir, fn), 'rb') as b:
+            if a.read() != b.read():
+                return False
+    return True
 
 
 def _scrivi_thin_wrapper(task, azioni_effettive, src_id, tasks_exec_dir):
