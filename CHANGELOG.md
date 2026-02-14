@@ -1,5 +1,108 @@
 # Changelog
 
+## v2.1.10 — Fix critico: ripristinato sleep(attesa) nel dispatcher
+
+### Bug
+
+Sintomo riportato: "Tutte le task vengono eseguite piu' velocemente
+e non va bene, deve essere con le tempistiche indicate prima nel JSON
+quando le ho mappate".
+
+### Causa
+
+Durante il refactor del macroswitch in handler functions (v2.1.7),
+nel ricomporre `esegui_azioni` ho dimenticato di portare lo
+``_time.sleep(attesa)`` finale del for loop principale.
+
+Nel **monolite originale** (pre-v2.1.7), la struttura era:
+
+```python
+for az in azioni_da_eseguire:
+    rect = _client_rect(hwnd)
+    cx, cy, cw, ch = rect
+    durata = az.get('durata', 0.0)
+    attesa = az.get('attesa', 0.0)
+
+    if tipo == 'click':
+        _click_hold(...)
+    elif tipo == 'click_rect':
+        _click_hold(...)
+    elif tipo == 'wiring':
+        # ... logica wiring ...
+        _time.sleep(attesa)         # interno
+    # ... altri rami ...
+    _time.sleep(attesa)             # <-- FINALE GENERALE (PERSO!)
+
+if not is_test and current_step < len(cooldowns):
+    print(f"__COOLDOWN__:{cooldowns[current_step]}", flush=True)
+```
+
+L'`_time.sleep(attesa)` **finale** veniva applicato a TUTTE le azioni
+(garantendo la pausa configurata nel JSON tra un'azione e la successiva).
+
+Nel refactor era stato perso, quindi le azioni semplici come `click`,
+`click_rect`, `click_poly`, `drag` venivano eseguite consecutivamente
+senza la pausa configurata. Risultato: tutte le task andavano piu'
+veloci di quanto programmato.
+
+Anche il `print __COOLDOWN__:` post-chunk era stato perso
+(usato dal subprocess runner per mettere in pausa il bot prima del
+prossimo step di una task multi-fase).
+
+### Fix
+
+Aggiunto al dispatcher (`_motore_pkg/dispatcher.py`):
+
+```python
+for az in azioni_da_eseguire:
+    # ... focus check + rect + dispatch ...
+    handler(az, cx, cy, cw, ch, hwnd, durata, attesa)
+
+    # 2d) Pausa post-azione (campo "attesa" del JSON).
+    # Si applica a TUTTI i tipi di azione.
+    _time.sleep(attesa)
+
+# Stampa cooldown post-chunk
+if not is_test and current_step < len(cooldowns):
+    print(f"__COOLDOWN__:{cooldowns[current_step]}", flush=True)
+```
+
+### Test di regressione (timing)
+
+Confronto del **tempo totale** del package modulare contro il
+**vero monolite** (v2.1.6, prima del refactor del macroswitch):
+
+| Azione | Tempo totale (atteso) | OK |
+|--------|-------|------|
+| click semplice (attesa=0.5) | 0.500s | OK |
+| click_rect (attesa=0.3) | 0.300s | OK |
+| click_poly (attesa=0.4) | 0.400s | OK |
+| drag (durata=0.5, attesa=0.2) | 0.775s | OK |
+| 2 click consecutivi (attesa=0.4) | 0.800s | OK |
+| drag_zone (attesa=0.3) | 0.730s | OK |
+
+**6/6 azioni** producono lo stesso identico tempo totale del monolite
+originale. Il timing del JSON e' rispettato.
+
+### Nota: handler con doppio sleep
+
+Alcuni handler hanno un loro `_time.sleep(attesa)` interno (wiring,
+sync_click, click_anomaly, simon_says, ocr_keypad, tutti i 5 yolo_*).
+Per questi tipi il timing totale fra azioni e' circa **2 * attesa**,
+comportamento gia' presente nel monolite originale (era un raddoppio
+volontario per minigiochi che richiedono piu' tempo di reazione).
+Mantenuto invariato.
+
+### Cosa NON e' cambiato
+
+- API pubblica del package: invariata
+- Struttura modulare del v2.1.9: invariata
+- Generazione thin wrapper: invariata
+- Formato JSON delle task: invariato
+
+Solo il dispatcher e' stato corretto (5 righe aggiunte).
+
+
 ## v2.1.9 — Motore in package modulare
 
 Il file `_motore.py` (1266 righe in v2.1.8) era ancora un singolo file
