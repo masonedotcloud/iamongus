@@ -1,5 +1,120 @@
 # Changelog
 
+## v2.1.9 — Motore in package modulare
+
+Il file `_motore.py` (1266 righe in v2.1.8) era ancora un singolo file
+monolitico. L'ho splittato in un **package Python modulare** con file
+piccoli, uno per famiglia di funzionalita'.
+
+### Prima (v2.1.8)
+
+```
+tasks_exec/
++-- _motore.py              <- 1266 righe in un solo file
++-- task_001_Swipe_Card.py  <- thin wrapper 74 righe
++-- ...
+```
+
+### Dopo (v2.1.9)
+
+```
+tasks_exec/
++-- _motore/
+|   +-- __init__.py             <- API pubblica (esporta run_task, ...)
+|   +-- geometria.py            <- 4 helper geometriche (~80 righe)
+|   +-- input_mouse.py          <- 5 helper di click/drag (~200 righe)
+|   +-- handlers_clicks.py      <- _h_click, _h_click_rect, _h_click_poly, _h_click_until
+|   +-- handlers_drags.py       <- _h_drag, _h_drag_multi, _h_drag_zone, _h_drag_hold
+|   +-- handlers_wiring.py      <- _h_wiring (Fix Wiring)
+|   +-- handlers_sync.py        <- _h_sync_click (Calibrate Distributor)
+|   +-- handlers_anomaly.py     <- _h_click_anomaly (Detect Anomaly)
+|   +-- handlers_yolo.py        <- 5 handler YOLO
+|   +-- handlers_simon.py       <- _h_simon_says
+|   +-- handlers_ocr.py         <- _h_number_match, _h_ocr_keypad
+|   +-- dispatcher.py           <- _DISPATCH_MAP + esegui_azioni
+|   +-- lifecycle.py            <- setup, run_task, teardown, esegui_lifecycle
++-- task_001_Swipe_Card.py      <- thin wrapper (invariato, 74 righe)
++-- ...
+```
+
+### Numeri
+
+| Modulo | Righe | Cosa contiene |
+|--------|-------|---------------|
+| `geometria.py` | 83 | helper poligono/rettangolo/sampling |
+| `input_mouse.py` | 196 | click + drag con Bezier umani |
+| `handlers_clicks.py` | 52 | 4 handler click |
+| `handlers_drags.py` | 43 | 4 handler drag |
+| `handlers_wiring.py` | 64 | Fix Wiring (50 righe di logica colore) |
+| `handlers_sync.py` | 78 | Calibrate Distributor (polling + verify) |
+| `handlers_anomaly.py` | 55 | Detect Anomaly (extract pure shape + match) |
+| `handlers_yolo.py` | 418 | 5 handler YOLO (il piu' complesso) |
+| `handlers_simon.py` | 55 | Simon Says |
+| `handlers_ocr.py` | 80 | number_match + ocr_keypad |
+| `dispatcher.py` | 128 | DISPATCH_MAP + esegui_azioni |
+| `lifecycle.py` | 116 | setup/run_task/teardown/esegui_lifecycle |
+| **Totale package** | **~1366** righe | |
+| **Per file (media)** | **105** righe | |
+
+Cartella `tasks_exec/` totale: **183 KB** (era 212 KB in v2.1.8).
+Il package modulare e' leggermente piu' piccolo perche' ogni file ha
+solo gli import che gli servono (no duplicazioni).
+
+### Vantaggi pratici
+
+- **Trovi la logica per il minigioco "wiring" in `handlers_wiring.py`**:
+  64 righe da leggere invece di scrollare 1266.
+- **Modificare un handler non tocca gli altri file**: meno rischio di
+  rompere altre cose accidentalmente.
+- **Ogni modulo ha solo i suoi import** (`pyautogui` solo dove serve,
+  `cv2`/`numpy` solo nei moduli YOLO/anomaly).
+- **Editor friendly**: file da 50-200 righe sono leggibili a colpo
+  d'occhio.
+- **`__init__.py` documenta l'API pubblica**: `run_task`,
+  `esegui_lifecycle`, `esegui_azioni`, `setup`, `teardown`.
+
+### Aggiornamento del task_writer
+
+Il `task_writer.py` ora:
+1. Copia il package `_motore_pkg/` (template) come
+   `tasks_exec/_motore/`.
+2. Confronto file-per-file: se sono tutti identici, salta la copia
+   (preserva timestamp).
+3. Genera i thin wrapper dei singoli task (invariato dal v2.1.8).
+
+I thin wrapper continuano a fare semplicemente:
+```python
+import _motore  # ora un package, ma l'import e' identico
+_motore.esegui_lifecycle(TASK_META, AZIONI)
+```
+
+### Modifiche al codice
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/` | NUOVA DIR: 13 file modulari (template del package) |
+| `among_us_ai/execution/_motore_template.txt` | RESTA: backup variante "tutto in un file" |
+| `among_us_ai/execution/task_template.py` | aggiunta `get_motore_pkg_path()` |
+| `among_us_ai/execution/task_writer.py` | aggiornato per copiare il package |
+
+### Verifica fatta
+
+- 56/56 thin wrapper Python validi (parsing AST OK)
+- Tutti i 13 file del package syntax OK
+- Test funzionale: `import _motore; _motore.run_task(...)` OK
+- Test equivalenza chiamate pyautogui: 6/6 azioni base producono
+  sequenze IDENTICHE al monolite originale
+
+### Cosa NON e' cambiato
+
+- API pubblica del package: invariata (`run_task`, `esegui_azioni`,
+  `esegui_lifecycle`, `setup`, `teardown`)
+- Comportamento runtime identico al v2.1.8 (verificato con test
+  deterministico)
+- Thin wrapper: 74 righe come prima
+- Formato JSON delle task: invariato
+
+
 ## v2.1.8 — Thin wrapper: file task da 1330 a 74 righe
 
 I file `.py` autonomi nella cartella `tasks_exec/` erano di **1330 righe
