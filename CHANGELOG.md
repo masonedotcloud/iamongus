@@ -1,5 +1,64 @@
 # Changelog
 
+## v2.1.11 — Fix import mancanti negli handler del package modulare
+
+### Bug riportato
+
+```
+[Chart Course] [yolo_drag_seq] Errore iterazione:
+name '_drag_seq_tappe' is not defined
+```
+
+### Causa
+
+Quando in v2.1.9 ho splittato il monolite in package modulare,
+3 import inter-modulo non sono stati aggiunti correttamente.
+Gli handler chiamavano helper definiti in `input_mouse.py`, ma
+mancava la riga `from .input_mouse import ...`.
+
+### File toccati
+
+| File                          | Helper aggiunti all'import         |
+|-------------------------------|------------------------------------|
+| `handlers_yolo.py`            | `_drag_seq_tappe`                  |
+| `handlers_ocr.py`             | `_click_hold`, `_extract_pure_shape` |
+| `handlers_simon.py`           | `_click_hold`                      |
+
+### Verifica fatta
+
+1. **Scan AST automatico** su tutti i 13 file del package, cercando
+   nomi usati ma non importati. Dopo il fix: 0 import mancanti.
+2. **Test dinamico**: invocazione di tutti i 19 handler con dati
+   di test (e stub Windows + cv2 + numpy + mss + ultralytics).
+   Risultato: **19/19 senza NameError**.
+
+### Falsi positivi (non sono bug)
+
+Lo scan ha riportato anche nomi tipo `rx, ry, sxr, syr, b, g, r,
+x1, x2, y1, y2, dx, dy, kx, ky, e, item, __file__, max_val,
+chk_x, chk_y, prev_chk_x, prev_chk_y, light_rx, light_ry,
+start_rx, start_ry, end_rx, end_ry, exr, eyr, bx_rel, by_rel`.
+
+Sono **tutti falsi positivi**: variabili locali create da:
+- tuple unpacking: `rx, ry = _random_in_rect(...)`,
+  `r, g, b = _pag.pixel(...)`, `start_rx, start_ry = left_pts[i]`
+- for-loop tuple unpack: `for x1, y1, x2, y2 in boxes`
+- comprehension: `[item for item in target_scelti]`
+- except handler: `except Exception as e:`
+- built-in di Python: `__file__` (presente in ogni modulo)
+- min/max return: `_, max_val, _, _ = cv2.minMaxLoc(...)`
+
+Il test dinamico l'ha confermato: nessuno di questi causa
+NameError a runtime.
+
+### Cosa NON e' cambiato
+
+- API pubblica: invariata
+- Struttura modulare: invariata
+- Comportamento runtime: corretto come da v2.1.10 (timing JSON
+  rispettato)
+
+
 ## v2.1.10 — Fix critico: ripristinato sleep(attesa) nel dispatcher
 
 ### Bug
