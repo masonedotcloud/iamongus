@@ -1,5 +1,282 @@
 # Changelog
 
+## v2.1.11 — Fix import mancanti negli handler del package modulare
+
+### Bug riportato
+
+```
+[Chart Course] [yolo_drag_seq] Errore iterazione:
+name '_drag_seq_tappe' is not defined
+```
+
+### Causa
+
+Quando in v2.1.9 ho splittato il monolite in package modulare,
+3 import inter-modulo non sono stati aggiunti correttamente.
+Gli handler chiamavano helper definiti in `input_mouse.py`, ma
+mancava la riga `from .input_mouse import ...`.
+
+### File toccati
+
+| File                          | Helper aggiunti all'import         |
+|-------------------------------|------------------------------------|
+| `handlers_yolo.py`            | `_drag_seq_tappe`                  |
+| `handlers_ocr.py`             | `_click_hold`, `_extract_pure_shape` |
+| `handlers_simon.py`           | `_click_hold`                      |
+
+### Verifica fatta
+
+1. **Scan AST automatico** su tutti i 13 file del package, cercando
+   nomi usati ma non importati. Dopo il fix: 0 import mancanti.
+2. **Test dinamico**: invocazione di tutti i 19 handler con dati
+   di test (e stub Windows + cv2 + numpy + mss + ultralytics).
+   Risultato: **19/19 senza NameError**.
+
+### Falsi positivi (non sono bug)
+
+Lo scan ha riportato anche nomi tipo `rx, ry, sxr, syr, b, g, r,
+x1, x2, y1, y2, dx, dy, kx, ky, e, item, __file__, max_val,
+chk_x, chk_y, prev_chk_x, prev_chk_y, light_rx, light_ry,
+start_rx, start_ry, end_rx, end_ry, exr, eyr, bx_rel, by_rel`.
+
+Sono **tutti falsi positivi**: variabili locali create da:
+- tuple unpacking: `rx, ry = _random_in_rect(...)`,
+  `r, g, b = _pag.pixel(...)`, `start_rx, start_ry = left_pts[i]`
+- for-loop tuple unpack: `for x1, y1, x2, y2 in boxes`
+- comprehension: `[item for item in target_scelti]`
+- except handler: `except Exception as e:`
+- built-in di Python: `__file__` (presente in ogni modulo)
+- min/max return: `_, max_val, _, _ = cv2.minMaxLoc(...)`
+
+Il test dinamico l'ha confermato: nessuno di questi causa
+NameError a runtime.
+
+### Cosa NON e' cambiato
+
+- API pubblica: invariata
+- Struttura modulare: invariata
+- Comportamento runtime: corretto come da v2.1.10 (timing JSON
+  rispettato)
+
+
+## v2.1.10 — Fix critico: ripristinato sleep(attesa) nel dispatcher
+
+### Bug
+
+Sintomo riportato: "Tutte le task vengono eseguite piu' velocemente
+e non va bene, deve essere con le tempistiche indicate prima nel JSON
+quando le ho mappate".
+
+### Causa
+
+Durante il refactor del macroswitch in handler functions (v2.1.7),
+nel ricomporre `esegui_azioni` ho dimenticato di portare lo
+``_time.sleep(attesa)`` finale del for loop principale.
+
+Nel **monolite originale** (pre-v2.1.7), la struttura era:
+
+```python
+for az in azioni_da_eseguire:
+    rect = _client_rect(hwnd)
+    cx, cy, cw, ch = rect
+    durata = az.get('durata', 0.0)
+    attesa = az.get('attesa', 0.0)
+
+    if tipo == 'click':
+        _click_hold(...)
+    elif tipo == 'click_rect':
+        _click_hold(...)
+    elif tipo == 'wiring':
+        # ... logica wiring ...
+        _time.sleep(attesa)         # interno
+    # ... altri rami ...
+    _time.sleep(attesa)             # <-- FINALE GENERALE (PERSO!)
+
+if not is_test and current_step < len(cooldowns):
+    print(f"__COOLDOWN__:{cooldowns[current_step]}", flush=True)
+```
+
+L'`_time.sleep(attesa)` **finale** veniva applicato a TUTTE le azioni
+(garantendo la pausa configurata nel JSON tra un'azione e la successiva).
+
+Nel refactor era stato perso, quindi le azioni semplici come `click`,
+`click_rect`, `click_poly`, `drag` venivano eseguite consecutivamente
+senza la pausa configurata. Risultato: tutte le task andavano piu'
+veloci di quanto programmato.
+
+Anche il `print __COOLDOWN__:` post-chunk era stato perso
+(usato dal subprocess runner per mettere in pausa il bot prima del
+prossimo step di una task multi-fase).
+
+### Fix
+
+Aggiunto al dispatcher (`_motore_pkg/dispatcher.py`):
+
+```python
+for az in azioni_da_eseguire:
+    # ... focus check + rect + dispatch ...
+    handler(az, cx, cy, cw, ch, hwnd, durata, attesa)
+
+    # 2d) Pausa post-azione (campo "attesa" del JSON).
+    # Si applica a TUTTI i tipi di azione.
+    _time.sleep(attesa)
+
+# Stampa cooldown post-chunk
+if not is_test and current_step < len(cooldowns):
+    print(f"__COOLDOWN__:{cooldowns[current_step]}", flush=True)
+```
+
+### Test di regressione (timing)
+
+Confronto del **tempo totale** del package modulare contro il
+**vero monolite** (v2.1.6, prima del refactor del macroswitch):
+
+| Azione | Tempo totale (atteso) | OK |
+|--------|-------|------|
+| click semplice (attesa=0.5) | 0.500s | OK |
+| click_rect (attesa=0.3) | 0.300s | OK |
+| click_poly (attesa=0.4) | 0.400s | OK |
+| drag (durata=0.5, attesa=0.2) | 0.775s | OK |
+| 2 click consecutivi (attesa=0.4) | 0.800s | OK |
+| drag_zone (attesa=0.3) | 0.730s | OK |
+
+**6/6 azioni** producono lo stesso identico tempo totale del monolite
+originale. Il timing del JSON e' rispettato.
+
+### Nota: handler con doppio sleep
+
+Alcuni handler hanno un loro `_time.sleep(attesa)` interno (wiring,
+sync_click, click_anomaly, simon_says, ocr_keypad, tutti i 5 yolo_*).
+Per questi tipi il timing totale fra azioni e' circa **2 * attesa**,
+comportamento gia' presente nel monolite originale (era un raddoppio
+volontario per minigiochi che richiedono piu' tempo di reazione).
+Mantenuto invariato.
+
+### Cosa NON e' cambiato
+
+- API pubblica del package: invariata
+- Struttura modulare del v2.1.9: invariata
+- Generazione thin wrapper: invariata
+- Formato JSON delle task: invariato
+
+Solo il dispatcher e' stato corretto (5 righe aggiunte).
+
+
+## v2.1.9 — Motore in package modulare
+
+Il file `_motore.py` (1266 righe in v2.1.8) era ancora un singolo file
+monolitico. L'ho splittato in un **package Python modulare** con file
+piccoli, uno per famiglia di funzionalita'.
+
+### Prima (v2.1.8)
+
+```
+tasks_exec/
++-- _motore.py              <- 1266 righe in un solo file
++-- task_001_Swipe_Card.py  <- thin wrapper 74 righe
++-- ...
+```
+
+### Dopo (v2.1.9)
+
+```
+tasks_exec/
++-- _motore/
+|   +-- __init__.py             <- API pubblica (esporta run_task, ...)
+|   +-- geometria.py            <- 4 helper geometriche (~80 righe)
+|   +-- input_mouse.py          <- 5 helper di click/drag (~200 righe)
+|   +-- handlers_clicks.py      <- _h_click, _h_click_rect, _h_click_poly, _h_click_until
+|   +-- handlers_drags.py       <- _h_drag, _h_drag_multi, _h_drag_zone, _h_drag_hold
+|   +-- handlers_wiring.py      <- _h_wiring (Fix Wiring)
+|   +-- handlers_sync.py        <- _h_sync_click (Calibrate Distributor)
+|   +-- handlers_anomaly.py     <- _h_click_anomaly (Detect Anomaly)
+|   +-- handlers_yolo.py        <- 5 handler YOLO
+|   +-- handlers_simon.py       <- _h_simon_says
+|   +-- handlers_ocr.py         <- _h_number_match, _h_ocr_keypad
+|   +-- dispatcher.py           <- _DISPATCH_MAP + esegui_azioni
+|   +-- lifecycle.py            <- setup, run_task, teardown, esegui_lifecycle
++-- task_001_Swipe_Card.py      <- thin wrapper (invariato, 74 righe)
++-- ...
+```
+
+### Numeri
+
+| Modulo | Righe | Cosa contiene |
+|--------|-------|---------------|
+| `geometria.py` | 83 | helper poligono/rettangolo/sampling |
+| `input_mouse.py` | 196 | click + drag con Bezier umani |
+| `handlers_clicks.py` | 52 | 4 handler click |
+| `handlers_drags.py` | 43 | 4 handler drag |
+| `handlers_wiring.py` | 64 | Fix Wiring (50 righe di logica colore) |
+| `handlers_sync.py` | 78 | Calibrate Distributor (polling + verify) |
+| `handlers_anomaly.py` | 55 | Detect Anomaly (extract pure shape + match) |
+| `handlers_yolo.py` | 418 | 5 handler YOLO (il piu' complesso) |
+| `handlers_simon.py` | 55 | Simon Says |
+| `handlers_ocr.py` | 80 | number_match + ocr_keypad |
+| `dispatcher.py` | 128 | DISPATCH_MAP + esegui_azioni |
+| `lifecycle.py` | 116 | setup/run_task/teardown/esegui_lifecycle |
+| **Totale package** | **~1366** righe | |
+| **Per file (media)** | **105** righe | |
+
+Cartella `tasks_exec/` totale: **183 KB** (era 212 KB in v2.1.8).
+Il package modulare e' leggermente piu' piccolo perche' ogni file ha
+solo gli import che gli servono (no duplicazioni).
+
+### Vantaggi pratici
+
+- **Trovi la logica per il minigioco "wiring" in `handlers_wiring.py`**:
+  64 righe da leggere invece di scrollare 1266.
+- **Modificare un handler non tocca gli altri file**: meno rischio di
+  rompere altre cose accidentalmente.
+- **Ogni modulo ha solo i suoi import** (`pyautogui` solo dove serve,
+  `cv2`/`numpy` solo nei moduli YOLO/anomaly).
+- **Editor friendly**: file da 50-200 righe sono leggibili a colpo
+  d'occhio.
+- **`__init__.py` documenta l'API pubblica**: `run_task`,
+  `esegui_lifecycle`, `esegui_azioni`, `setup`, `teardown`.
+
+### Aggiornamento del task_writer
+
+Il `task_writer.py` ora:
+1. Copia il package `_motore_pkg/` (template) come
+   `tasks_exec/_motore/`.
+2. Confronto file-per-file: se sono tutti identici, salta la copia
+   (preserva timestamp).
+3. Genera i thin wrapper dei singoli task (invariato dal v2.1.8).
+
+I thin wrapper continuano a fare semplicemente:
+```python
+import _motore  # ora un package, ma l'import e' identico
+_motore.esegui_lifecycle(TASK_META, AZIONI)
+```
+
+### Modifiche al codice
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/` | NUOVA DIR: 13 file modulari (template del package) |
+| `among_us_ai/execution/_motore_template.txt` | RESTA: backup variante "tutto in un file" |
+| `among_us_ai/execution/task_template.py` | aggiunta `get_motore_pkg_path()` |
+| `among_us_ai/execution/task_writer.py` | aggiornato per copiare il package |
+
+### Verifica fatta
+
+- 56/56 thin wrapper Python validi (parsing AST OK)
+- Tutti i 13 file del package syntax OK
+- Test funzionale: `import _motore; _motore.run_task(...)` OK
+- Test equivalenza chiamate pyautogui: 6/6 azioni base producono
+  sequenze IDENTICHE al monolite originale
+
+### Cosa NON e' cambiato
+
+- API pubblica del package: invariata (`run_task`, `esegui_azioni`,
+  `esegui_lifecycle`, `setup`, `teardown`)
+- Comportamento runtime identico al v2.1.8 (verificato con test
+  deterministico)
+- Thin wrapper: 74 righe come prima
+- Formato JSON delle task: invariato
+
+
 ## v2.1.8 — Thin wrapper: file task da 1330 a 74 righe
 
 I file `.py` autonomi nella cartella `tasks_exec/` erano di **1330 righe
