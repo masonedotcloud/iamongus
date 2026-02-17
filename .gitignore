@@ -19,3 +19,6 @@ Thumbs.db
 
 # Task executor: generati automaticamente dal task writer se assenti
 tasks_exec/
+
+# Backup automatici (es. task_registrate.json.bak dalla migrazione al formato v2.1)
+*.bak
