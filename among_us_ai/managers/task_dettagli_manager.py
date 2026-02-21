@@ -184,12 +184,20 @@ class TaskDettagliManager:
     # ------------------------------------------------------------------
 
     def aggiungi_fase(self, id_task, nome_fase, x, y):
-        """Aggiunge fase."""
+        """
+        Aggiunge una fase intermedia alla task.
+
+        NB: la flag 'ripeti' NON e' un attributo della fase ma
+        dell'azione cooldown che la chiude. Vedi `aggiorna_lista` in
+        editor_mixins/list_panel.py per la UI di selezione.
+        """
         for t in self.task_list:
             if t['id'] == id_task:
-                t.setdefault('fasi', []).append(
-                    {'nome': nome_fase, 'x': float(x), 'y': float(y)}
-                )
+                t.setdefault('fasi', []).append({
+                    'nome': nome_fase,
+                    'x': float(x),
+                    'y': float(y),
+                })
                 break
         self.salva()
 

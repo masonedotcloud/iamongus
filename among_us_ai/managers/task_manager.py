@@ -358,7 +358,9 @@ class TaskManager:
     # ==================================================================
 
     def aggiungi_fase(self, id_task, nome_fase, x, y):
-        """Aggiunge fase."""
+        """Aggiunge fase. Per marcare una fase come 'ripeti', spunta il
+        checkbox 'Ripeti fase' sull'azione cooldown corrispondente
+        nell'editor delle azioni."""
         self.dettagli.aggiungi_fase(id_task, nome_fase, x, y)
 
     def rimuovi_fase(self, id_task, idx_fase):
