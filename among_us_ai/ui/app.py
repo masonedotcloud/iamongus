@@ -208,6 +208,16 @@ class GPSVisualizerPro(
         self.task_cooldowns         = {}
         self.task_internal_steps    = {} # Tiene traccia dei chunk (fasi) completate localmente
 
+        # Counter tentativi di ripetizione per ciascuna task.
+        # Struttura: { id_task: { idx_fase: numero_tentativi_fatti } }
+        # Quando una fase con ripeti=True non riesce e va riprovata, il
+        # contatore associato cresce di 1. Se raggiunge max_tentativi
+        # (definito a livello fase nel JSON, default 5), interrompiamo
+        # la ripetizione e premiamo ESC per uscire dal minigioco.
+        # Il counter si azzera quando la fase passa (RAM avanza) o
+        # quando si lancia una task da capo.
+        self.task_retry_counts      = {}
+
         # Editor delle azioni (finestra DPG separata)
         self.action_editor          = TaskActionEditor(self.task_mgr)
 
