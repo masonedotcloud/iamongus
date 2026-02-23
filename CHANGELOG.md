@@ -1,5 +1,118 @@
 # Changelog
 
+## v2.2.0 — Fasi con "ripeti" + scroll orizzontale editor
+
+### Funzionalita' nuova: ripetizione fase fino a cambio step in RAM
+
+Le fasi della task ora hanno un nuovo campo booleano `ripeti`. Quando
+una fase ha `ripeti=True`, il bot esegue in loop le azioni di quel
+chunk fino a quando uno di questi eventi si verifica:
+
+1. La RAM segnala che lo step della task e' avanzato (cioe' il gioco
+   ha riconosciuto il completamento della fase)
+2. La task risulta `done` in RAM
+3. Il subprocess fallisce con errore (exit code != 0)
+
+#### Esempio d'uso
+
+Hai una task che richiede di cliccare ripetutamente su qualcosa per
+fare avanzare un loading bar o per "stordire" un nemico:
+- Fase 0 (apertura task): `ripeti=False`
+- Fase 1 (azione ripetuta): `ripeti=True`
+- Fase 2 (chiusura): `ripeti=False`
+
+Il bot esegue Fase 0 una volta. Poi inizia la Fase 1 e ripete le
+azioni finche' la RAM non segnala che il gioco e' passato allo step
+successivo, poi passa a Fase 2.
+
+#### Schema dati: campo `ripeti` su ogni fase
+
+```json
+"fasi": [
+    {"nome": "Apri task", "x": 6.5, "y": -6.6, "ripeti": false},
+    {"nome": "Click ripetuto", "x": 6.5, "y": -6.6, "ripeti": true},
+    {"nome": "Conferma", "x": 6.5, "y": -6.6, "ripeti": false}
+]
+```
+
+Le fasi gia' presenti senza il campo `ripeti` vengono lette con
+default `False` (retrocompatibilita'). La migrazione e' automatica
+ed e' applicata al primo salvataggio.
+
+#### API nuove
+
+`TaskManager.imposta_ripeti_fase(id_task, idx_fase, ripeti)`
+  - facade per `task_dettagli_manager.imposta_ripeti_fase`
+  - persiste su disco automaticamente
+
+`TaskManager.aggiungi_fase(id_task, nome, x, y, ripeti=False)`
+  - aggiunto parametro opzionale `ripeti`
+
+#### Implementazione runtime
+
+La logica del loop NON e' nel subprocess (per non doverlo far
+dipendere da pymem). E' tutta nel bot principale:
+
+In `tasks_process.py`, due punti coordinati:
+
+1. **Durante l'esecuzione** (`_controlla_processo_task`): controlla
+   ad ogni frame se la fase corrente ha `ripeti=True` E lo step in
+   RAM e' avanzato. In tal caso ferma il subprocess senza marcare done.
+
+2. **Dopo l'esecuzione** (post-poll): se il subprocess e' finito con
+   ret==0 e la fase corrente ha `ripeti=True` E lo step in RAM non e'
+   avanzato E la task non e' done in RAM, **rilancia il subprocess
+   con lo stesso step**. Pausa di 0.3s tra un ciclo e l'altro per
+   dare al gioco il tempo di aggiornare la RAM.
+
+Due nuovi helper:
+- `_fase_corrente_e_ripeti(task)`: True se la fase corrente ha ripeti=True
+- `_fase_da_ripetere(task)`: True se va effettivamente rilanciata
+  (incrocio dei 3 segnali: ripeti, ram_step, ram_done)
+
+### UI: editor task
+
+Nell'editor delle fasi (`tasks_popups_edit.py`), ogni fase ha ora un
+checkbox "[R]" accanto al pulsante "[X]" (elimina). L'utente puo'
+selezionare quali fasi devono essere ripetute. Lo stato viene salvato
+istantaneamente nel JSON.
+
+Lo `child_window` della lista fasi e' stato anche allargato (210px ->
+320px) e ha `horizontal_scrollbar=True` per leggere nomi di fase
+lunghi senza troncamento. Stessa modifica per la lista alternativi.
+
+### UI: editor azioni
+
+La lista delle azioni nell'editor (componente `TAG_LIST` in
+`ui_build.py`) ora ha `horizontal_scrollbar=True`. Quando un'azione
+ha una descrizione lunga (poligoni con molti punti, parametri
+verbose), si puo' scorrere lateralmente invece che vedere il testo
+tagliato.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/managers/task_dettagli_manager.py` | aggiunto `ripeti=False` a `aggiungi_fase`; nuovo `imposta_ripeti_fase` |
+| `among_us_ai/managers/task_manager.py` | facade aggiornato |
+| `among_us_ai/ui/mixins/tasks_process.py` | logica loop "ripeti" + 2 helper nuovi |
+| `among_us_ai/ui/mixins/tasks_popups_edit.py` | checkbox "[R]" per fase, scroll orizzontale |
+| `among_us_ai/ui/editor_mixins/ui_build.py` | scroll orizzontale lista azioni |
+
+### Verifica fatta
+
+- Syntax check di tutti i file modificati: OK
+- Test funzionale `imposta_ripeti_fase`: lettura/scrittura/persistenza OK
+- Import del package completo: OK
+
+### Cosa NON e' cambiato
+
+- Schema fasi esistenti: retrocompatibile (default `ripeti=False`)
+- Subprocess delle task: completamente invariato (la logica vive
+  nel bot principale che monitora la RAM)
+- API pubblica del motore: invariata
+
+
 ## v2.1.11 — Fix import mancanti negli handler del package modulare
 
 ### Bug riportato
