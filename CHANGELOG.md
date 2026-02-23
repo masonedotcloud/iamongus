@@ -1,5 +1,94 @@
 # Changelog
 
+## v2.2.1 — Fix: checkbox 'ripeti' dove serve davvero (sull'azione cooldown)
+
+In v2.2.0 avevo messo la checkbox 'ripeti' nel posto sbagliato:
+nel popup di modifica della task (sulla lista delle fasi). L'utente
+ha chiarito che la voleva nell'**editor delle azioni**, perche' la
+selezione delle fasi da ripetere e' una scelta che si fa quando si
+mappano le azioni della task, non dalla scheda metadati.
+
+### Cambio di posizione della checkbox
+
+La checkbox "Ripeti fase" e' stata spostata:
+- **Prima** (v2.2.0, sbagliato): nel popup di modifica task, accanto
+  ad ogni fase nella lista "Fasi". Salvata come campo `fasi[i].ripeti`.
+- **Dopo** (v2.2.1, corretto): nell'editor delle azioni, accanto ad
+  ogni azione di tipo `cooldown` nella lista "5. LISTA AZIONI
+  REGISTRATE". Salvata come campo `azione.ripeti` sull'azione cooldown.
+
+### Perche' sul cooldown?
+
+Il `cooldown` e' il **separatore di fase** nelle azioni: ogni cooldown
+chiude una fase e ne apre la successiva. Quindi il flag "ripeti fase"
+sta naturalmente sull'azione cooldown che chiude la fase da ripetere.
+
+Esempio:
+```
+LISTA AZIONI:
+  [1] click_rect              D:0.20s P:0.50s
+  [2] click_poly              D:0.20s P:0.50s
+  [3] cooldown 70.0s          [ ] Ripeti fase    <- fase 0
+  [4] click_anomaly           D:0.20s P:0.50s
+  [5] cooldown 5.0s           [X] Ripeti fase    <- fase 1, RIPETI!
+  [6] click_until             D:0.20s P:0.50s
+```
+
+In questo esempio, la fase 1 (azioni 4, dal cooldown[0] al cooldown[1])
+sara' ripetuta in loop finche' la RAM non rileva il cambio di step.
+
+### Logica runtime aggiornata
+
+I metodi `_fase_corrente_e_ripeti` e `_fase_da_ripetere` ora leggono
+il flag direttamente dalle azioni `cooldown` invece che dalle "fasi"
+dell'oggetto task:
+
+```python
+cooldowns = [a for a in azioni if a.get('tipo') == 'cooldown']
+internal_step = task_internal_steps[id_task]
+# La fase appena finita e' (internal_step - 1)
+# Il cooldown corrispondente e' cooldowns[internal_step - 1]
+```
+
+### Modifica al popup di modifica task
+
+Rimossa la checkbox `[R]` dalla lista delle fasi (era il posto
+sbagliato). La lista delle fasi resta, ma e' ora informativa-only
+(nomi delle fasi + posizione sulla mappa). Il messaggio di aiuto
+dice all'utente di usare l'editor azioni per il flag ripeti.
+
+### Scroll orizzontale aggiunto al pannello sinistro dell'editor
+
+In v2.2.0 avevo aggiunto lo scroll solo alla lista azioni. L'utente
+ha chiarito che voleva lo scroll sull'**intera barra dell'editor**
+(la "barra di editing"). Aggiunto `horizontal_scrollbar=True` al
+`child_window` della colonna sinistra dell'editor (width=420),
+cosi' i controlli con label tradotte in italiano lunghi non vengono
+tagliati.
+
+### Pulizia API non piu' usate
+
+- Rimosso `task_dettagli_manager.imposta_ripeti_fase` (era stato
+  aggiunto in v2.2.0 ma non piu' usato).
+- Rimosso `task_manager.imposta_ripeti_fase` dal facade.
+- `aggiungi_fase` torna alla forma senza parametro `ripeti`.
+
+### Test funzionali
+
+4/4 test della logica `_fase_da_ripetere`:
+1. Fase con ripeti=True + RAM ferma -> RIPETI
+2. Fase con ripeti=True + RAM avanzata -> STOP
+3. Fase con ripeti=True + RAM done -> STOP
+4. Fase con ripeti=False -> STOP
+
+### Cosa NON e' cambiato
+
+- Schema delle fasi: invariato (mai aveva il campo ripeti, in v2.2.0
+  l'avevo aggiunto erroneamente)
+- API pubblica del motore: invariata
+- Subprocess delle task: invariato
+
+
 ## v2.2.0 — Fasi con "ripeti" + scroll orizzontale editor
 
 ### Funzionalita' nuova: ripetizione fase fino a cambio step in RAM
