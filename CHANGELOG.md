@@ -1,5 +1,62 @@
 # Changelog
 
+## v2.2.2 — Visibilita' della checkbox 'Ripeti fase'
+
+In v2.2.1 la checkbox 'Ripeti fase' era stata posizionata a fine riga
+del cooldown nella lista azioni. **L'utente ha riportato che non la
+vedeva.**
+
+### Causa
+
+La lista azioni vive nella colonna sinistra dell'editor (width=420px).
+Una riga del cooldown contiene: testo descrizione + 3 bottoni
+(^v X) + testo timing + checkbox + label. Per i cooldown lunghi
+(es. "COOLDOWN 70.0s"), il totale superava i 400px utili e la
+checkbox finiva fuori area visibile (tagliata a destra).
+
+### Fix
+
+Riorganizzato il layout della riga cooldown:
+
+**Prima** (v2.2.1, invisibile):
+```
+> 3. COOLDOWN 70.0s   [^][v][X]   D:70.00s P:0.00s   [ ] Ripeti fase
+                                                       ^^^^^^^^^^^^^^^^
+                                                       fuori area visibile
+```
+
+**Dopo** (v2.2.2, sempre visibile):
+```
+[ ] > 3. COOLDOWN 70.0s   [^][v][X]   D:70.00s P:0.00s   [Ripeti fase]
+^^^                                                       ^^^^^^^^^^^^^
+checkbox a inizio riga                                    label colorata:
+                                                          - giallo se attivo
+                                                          - grigio se inattivo
+```
+
+Modifiche specifiche:
+1. **Checkbox a sinistra**: posizionata PRIMA della descrizione,
+   sempre visibile in qualsiasi larghezza di lista.
+2. **Label "Ripeti fase" a destra**: testo informativo che indica a
+   cosa serve la checkbox, con colore dinamico (giallo se la fase
+   e' marcata da ripetere, grigio altrimenti).
+3. La checkbox ha `label=""` per non duplicare il testo.
+
+Le righe delle azioni NON-cooldown restano invariate (la checkbox e
+la label appaiono SOLO sui cooldown).
+
+### File toccati
+
+- `among_us_ai/ui/editor_mixins/list_panel.py`: riordinato il layout
+  della riga del cooldown.
+
+### Cosa NON e' cambiato
+
+- Logica runtime: invariata (legge `azione.ripeti` dai cooldown)
+- Salvataggio JSON: invariato
+- Tutto il resto: invariato
+
+
 ## v2.2.1 — Fix: checkbox 'ripeti' dove serve davvero (sull'azione cooldown)
 
 In v2.2.0 avevo messo la checkbox 'ripeti' nel posto sbagliato:
