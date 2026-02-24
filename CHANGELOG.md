@@ -1,5 +1,102 @@
 # Changelog
 
+## v2.2.3 — Checkbox 'Ripeti' su tutte le azioni (non solo cooldown)
+
+L'utente ha chiarito che la checkbox "Ripeti" deve essere disponibile
+**per OGNI azione**, non solo per i cooldown. Questo permette anche di
+marcare singole azioni (es. un wiring senza cooldown finale) come
+"ripetere fino a cambio step in RAM".
+
+### Cambio nella UI
+
+Nell'editor delle azioni, sezione "5. LISTA AZIONI REGISTRATE", ogni
+riga ha ora:
+
+```
+[ ]  > 1. wiring (4 cavi + visore colore)   [^][v][X]   D:0.20s P:0.50s   [Ripeti]
+[X]  > 2. yolo_drag (model.pt)              [^][v][X]   D:0.30s P:0.20s   [Ripeti]
+[ ]  > 3. cooldown 70.0s                    [^][v][X]   D:70.00s P:0.00s  [Ripeti]
+```
+
+- **Checkbox a inizio riga**: sempre visibile (era il problema di
+  v2.2.1, dove finiva fuori area)
+- **Label "[Ripeti]" a destra**: indica visivamente lo stato.
+  Giallo se attivo, grigio se inattivo.
+
+### Logica runtime aggiornata
+
+Il flag `ripeti` viene letto da QUALUNQUE azione del chunk corrente,
+non solo dai cooldown. Regola:
+
+> **Se almeno una azione del chunk corrente ha `ripeti=True`, l'intero
+> chunk viene ripetuto** (fino a cambio step in RAM o task done).
+
+Questa regola permette tre scenari principali:
+
+#### Scenario 1: task con singola azione (wiring), senza cooldown
+
+```
+[X] wiring (ripeti)
+```
+Il bot ripete il wiring finche' la RAM segnala che la task e' done.
+
+#### Scenario 2: task con singola fase a multi-azioni, una sola marcata
+
+```
+[ ] click "apri pannello"
+[X] wiring (ripeti)
+[ ] click "conferma"
+```
+Avendo l'intero blocco (chunk 0) almeno un'azione con ripeti, viene
+ripetuto tutto in loop. Per separarlo, usa cooldown.
+
+#### Scenario 3: task multi-fase, solo una fase da ripetere
+
+```
+[ ] click "apri pannello"
+[ ] cooldown 1s              <- fine fase 0
+[ ] click "intermezzo"
+[X] wiring (ripeti)          <- nella fase 1
+[ ] cooldown 1s              <- fine fase 1
+[ ] click "conferma"
+```
+Solo la fase 1 viene ripetuta. Le fasi 0 e 2 vengono eseguite una
+volta sola.
+
+### Test funzionali
+
+3/3 scenari testati e passanti:
+
+1. wiring solitario con ripeti=True -> _fase_corrente_e_ripeti = True
+2. Chunk con piu' azioni di cui una sola con ripeti -> True
+3. 3 fasi separate da cooldown, solo fase 1 con azione ripeti:
+   - step=0 (fase 0): False
+   - step=1 (fase 1): True
+   - step=2 (fase 2): False
+   - step=2 (fase 1 appena finita), RAM ferma: True (RIPETI)
+
+### File toccati
+
+- `among_us_ai/ui/editor_mixins/list_panel.py`: checkbox + label "[Ripeti]"
+  ora su tutte le righe della lista azioni (non solo cooldown).
+- `among_us_ai/ui/mixins/tasks_process.py`: `_fase_corrente_e_ripeti`
+  e `_fase_da_ripetere` ora cercano `ripeti=True` su QUALUNQUE azione
+  del chunk, non solo sul cooldown.
+
+### Retro-compatibilita'
+
+Le task gia' configurate con `cooldown.ripeti=True` (v2.2.1+v2.2.2)
+continuano a funzionare: l'algoritmo include il cooldown nel suo
+chunk precedente quando ha ripeti=True, e quindi l'`any(ripeti)`
+del chunk lo rileva correttamente.
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Subprocess: completamente invariato
+- Schema JSON: invariato (campo `ripeti` su qualsiasi azione)
+
+
 ## v2.2.2 — Visibilita' della checkbox 'Ripeti fase'
 
 In v2.2.1 la checkbox 'Ripeti fase' era stata posizionata a fine riga
