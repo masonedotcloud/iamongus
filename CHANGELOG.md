@@ -1,5 +1,120 @@
 # Changelog
 
+## v2.2.4 — Fix critici: `ripeti` funziona anche con exit code 1, e fix esegui_azioni return
+
+### Bug 1 — esegui_azioni ritorna None invece di True
+
+Sintomo nei log dell'utente:
+```
+[Fix Wiring] Completata: None
+[Fix Wiring] Teardown completato.
+[Loop guard] Task non completata in RAM - cooldown di sicurezza 8s
+[Exec] 'Fix Wiring' terminata - exit code 1
+```
+
+#### Causa
+
+`esegui_azioni()` nel dispatcher non aveva un `return True` esplicito
+alla fine. Quando l'esecuzione finiva normalmente (senza errori),
+Python ritornava `None`. Il lifecycle interpretava poi `not None` =
+True -> `sys.exit(1)` -> falso errore.
+
+#### Fix
+
+In `_motore_pkg/dispatcher.py`, aggiunto `return True` esplicito alla
+fine di `esegui_azioni`:
+
+```python
+if not is_test and current_step < len(cooldowns):
+    print(f"__COOLDOWN__:{cooldowns[current_step]}", flush=True)
+
+return True   # <-- mancava questa riga
+```
+
+### Bug 2 — La logica `ripeti` non scattava con exit code 1
+
+Anche prima del fix #1, la logica "ripeti fase" funzionava SOLO se
+`ret == 0`. Quando il subprocess terminava con `ret == 1` (per
+qualunque motivo: bot non centra il bersaglio, minigioco non si
+apre, exception nel motore, ecc.), il flusso saltava la logica
+ripeti e applicava direttamente il "cooldown di sicurezza 8s".
+
+Risultato: anche con la checkbox "Ripeti" attiva, una task fallita
+non veniva rilanciata.
+
+#### Fix
+
+Sostituito `_fase_da_ripetere(task)` con `_fase_da_ripetere_ext(task, ret)`
+che si basa SOLO sui dati RAM (non sull'exit code). La fase viene
+ripetuta se:
+
+1. Almeno una azione del chunk corrente ha `ripeti=True`
+2. **E** la task NON risulta veramente finita in RAM
+
+"Task veramente finita" = uno qualsiasi di questi 3 segnali (incrocio
+RAM/nome/cambiamento):
+
+- **Segnale A**: task `done` in RAM (step >= mstep)
+- **Segnale B**: task **scomparsa** dalla lista RAM
+  (= il gioco l'ha completata e rimossa)
+- **Segnale C**: step in RAM avanzato oltre lo step interno
+  (= la fase successiva sta gia' partendo)
+
+Se nessuno dei 3 segnali e' attivo, ma la fase ha `ripeti=True`,
+**il bot rilancia il subprocess**, indipendentemente dall'exit code.
+
+### Esempio: il caso Fix Wiring dell'utente
+
+Prima:
+```
+[Fix Wiring] Completata: None
+[Fix Wiring] Teardown completato.
+[Loop guard] Task non completata in RAM - cooldown di sicurezza 8s
+[Exec] 'Fix Wiring' terminata - exit code 1
+```
+(Il bot si fermava per 8s e poi NON rilanciava perche' la logica ripeti
+non scattava su ret=1.)
+
+Dopo:
+```
+[Fix Wiring] Completata: True
+[Fix Wiring] Teardown completato.
+[Ripeti] Fase con ripeti=True, RAM dice non finita. Rilancio.
+[Exec] avvio subprocess Fix Wiring (step=0)
+[Fix Wiring] Esecuzione...
+... continua il loop finche' la RAM segnala la task come finita
+```
+
+### Test funzionali (6/6 passati)
+
+| # | exit code | RAM | Ripeti? | Risultato |
+|---|-----------|-----|---------|-----------|
+| 1 | 1         | task presente, non done | si | RILANCIA |
+| 2 | 1         | task done=True | si | STOP |
+| 3 | 1         | task scomparsa | si | STOP |
+| 4 | 1         | step avanzato | si | STOP |
+| 5 | 0         | task non done | si | RILANCIA |
+| 6 | 1         | task non done | NO | STOP |
+
+### File toccati
+
+- `among_us_ai/execution/_motore_pkg/dispatcher.py`: aggiunto
+  `return True` esplicito a fine `esegui_azioni`. Questo fix viene
+  copiato automaticamente in `tasks_exec/_motore/dispatcher.py` al
+  prossimo salvataggio task.
+- `among_us_ai/ui/mixins/tasks_process.py`:
+  - rimosso il check `if ret == 0` prima della logica ripeti
+  - aggiunto nuovo helper `_fase_da_ripetere_ext(task, ret)` con
+    incrocio dei 3 segnali RAM (done, scomparsa, step avanzato)
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Schema JSON delle task: invariato
+- I cooldown di sicurezza per task SENZA ripeti continuano a
+  funzionare come prima (Loop guard 8s)
+
+
 ## v2.2.3 — Checkbox 'Ripeti' su tutte le azioni (non solo cooldown)
 
 L'utente ha chiarito che la checkbox "Ripeti" deve essere disponibile
