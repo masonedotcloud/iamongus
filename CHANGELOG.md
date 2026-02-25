@@ -1,5 +1,99 @@
 # Changelog
 
+## v2.2.5 — Fix critico: 'ripeti' funziona anche per task con UNA SOLA fase
+
+### Bug
+
+Sintomo nei log dell'utente:
+```
+[Fix Wiring] [Fix Wiring] Completata: True
+[Fix Wiring] [Fix Wiring] Teardown completato.
+[Loop guard] Task non completata in RAM - cooldown di sicurezza 8s
+[Exec] 'Fix Wiring' terminata - exit code 0
+```
+
+La task era una singola azione `wiring` con `ripeti=True`, **senza
+cooldown**. Quando il subprocess finiva, il bot applicava il cooldown
+di sicurezza 8s INVECE di rilanciare la fase.
+
+### Causa
+
+`task_internal_steps[id]` viene incrementato solo quando il subprocess
+printa `__COOLDOWN__:` (cioe' alla fine di un chunk separato da
+cooldown). Per task con singola fase senza cooldown, lo step resta
+sempre a 0.
+
+La logica `_fase_da_ripetere_ext` aveva:
+
+```python
+if internal_step == 0:
+    return False  # "nessun chunk eseguito"
+```
+
+Sbagliato! Per task con singola fase, internal_step=0 NON significa
+"nessun chunk eseguito": significa "il chunk 0 (l'unico) e' appena
+finito".
+
+Inoltre il check `if ram_step >= internal_step` con singola fase
+diventava `if ram_step >= 0` -> sempre vero -> blocca sempre.
+
+### Fix
+
+1. Differenzio il caso "singola fase" dal caso "multi-fase":
+   ```python
+   if len(chunks) == 1:
+       idx_fase = 0  # singola fase: e' quella appena finita
+   elif internal_step == 0:
+       return False  # multi-fase ma nessuno step ancora
+   else:
+       idx_fase = internal_step - 1  # multi-fase
+   ```
+
+2. Sostituisco il check `ram_step >= internal_step` con
+   `ram_step >= idx_fase + 1` (= "il gioco ha riconosciuto il
+   completamento della fase appena eseguita"):
+   ```python
+   soglia = idx_fase + 1
+   if ram_step >= soglia:
+       return False  # fase riconosciuta come fatta
+   ```
+
+### Comportamento corretto adesso
+
+```
+[Fix Wiring] Completata: True
+[Fix Wiring] Teardown completato.
+[Ripeti] Fase con ripeti=True, RAM dice non finita. Rilancio.
+[Exec] avvio subprocess Fix Wiring (step=0)
+... loop finche' la RAM avanza o segnala done
+```
+
+### Test funzionali (9/9 passati)
+
+| Scenario | atteso |
+|---|---|
+| Singolo wiring ripeti, RAM non riconosciuta | RILANCIA |
+| Singolo wiring ripeti, RAM done | STOP |
+| Singolo wiring ripeti, RAM avanzata 1/1 | STOP |
+| Singolo wiring ripeti, task scomparsa | STOP |
+| Caso reale: ret=0, ripeti=True, RAM 0/1 | RILANCIA |
+| Singolo wiring SENZA ripeti | STOP |
+| Multi-fase: fase 0 (no ripeti) finita | STOP |
+| Multi-fase: fase 1 (ripeti) finita, RAM 1/2 | RILANCIA |
+| Multi-fase: fase 1 finita, RAM 2/2 | STOP |
+
+### File toccati
+
+- `among_us_ai/ui/mixins/tasks_process.py`: corretta la logica di
+  `_fase_da_ripetere_ext` per gestire task con singola fase.
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Schema JSON delle task: invariato
+- Comportamento per task multi-fase: invariato (gia' funzionava)
+
+
 ## v2.2.4 — Fix critici: `ripeti` funziona anche con exit code 1, e fix esegui_azioni return
 
 ### Bug 1 — esegui_azioni ritorna None invece di True
