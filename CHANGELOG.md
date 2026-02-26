@@ -1,5 +1,116 @@
 # Changelog
 
+## v2.2.7 — Limite tentativi ripetizione + ESC fallback
+
+### Bug riportato
+
+> Vorrei che nella lista delle azioni, ripeti le N azioni della fase
+> finche' non rilevi il successo. Per le task multifase, capisci
+> incrociando lo step in RAM. Voglio anche un campo "max tentativi"
+> per fase, e se non ci riesce in N tentativi premi ESC.
+
+### Stato pre-fix
+
+La logica "ripeti finche' la RAM non avanza" era gia' presente in
+`_fase_da_ripetere_ext`. Funzionava cosi':
+
+- Per ogni azione c'e' una checkbox "[Ripeti]" nell'editor.
+- A fine subprocess, il sistema controlla 3 segnali RAM:
+  1. Task scomparsa dalla lista RAM -> finita
+  2. Task done in RAM (step == mstep) -> finita
+  3. Step in RAM avanzato oltre la fase corrente -> finita
+- Se TUTTI dicono "non finita" e c'e' almeno un'azione con `ripeti=True`
+  nel chunk corrente -> rilancia il subprocess.
+
+**Mancava:** un limite ai tentativi. Una task che non riesce mai
+a soddisfare la RAM avrebbe ripetuto all'infinito.
+
+### Fix
+
+#### 1. Counter tentativi per fase
+
+Nuovo dict `self.task_retry_counts: { id_task: { idx_fase: n } }` in
+``app.py``. Tracciato per ogni coppia (task, fase).
+
+Il counter viene **resettato** quando:
+- La RAM segnala "task done"
+- La RAM segnala "task scomparsa"
+- La RAM segnala "step avanzato oltre la fase corrente"
+- Si raggiunge il limite max_tentativi (per ricominciare pulito al
+  prossimo lancio)
+
+#### 2. Campo "max_tentativi" per fase
+
+Letto dal JSON dell'azione (campo `max_tentativi`, default 5).
+Si applica al chunk: la prima azione del chunk con il campo settato
+determina il limite per tutta la fase.
+
+Quando il counter raggiunge il limite:
+- Il sistema preme **ESC** (per chiudere il minigioco aperto)
+- Il counter viene azzerato
+- `_fase_da_ripetere_ext` ritorna False -> la task viene
+  considerata "abbandonata"
+- Il sistema procede con la task successiva
+
+#### 3. UI: campo "Max:" accanto al [Ripeti]
+
+Nella lista azioni dell'editor, quando un'azione ha [Ripeti] attivo,
+appare un input numerico "Max: [5]" subito dopo. Modificarlo salva
+automaticamente nel JSON (idempotente).
+
+#### 4. Helper `_premi_esc`
+
+Nuovo metodo che invia il tasto ESC tramite pyautogui per chiudere
+finestre/minigiochi aperti. Usato come "uscita di sicurezza" quando
+i tentativi sono esauriti.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/app.py` | aggiunto `task_retry_counts = {}` |
+| `among_us_ai/ui/mixins/tasks_process.py` | logica counter + ESC + helpers |
+| `among_us_ai/ui/mixins/memory_sync.py` | reset counter quando task done in RAM |
+| `among_us_ai/ui/editor_mixins/list_panel.py` | campo "Max:" accanto a [Ripeti] |
+
+### Esempio: Swipe Card in Admin
+
+Ora puoi configurare:
+
+```
+Azioni:
+  1. [Ripeti X] click_poly su carta       D:0.0s P:0.5s [Ripeti] Max: 5
+  2. cooldown                              D:0.5s
+  3. [Ripeti X] drag_zone (slide cursore)  D:0.5s P:0.0s [Ripeti] Max: 5
+```
+
+Comportamento:
+- Fase 0 (click): se la RAM non rileva il pickup della carta dopo
+  5 tentativi -> ESC + abbandona task
+- Fase 1 (slide): se la RAM non rileva la swipe completata dopo
+  5 tentativi -> ESC + abbandona task
+- Se in qualunque momento la RAM avanza, il counter si resetta e
+  la fase passa.
+
+### Scrollbar orizzontale (gia' presente)
+
+La scrollbar orizzontale della barra azioni esisteva gia' in v2.1.x,
+sia per la colonna controlli sia per la lista azioni. Non serve
+modificarla.
+
+### Verifica fatta
+
+Test simulazione con max_tentativi=3:
+- Tentativo 1: counter 1/3 -> ripete (return True)
+- Tentativo 2: counter 2/3 -> ripete (return True)
+- Tentativo 3: limite raggiunto -> ESC + counter resettato + return False
+- Tentativo 4 (nuova sessione): counter ricomincia da 1/3
+
+Test "RAM avanza durante i tentativi":
+- Tentativo 1: counter 1, RAM ferma -> ripete
+- Tentativo 2: RAM avanzata -> counter resettato, return False (fase passata)
+
+
 ## v2.2.6 — Salvataggio automatico checkbox 'Ripeti' + log debug
 
 ### Bug
