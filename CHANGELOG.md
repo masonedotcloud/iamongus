@@ -1,5 +1,78 @@
 # Changelog
 
+## v2.2.6 — Salvataggio automatico checkbox 'Ripeti' + log debug
+
+### Bug
+
+L'utente ha riportato che il bot continuava ad applicare il
+"cooldown di sicurezza 8s" invece di rilanciare:
+```
+[Fix Wiring] [Fix Wiring] Teardown completato.
+[Loop guard] Task non completata in RAM - cooldown di sicurezza 8s
+[Exec] 'Fix Wiring' terminata - exit code 0
+```
+
+### Causa
+
+Quando l'utente cliccava la checkbox "Ripeti" nell'editor delle
+azioni, il flag veniva aggiornato SOLO in memoria (`self.azioni`).
+Per persistere su disco, l'utente doveva poi cliccare "Salva azioni".
+
+Se l'utente lanciava la task SENZA salvare prima:
+- in memoria: `azione.ripeti = True`
+- su disco (JSON): `ripeti` ancora assente
+- a runtime, il bot leggeva il JSON -> trovava `ripeti=False` -> non
+  rilanciava
+
+### Fix
+
+1. **Salvataggio automatico al click della checkbox**: la callback
+   ora chiama subito `task_mgr.imposta_azioni(...)` per persistere
+   il flag su disco. Niente piu' bisogno di cliccare "Salva azioni"
+   prima di lanciare.
+
+2. **Log di debug** in `_fase_da_ripetere_ext`: a ogni decisione il
+   bot stampa quante azioni ci sono, quante hanno ripeti, e perche'
+   ha deciso di ripetere o no. Esempio:
+   ```
+   [Ripeti DEBUG] Task 'Fix Wiring': 1 azioni, 1 con ripeti=True (src_id=54)
+   [Ripeti] Fase con ripeti=True, RAM dice non finita. Rilancio.
+   ```
+   In caso di problemi, il log dice esattamente cosa sta succedendo.
+
+3. **Fallback per task figlie**: se la figlia ha azioni proprie
+   con ripeti=True ma `get_azioni_effettive` ritorna le azioni del
+   padre (senza ripeti), il sistema preferisce le azioni proprie
+   della figlia. Cosi' l'utente puo' personalizzare "ripeti" su una
+   figlia anche se eredita le azioni dal padre.
+
+### Modifiche al codice
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/editor_mixins/list_panel.py` | callback `make_toggle_ripeti` ora chiama `task_mgr.imposta_azioni()` per salvataggio immediato |
+| `among_us_ai/ui/mixins/tasks_process.py` | log di debug + fallback per task figlie |
+
+### Cosa fare se ancora non funziona
+
+Se nonostante il fix il rilancio non parte, i log di debug aiuteranno
+a capire cosa sta succedendo:
+
+- `[Ripeti DEBUG] Task '...': N azioni, 0 con ripeti=True` ->
+  significa che il flag NON e' salvato sul JSON. Riapri l'editor,
+  ricliccalo, e dovresti vedere `(salvato)` nei log.
+- `[Ripeti DEBUG] Task '...': N azioni, K con ripeti=True` MA
+  `[Ripeti] Task '...': fase X NON ha ripeti=True` -> significa
+  che il flag e' su una fase diversa da quella corrente. Verifica
+  l'ordine delle azioni e i cooldown di separazione.
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Schema JSON delle task: invariato
+- Tutto il resto del codice: invariato
+
+
 ## v2.2.5 — Fix critico: 'ripeti' funziona anche per task con UNA SOLA fase
 
 ### Bug
