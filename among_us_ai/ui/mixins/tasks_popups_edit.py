@@ -293,16 +293,28 @@ class TasksPopupsEditMixin:
                 self._apri_popup_modifica_task(task=self.task_mgr.get_by_id(id_t))
 
             with dpg.group(horizontal=True):
-                with dpg.child_window(width=210, height=110):
+                # Lista fasi della task. `horizontal_scrollbar=True`
+                # permette di leggere nomi di fase troppo lunghi senza
+                # troncamento.
+                with dpg.child_window(width=320, height=140,
+                                      horizontal_scrollbar=True):
                     fasi = t.get('fasi', [])
                     dpg.add_text(f"Fasi ({len(fasi)}):", color=Colors.TEXT_DIM)
+                    dpg.add_text(
+                        "Per marcare una fase come 'ripeti', usa l'editor azioni.",
+                        color=Colors.TEXT_DIM, wrap=300,
+                    )
+                    dpg.add_separator()
                     for i, f in enumerate(fasi):
                         with dpg.group(horizontal=True):
                             dpg.add_button(label="X", user_data=i, callback=delete_fase)
-                            dpg.add_text(f"[{i}] {f['nome'][:12]}..")
-                with dpg.child_window(width=210, height=110):
+                            # Nome della fase senza troncamento
+                            dpg.add_text(f"[{i}] {f['nome']}")
+                with dpg.child_window(width=210, height=140,
+                                      horizontal_scrollbar=True):
                     alternativi = t.get('alternativi', [])
                     dpg.add_text(f"Alternativi ({len(alternativi)}):", color=Colors.TEXT_DIM)
+                    dpg.add_separator()
                     for i, fr in enumerate(alternativi):
                         with dpg.group(horizontal=True):
                             dpg.add_button(label="X", user_data=i, callback=delete_alternativo)

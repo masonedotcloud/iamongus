@@ -10,7 +10,20 @@ from ._imports import *
 class EditorListPanelMixin:
     """Mixin con i metodi di editor list panel di GPSVisualizerPro."""
     def aggiorna_lista(self):
-        """Aggiorna la listbox delle azioni nel pannello laterale dell'editor."""
+        """
+        Aggiorna la listbox delle azioni nel pannello laterale dell'editor.
+
+        Per ogni azione mostra:
+        - numero progressivo + descrizione
+        - frecce su/giu' per riordinare
+        - X per eliminare
+        - timing (durata, hold, attesa)
+
+        Per le azioni di tipo 'cooldown' aggiunge una checkbox '[Ripeti]':
+        quando spuntata, il bot ripete in loop le azioni della fase
+        (= il chunk di azioni che termina con questo cooldown) finche'
+        la RAM non segnala l'avanzamento di step o la task come done.
+        """
         # Verifica se l'elemento DPG e' gia' stato creato
         if not dpg.does_item_exist(self.TAG_LIST):
             return
@@ -21,6 +34,51 @@ class EditorListPanelMixin:
             col_testo = (255, 255, 0) if sel else (255, 255, 255)
             prefix    = "> " if sel else "  "
             with dpg.group(horizontal=True, parent=self.TAG_LIST):
+
+                # Checkbox "Ripeti fase" disponibile per OGNI azione.
+                # Quando spuntata su un'azione, segnala al runtime che
+                # questa azione fa parte di una fase da ripetere fino a
+                # quando la RAM rileva il cambio di step (vedi
+                # tasks_process.py::_fase_da_ripetere).
+                #
+                # NB: a runtime il flag viene letto come parte della
+                # "fase corrente" (il chunk di azioni tra due cooldown).
+                # Se almeno una azione del chunk ha ripeti=True, il
+                # chunk intero viene ripetuto.
+                chk_tag = f"editor_ripeti_chk_{i}"
+
+                # Costruisco il callback con closure sull'indice.
+                # Quando l'utente spunta la checkbox:
+                # 1) salvo il flag direttamente sull'azione in memoria
+                # 2) **SALVO AUTOMATICAMENTE su disco** tramite task_mgr,
+                #    cosi' la modifica e' subito persistente (non serve
+                #    cliccare "Salva azioni" prima di lanciare la task).
+                # 3) ricreo la lista per aggiornare il colore della
+                #    label "[Ripeti]"
+                def make_toggle_ripeti(idx):
+                    def cb(s, app_data, u):
+                        self.azioni[idx]['ripeti'] = bool(app_data)
+                        # Salvataggio automatico (idempotente, e' solo un
+                        # update del JSON della task)
+                        try:
+                            if hasattr(self, 'task_mgr') and self.task_mgr:
+                                self.task_mgr.imposta_azioni(
+                                    self.id_task, self.azioni,
+                                )
+                                print(f"[Editor] 'Ripeti' azione {idx+1}: "
+                                      f"{bool(app_data)} (salvato)")
+                        except Exception as e:
+                            print(f"[Editor] Errore salvataggio ripeti: {e}")
+                        self.aggiorna_lista()
+                    return cb
+
+                dpg.add_checkbox(
+                    tag=chk_tag,
+                    label="",   # senza label inline (la mettiamo a destra)
+                    default_value=bool(a.get('ripeti', False)),
+                    callback=make_toggle_ripeti(i),
+                )
+
                 dpg.add_text(f"{prefix}{i+1}. {self._descr_azione(a)}",
                              color=col_testo)
                 dpg.add_button(label="^", user_data=i, callback=self._sposta_su, width=22)
@@ -31,6 +89,45 @@ class EditorListPanelMixin:
                           if a.get("tipo") == "drag_hold" else "")
                        + f" P:{a.get('attesa',0):.2f}s")
                 dpg.add_text(_ts, color=(100, 200, 255))
+
+                # Etichetta "[Ripeti]" a destra del timing, colorata in
+                # base allo stato della checkbox: giallo = attiva,
+                # grigio = inattiva. Aiuta visivamente a vedere quali
+                # azioni sono incluse nelle fasi da ripetere.
+                label_col = (255, 200, 0) if a.get('ripeti') else (150, 150, 150)
+                dpg.add_text("[Ripeti]", color=label_col)
+
+                # Campo "Max tentativi": visibile solo quando ripeti=True.
+                # Limite di sicurezza dei riprovi. Quando il bot raggiunge
+                # questo numero senza che la RAM rilevi avanzamento, preme
+                # ESC e abbandona la task (per non bloccare il gioco).
+                # Default: 5.
+                if a.get('ripeti'):
+                    max_tag = f"editor_max_tent_{i}"
+
+                    def make_set_max(idx):
+                        def cb(s, app_data, u):
+                            try:
+                                self.azioni[idx]['max_tentativi'] = max(1, int(app_data))
+                                if hasattr(self, 'task_mgr') and self.task_mgr:
+                                    self.task_mgr.imposta_azioni(
+                                        self.id_task, self.azioni,
+                                    )
+                            except Exception as e:
+                                print(f"[Editor] Errore salvataggio max_tentativi: {e}")
+                        return cb
+
+                    dpg.add_text("Max:", color=(180, 180, 180))
+                    dpg.add_input_int(
+                        tag=max_tag,
+                        default_value=int(a.get('max_tentativi', 5)),
+                        width=60,
+                        min_value=1,
+                        max_value=99,
+                        min_clamped=True,
+                        max_clamped=True,
+                        callback=make_set_max(i),
+                    )
 
     def _sposta_su(self, sender, app_data, user_data):
         """Sposta su."""

@@ -1,5 +1,754 @@
 # Changelog
 
+## v2.2.7 — Limite tentativi ripetizione + ESC fallback
+
+### Bug riportato
+
+> Vorrei che nella lista delle azioni, ripeti le N azioni della fase
+> finche' non rilevi il successo. Per le task multifase, capisci
+> incrociando lo step in RAM. Voglio anche un campo "max tentativi"
+> per fase, e se non ci riesce in N tentativi premi ESC.
+
+### Stato pre-fix
+
+La logica "ripeti finche' la RAM non avanza" era gia' presente in
+`_fase_da_ripetere_ext`. Funzionava cosi':
+
+- Per ogni azione c'e' una checkbox "[Ripeti]" nell'editor.
+- A fine subprocess, il sistema controlla 3 segnali RAM:
+  1. Task scomparsa dalla lista RAM -> finita
+  2. Task done in RAM (step == mstep) -> finita
+  3. Step in RAM avanzato oltre la fase corrente -> finita
+- Se TUTTI dicono "non finita" e c'e' almeno un'azione con `ripeti=True`
+  nel chunk corrente -> rilancia il subprocess.
+
+**Mancava:** un limite ai tentativi. Una task che non riesce mai
+a soddisfare la RAM avrebbe ripetuto all'infinito.
+
+### Fix
+
+#### 1. Counter tentativi per fase
+
+Nuovo dict `self.task_retry_counts: { id_task: { idx_fase: n } }` in
+``app.py``. Tracciato per ogni coppia (task, fase).
+
+Il counter viene **resettato** quando:
+- La RAM segnala "task done"
+- La RAM segnala "task scomparsa"
+- La RAM segnala "step avanzato oltre la fase corrente"
+- Si raggiunge il limite max_tentativi (per ricominciare pulito al
+  prossimo lancio)
+
+#### 2. Campo "max_tentativi" per fase
+
+Letto dal JSON dell'azione (campo `max_tentativi`, default 5).
+Si applica al chunk: la prima azione del chunk con il campo settato
+determina il limite per tutta la fase.
+
+Quando il counter raggiunge il limite:
+- Il sistema preme **ESC** (per chiudere il minigioco aperto)
+- Il counter viene azzerato
+- `_fase_da_ripetere_ext` ritorna False -> la task viene
+  considerata "abbandonata"
+- Il sistema procede con la task successiva
+
+#### 3. UI: campo "Max:" accanto al [Ripeti]
+
+Nella lista azioni dell'editor, quando un'azione ha [Ripeti] attivo,
+appare un input numerico "Max: [5]" subito dopo. Modificarlo salva
+automaticamente nel JSON (idempotente).
+
+#### 4. Helper `_premi_esc`
+
+Nuovo metodo che invia il tasto ESC tramite pyautogui per chiudere
+finestre/minigiochi aperti. Usato come "uscita di sicurezza" quando
+i tentativi sono esauriti.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/app.py` | aggiunto `task_retry_counts = {}` |
+| `among_us_ai/ui/mixins/tasks_process.py` | logica counter + ESC + helpers |
+| `among_us_ai/ui/mixins/memory_sync.py` | reset counter quando task done in RAM |
+| `among_us_ai/ui/editor_mixins/list_panel.py` | campo "Max:" accanto a [Ripeti] |
+
+### Esempio: Swipe Card in Admin
+
+Ora puoi configurare:
+
+```
+Azioni:
+  1. [Ripeti X] click_poly su carta       D:0.0s P:0.5s [Ripeti] Max: 5
+  2. cooldown                              D:0.5s
+  3. [Ripeti X] drag_zone (slide cursore)  D:0.5s P:0.0s [Ripeti] Max: 5
+```
+
+Comportamento:
+- Fase 0 (click): se la RAM non rileva il pickup della carta dopo
+  5 tentativi -> ESC + abbandona task
+- Fase 1 (slide): se la RAM non rileva la swipe completata dopo
+  5 tentativi -> ESC + abbandona task
+- Se in qualunque momento la RAM avanza, il counter si resetta e
+  la fase passa.
+
+### Scrollbar orizzontale (gia' presente)
+
+La scrollbar orizzontale della barra azioni esisteva gia' in v2.1.x,
+sia per la colonna controlli sia per la lista azioni. Non serve
+modificarla.
+
+### Verifica fatta
+
+Test simulazione con max_tentativi=3:
+- Tentativo 1: counter 1/3 -> ripete (return True)
+- Tentativo 2: counter 2/3 -> ripete (return True)
+- Tentativo 3: limite raggiunto -> ESC + counter resettato + return False
+- Tentativo 4 (nuova sessione): counter ricomincia da 1/3
+
+Test "RAM avanza durante i tentativi":
+- Tentativo 1: counter 1, RAM ferma -> ripete
+- Tentativo 2: RAM avanzata -> counter resettato, return False (fase passata)
+
+
+## v2.2.6 — Salvataggio automatico checkbox 'Ripeti' + log debug
+
+### Bug
+
+L'utente ha riportato che il bot continuava ad applicare il
+"cooldown di sicurezza 8s" invece di rilanciare:
+```
+[Fix Wiring] [Fix Wiring] Teardown completato.
+[Loop guard] Task non completata in RAM - cooldown di sicurezza 8s
+[Exec] 'Fix Wiring' terminata - exit code 0
+```
+
+### Causa
+
+Quando l'utente cliccava la checkbox "Ripeti" nell'editor delle
+azioni, il flag veniva aggiornato SOLO in memoria (`self.azioni`).
+Per persistere su disco, l'utente doveva poi cliccare "Salva azioni".
+
+Se l'utente lanciava la task SENZA salvare prima:
+- in memoria: `azione.ripeti = True`
+- su disco (JSON): `ripeti` ancora assente
+- a runtime, il bot leggeva il JSON -> trovava `ripeti=False` -> non
+  rilanciava
+
+### Fix
+
+1. **Salvataggio automatico al click della checkbox**: la callback
+   ora chiama subito `task_mgr.imposta_azioni(...)` per persistere
+   il flag su disco. Niente piu' bisogno di cliccare "Salva azioni"
+   prima di lanciare.
+
+2. **Log di debug** in `_fase_da_ripetere_ext`: a ogni decisione il
+   bot stampa quante azioni ci sono, quante hanno ripeti, e perche'
+   ha deciso di ripetere o no. Esempio:
+   ```
+   [Ripeti DEBUG] Task 'Fix Wiring': 1 azioni, 1 con ripeti=True (src_id=54)
+   [Ripeti] Fase con ripeti=True, RAM dice non finita. Rilancio.
+   ```
+   In caso di problemi, il log dice esattamente cosa sta succedendo.
+
+3. **Fallback per task figlie**: se la figlia ha azioni proprie
+   con ripeti=True ma `get_azioni_effettive` ritorna le azioni del
+   padre (senza ripeti), il sistema preferisce le azioni proprie
+   della figlia. Cosi' l'utente puo' personalizzare "ripeti" su una
+   figlia anche se eredita le azioni dal padre.
+
+### Modifiche al codice
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/editor_mixins/list_panel.py` | callback `make_toggle_ripeti` ora chiama `task_mgr.imposta_azioni()` per salvataggio immediato |
+| `among_us_ai/ui/mixins/tasks_process.py` | log di debug + fallback per task figlie |
+
+### Cosa fare se ancora non funziona
+
+Se nonostante il fix il rilancio non parte, i log di debug aiuteranno
+a capire cosa sta succedendo:
+
+- `[Ripeti DEBUG] Task '...': N azioni, 0 con ripeti=True` ->
+  significa che il flag NON e' salvato sul JSON. Riapri l'editor,
+  ricliccalo, e dovresti vedere `(salvato)` nei log.
+- `[Ripeti DEBUG] Task '...': N azioni, K con ripeti=True` MA
+  `[Ripeti] Task '...': fase X NON ha ripeti=True` -> significa
+  che il flag e' su una fase diversa da quella corrente. Verifica
+  l'ordine delle azioni e i cooldown di separazione.
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Schema JSON delle task: invariato
+- Tutto il resto del codice: invariato
+
+
+## v2.2.5 — Fix critico: 'ripeti' funziona anche per task con UNA SOLA fase
+
+### Bug
+
+Sintomo nei log dell'utente:
+```
+[Fix Wiring] [Fix Wiring] Completata: True
+[Fix Wiring] [Fix Wiring] Teardown completato.
+[Loop guard] Task non completata in RAM - cooldown di sicurezza 8s
+[Exec] 'Fix Wiring' terminata - exit code 0
+```
+
+La task era una singola azione `wiring` con `ripeti=True`, **senza
+cooldown**. Quando il subprocess finiva, il bot applicava il cooldown
+di sicurezza 8s INVECE di rilanciare la fase.
+
+### Causa
+
+`task_internal_steps[id]` viene incrementato solo quando il subprocess
+printa `__COOLDOWN__:` (cioe' alla fine di un chunk separato da
+cooldown). Per task con singola fase senza cooldown, lo step resta
+sempre a 0.
+
+La logica `_fase_da_ripetere_ext` aveva:
+
+```python
+if internal_step == 0:
+    return False  # "nessun chunk eseguito"
+```
+
+Sbagliato! Per task con singola fase, internal_step=0 NON significa
+"nessun chunk eseguito": significa "il chunk 0 (l'unico) e' appena
+finito".
+
+Inoltre il check `if ram_step >= internal_step` con singola fase
+diventava `if ram_step >= 0` -> sempre vero -> blocca sempre.
+
+### Fix
+
+1. Differenzio il caso "singola fase" dal caso "multi-fase":
+   ```python
+   if len(chunks) == 1:
+       idx_fase = 0  # singola fase: e' quella appena finita
+   elif internal_step == 0:
+       return False  # multi-fase ma nessuno step ancora
+   else:
+       idx_fase = internal_step - 1  # multi-fase
+   ```
+
+2. Sostituisco il check `ram_step >= internal_step` con
+   `ram_step >= idx_fase + 1` (= "il gioco ha riconosciuto il
+   completamento della fase appena eseguita"):
+   ```python
+   soglia = idx_fase + 1
+   if ram_step >= soglia:
+       return False  # fase riconosciuta come fatta
+   ```
+
+### Comportamento corretto adesso
+
+```
+[Fix Wiring] Completata: True
+[Fix Wiring] Teardown completato.
+[Ripeti] Fase con ripeti=True, RAM dice non finita. Rilancio.
+[Exec] avvio subprocess Fix Wiring (step=0)
+... loop finche' la RAM avanza o segnala done
+```
+
+### Test funzionali (9/9 passati)
+
+| Scenario | atteso |
+|---|---|
+| Singolo wiring ripeti, RAM non riconosciuta | RILANCIA |
+| Singolo wiring ripeti, RAM done | STOP |
+| Singolo wiring ripeti, RAM avanzata 1/1 | STOP |
+| Singolo wiring ripeti, task scomparsa | STOP |
+| Caso reale: ret=0, ripeti=True, RAM 0/1 | RILANCIA |
+| Singolo wiring SENZA ripeti | STOP |
+| Multi-fase: fase 0 (no ripeti) finita | STOP |
+| Multi-fase: fase 1 (ripeti) finita, RAM 1/2 | RILANCIA |
+| Multi-fase: fase 1 finita, RAM 2/2 | STOP |
+
+### File toccati
+
+- `among_us_ai/ui/mixins/tasks_process.py`: corretta la logica di
+  `_fase_da_ripetere_ext` per gestire task con singola fase.
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Schema JSON delle task: invariato
+- Comportamento per task multi-fase: invariato (gia' funzionava)
+
+
+## v2.2.4 — Fix critici: `ripeti` funziona anche con exit code 1, e fix esegui_azioni return
+
+### Bug 1 — esegui_azioni ritorna None invece di True
+
+Sintomo nei log dell'utente:
+```
+[Fix Wiring] Completata: None
+[Fix Wiring] Teardown completato.
+[Loop guard] Task non completata in RAM - cooldown di sicurezza 8s
+[Exec] 'Fix Wiring' terminata - exit code 1
+```
+
+#### Causa
+
+`esegui_azioni()` nel dispatcher non aveva un `return True` esplicito
+alla fine. Quando l'esecuzione finiva normalmente (senza errori),
+Python ritornava `None`. Il lifecycle interpretava poi `not None` =
+True -> `sys.exit(1)` -> falso errore.
+
+#### Fix
+
+In `_motore_pkg/dispatcher.py`, aggiunto `return True` esplicito alla
+fine di `esegui_azioni`:
+
+```python
+if not is_test and current_step < len(cooldowns):
+    print(f"__COOLDOWN__:{cooldowns[current_step]}", flush=True)
+
+return True   # <-- mancava questa riga
+```
+
+### Bug 2 — La logica `ripeti` non scattava con exit code 1
+
+Anche prima del fix #1, la logica "ripeti fase" funzionava SOLO se
+`ret == 0`. Quando il subprocess terminava con `ret == 1` (per
+qualunque motivo: bot non centra il bersaglio, minigioco non si
+apre, exception nel motore, ecc.), il flusso saltava la logica
+ripeti e applicava direttamente il "cooldown di sicurezza 8s".
+
+Risultato: anche con la checkbox "Ripeti" attiva, una task fallita
+non veniva rilanciata.
+
+#### Fix
+
+Sostituito `_fase_da_ripetere(task)` con `_fase_da_ripetere_ext(task, ret)`
+che si basa SOLO sui dati RAM (non sull'exit code). La fase viene
+ripetuta se:
+
+1. Almeno una azione del chunk corrente ha `ripeti=True`
+2. **E** la task NON risulta veramente finita in RAM
+
+"Task veramente finita" = uno qualsiasi di questi 3 segnali (incrocio
+RAM/nome/cambiamento):
+
+- **Segnale A**: task `done` in RAM (step >= mstep)
+- **Segnale B**: task **scomparsa** dalla lista RAM
+  (= il gioco l'ha completata e rimossa)
+- **Segnale C**: step in RAM avanzato oltre lo step interno
+  (= la fase successiva sta gia' partendo)
+
+Se nessuno dei 3 segnali e' attivo, ma la fase ha `ripeti=True`,
+**il bot rilancia il subprocess**, indipendentemente dall'exit code.
+
+### Esempio: il caso Fix Wiring dell'utente
+
+Prima:
+```
+[Fix Wiring] Completata: None
+[Fix Wiring] Teardown completato.
+[Loop guard] Task non completata in RAM - cooldown di sicurezza 8s
+[Exec] 'Fix Wiring' terminata - exit code 1
+```
+(Il bot si fermava per 8s e poi NON rilanciava perche' la logica ripeti
+non scattava su ret=1.)
+
+Dopo:
+```
+[Fix Wiring] Completata: True
+[Fix Wiring] Teardown completato.
+[Ripeti] Fase con ripeti=True, RAM dice non finita. Rilancio.
+[Exec] avvio subprocess Fix Wiring (step=0)
+[Fix Wiring] Esecuzione...
+... continua il loop finche' la RAM segnala la task come finita
+```
+
+### Test funzionali (6/6 passati)
+
+| # | exit code | RAM | Ripeti? | Risultato |
+|---|-----------|-----|---------|-----------|
+| 1 | 1         | task presente, non done | si | RILANCIA |
+| 2 | 1         | task done=True | si | STOP |
+| 3 | 1         | task scomparsa | si | STOP |
+| 4 | 1         | step avanzato | si | STOP |
+| 5 | 0         | task non done | si | RILANCIA |
+| 6 | 1         | task non done | NO | STOP |
+
+### File toccati
+
+- `among_us_ai/execution/_motore_pkg/dispatcher.py`: aggiunto
+  `return True` esplicito a fine `esegui_azioni`. Questo fix viene
+  copiato automaticamente in `tasks_exec/_motore/dispatcher.py` al
+  prossimo salvataggio task.
+- `among_us_ai/ui/mixins/tasks_process.py`:
+  - rimosso il check `if ret == 0` prima della logica ripeti
+  - aggiunto nuovo helper `_fase_da_ripetere_ext(task, ret)` con
+    incrocio dei 3 segnali RAM (done, scomparsa, step avanzato)
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Schema JSON delle task: invariato
+- I cooldown di sicurezza per task SENZA ripeti continuano a
+  funzionare come prima (Loop guard 8s)
+
+
+## v2.2.3 — Checkbox 'Ripeti' su tutte le azioni (non solo cooldown)
+
+L'utente ha chiarito che la checkbox "Ripeti" deve essere disponibile
+**per OGNI azione**, non solo per i cooldown. Questo permette anche di
+marcare singole azioni (es. un wiring senza cooldown finale) come
+"ripetere fino a cambio step in RAM".
+
+### Cambio nella UI
+
+Nell'editor delle azioni, sezione "5. LISTA AZIONI REGISTRATE", ogni
+riga ha ora:
+
+```
+[ ]  > 1. wiring (4 cavi + visore colore)   [^][v][X]   D:0.20s P:0.50s   [Ripeti]
+[X]  > 2. yolo_drag (model.pt)              [^][v][X]   D:0.30s P:0.20s   [Ripeti]
+[ ]  > 3. cooldown 70.0s                    [^][v][X]   D:70.00s P:0.00s  [Ripeti]
+```
+
+- **Checkbox a inizio riga**: sempre visibile (era il problema di
+  v2.2.1, dove finiva fuori area)
+- **Label "[Ripeti]" a destra**: indica visivamente lo stato.
+  Giallo se attivo, grigio se inattivo.
+
+### Logica runtime aggiornata
+
+Il flag `ripeti` viene letto da QUALUNQUE azione del chunk corrente,
+non solo dai cooldown. Regola:
+
+> **Se almeno una azione del chunk corrente ha `ripeti=True`, l'intero
+> chunk viene ripetuto** (fino a cambio step in RAM o task done).
+
+Questa regola permette tre scenari principali:
+
+#### Scenario 1: task con singola azione (wiring), senza cooldown
+
+```
+[X] wiring (ripeti)
+```
+Il bot ripete il wiring finche' la RAM segnala che la task e' done.
+
+#### Scenario 2: task con singola fase a multi-azioni, una sola marcata
+
+```
+[ ] click "apri pannello"
+[X] wiring (ripeti)
+[ ] click "conferma"
+```
+Avendo l'intero blocco (chunk 0) almeno un'azione con ripeti, viene
+ripetuto tutto in loop. Per separarlo, usa cooldown.
+
+#### Scenario 3: task multi-fase, solo una fase da ripetere
+
+```
+[ ] click "apri pannello"
+[ ] cooldown 1s              <- fine fase 0
+[ ] click "intermezzo"
+[X] wiring (ripeti)          <- nella fase 1
+[ ] cooldown 1s              <- fine fase 1
+[ ] click "conferma"
+```
+Solo la fase 1 viene ripetuta. Le fasi 0 e 2 vengono eseguite una
+volta sola.
+
+### Test funzionali
+
+3/3 scenari testati e passanti:
+
+1. wiring solitario con ripeti=True -> _fase_corrente_e_ripeti = True
+2. Chunk con piu' azioni di cui una sola con ripeti -> True
+3. 3 fasi separate da cooldown, solo fase 1 con azione ripeti:
+   - step=0 (fase 0): False
+   - step=1 (fase 1): True
+   - step=2 (fase 2): False
+   - step=2 (fase 1 appena finita), RAM ferma: True (RIPETI)
+
+### File toccati
+
+- `among_us_ai/ui/editor_mixins/list_panel.py`: checkbox + label "[Ripeti]"
+  ora su tutte le righe della lista azioni (non solo cooldown).
+- `among_us_ai/ui/mixins/tasks_process.py`: `_fase_corrente_e_ripeti`
+  e `_fase_da_ripetere` ora cercano `ripeti=True` su QUALUNQUE azione
+  del chunk, non solo sul cooldown.
+
+### Retro-compatibilita'
+
+Le task gia' configurate con `cooldown.ripeti=True` (v2.2.1+v2.2.2)
+continuano a funzionare: l'algoritmo include il cooldown nel suo
+chunk precedente quando ha ripeti=True, e quindi l'`any(ripeti)`
+del chunk lo rileva correttamente.
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Subprocess: completamente invariato
+- Schema JSON: invariato (campo `ripeti` su qualsiasi azione)
+
+
+## v2.2.2 — Visibilita' della checkbox 'Ripeti fase'
+
+In v2.2.1 la checkbox 'Ripeti fase' era stata posizionata a fine riga
+del cooldown nella lista azioni. **L'utente ha riportato che non la
+vedeva.**
+
+### Causa
+
+La lista azioni vive nella colonna sinistra dell'editor (width=420px).
+Una riga del cooldown contiene: testo descrizione + 3 bottoni
+(^v X) + testo timing + checkbox + label. Per i cooldown lunghi
+(es. "COOLDOWN 70.0s"), il totale superava i 400px utili e la
+checkbox finiva fuori area visibile (tagliata a destra).
+
+### Fix
+
+Riorganizzato il layout della riga cooldown:
+
+**Prima** (v2.2.1, invisibile):
+```
+> 3. COOLDOWN 70.0s   [^][v][X]   D:70.00s P:0.00s   [ ] Ripeti fase
+                                                       ^^^^^^^^^^^^^^^^
+                                                       fuori area visibile
+```
+
+**Dopo** (v2.2.2, sempre visibile):
+```
+[ ] > 3. COOLDOWN 70.0s   [^][v][X]   D:70.00s P:0.00s   [Ripeti fase]
+^^^                                                       ^^^^^^^^^^^^^
+checkbox a inizio riga                                    label colorata:
+                                                          - giallo se attivo
+                                                          - grigio se inattivo
+```
+
+Modifiche specifiche:
+1. **Checkbox a sinistra**: posizionata PRIMA della descrizione,
+   sempre visibile in qualsiasi larghezza di lista.
+2. **Label "Ripeti fase" a destra**: testo informativo che indica a
+   cosa serve la checkbox, con colore dinamico (giallo se la fase
+   e' marcata da ripetere, grigio altrimenti).
+3. La checkbox ha `label=""` per non duplicare il testo.
+
+Le righe delle azioni NON-cooldown restano invariate (la checkbox e
+la label appaiono SOLO sui cooldown).
+
+### File toccati
+
+- `among_us_ai/ui/editor_mixins/list_panel.py`: riordinato il layout
+  della riga del cooldown.
+
+### Cosa NON e' cambiato
+
+- Logica runtime: invariata (legge `azione.ripeti` dai cooldown)
+- Salvataggio JSON: invariato
+- Tutto il resto: invariato
+
+
+## v2.2.1 — Fix: checkbox 'ripeti' dove serve davvero (sull'azione cooldown)
+
+In v2.2.0 avevo messo la checkbox 'ripeti' nel posto sbagliato:
+nel popup di modifica della task (sulla lista delle fasi). L'utente
+ha chiarito che la voleva nell'**editor delle azioni**, perche' la
+selezione delle fasi da ripetere e' una scelta che si fa quando si
+mappano le azioni della task, non dalla scheda metadati.
+
+### Cambio di posizione della checkbox
+
+La checkbox "Ripeti fase" e' stata spostata:
+- **Prima** (v2.2.0, sbagliato): nel popup di modifica task, accanto
+  ad ogni fase nella lista "Fasi". Salvata come campo `fasi[i].ripeti`.
+- **Dopo** (v2.2.1, corretto): nell'editor delle azioni, accanto ad
+  ogni azione di tipo `cooldown` nella lista "5. LISTA AZIONI
+  REGISTRATE". Salvata come campo `azione.ripeti` sull'azione cooldown.
+
+### Perche' sul cooldown?
+
+Il `cooldown` e' il **separatore di fase** nelle azioni: ogni cooldown
+chiude una fase e ne apre la successiva. Quindi il flag "ripeti fase"
+sta naturalmente sull'azione cooldown che chiude la fase da ripetere.
+
+Esempio:
+```
+LISTA AZIONI:
+  [1] click_rect              D:0.20s P:0.50s
+  [2] click_poly              D:0.20s P:0.50s
+  [3] cooldown 70.0s          [ ] Ripeti fase    <- fase 0
+  [4] click_anomaly           D:0.20s P:0.50s
+  [5] cooldown 5.0s           [X] Ripeti fase    <- fase 1, RIPETI!
+  [6] click_until             D:0.20s P:0.50s
+```
+
+In questo esempio, la fase 1 (azioni 4, dal cooldown[0] al cooldown[1])
+sara' ripetuta in loop finche' la RAM non rileva il cambio di step.
+
+### Logica runtime aggiornata
+
+I metodi `_fase_corrente_e_ripeti` e `_fase_da_ripetere` ora leggono
+il flag direttamente dalle azioni `cooldown` invece che dalle "fasi"
+dell'oggetto task:
+
+```python
+cooldowns = [a for a in azioni if a.get('tipo') == 'cooldown']
+internal_step = task_internal_steps[id_task]
+# La fase appena finita e' (internal_step - 1)
+# Il cooldown corrispondente e' cooldowns[internal_step - 1]
+```
+
+### Modifica al popup di modifica task
+
+Rimossa la checkbox `[R]` dalla lista delle fasi (era il posto
+sbagliato). La lista delle fasi resta, ma e' ora informativa-only
+(nomi delle fasi + posizione sulla mappa). Il messaggio di aiuto
+dice all'utente di usare l'editor azioni per il flag ripeti.
+
+### Scroll orizzontale aggiunto al pannello sinistro dell'editor
+
+In v2.2.0 avevo aggiunto lo scroll solo alla lista azioni. L'utente
+ha chiarito che voleva lo scroll sull'**intera barra dell'editor**
+(la "barra di editing"). Aggiunto `horizontal_scrollbar=True` al
+`child_window` della colonna sinistra dell'editor (width=420),
+cosi' i controlli con label tradotte in italiano lunghi non vengono
+tagliati.
+
+### Pulizia API non piu' usate
+
+- Rimosso `task_dettagli_manager.imposta_ripeti_fase` (era stato
+  aggiunto in v2.2.0 ma non piu' usato).
+- Rimosso `task_manager.imposta_ripeti_fase` dal facade.
+- `aggiungi_fase` torna alla forma senza parametro `ripeti`.
+
+### Test funzionali
+
+4/4 test della logica `_fase_da_ripetere`:
+1. Fase con ripeti=True + RAM ferma -> RIPETI
+2. Fase con ripeti=True + RAM avanzata -> STOP
+3. Fase con ripeti=True + RAM done -> STOP
+4. Fase con ripeti=False -> STOP
+
+### Cosa NON e' cambiato
+
+- Schema delle fasi: invariato (mai aveva il campo ripeti, in v2.2.0
+  l'avevo aggiunto erroneamente)
+- API pubblica del motore: invariata
+- Subprocess delle task: invariato
+
+
+## v2.2.0 — Fasi con "ripeti" + scroll orizzontale editor
+
+### Funzionalita' nuova: ripetizione fase fino a cambio step in RAM
+
+Le fasi della task ora hanno un nuovo campo booleano `ripeti`. Quando
+una fase ha `ripeti=True`, il bot esegue in loop le azioni di quel
+chunk fino a quando uno di questi eventi si verifica:
+
+1. La RAM segnala che lo step della task e' avanzato (cioe' il gioco
+   ha riconosciuto il completamento della fase)
+2. La task risulta `done` in RAM
+3. Il subprocess fallisce con errore (exit code != 0)
+
+#### Esempio d'uso
+
+Hai una task che richiede di cliccare ripetutamente su qualcosa per
+fare avanzare un loading bar o per "stordire" un nemico:
+- Fase 0 (apertura task): `ripeti=False`
+- Fase 1 (azione ripetuta): `ripeti=True`
+- Fase 2 (chiusura): `ripeti=False`
+
+Il bot esegue Fase 0 una volta. Poi inizia la Fase 1 e ripete le
+azioni finche' la RAM non segnala che il gioco e' passato allo step
+successivo, poi passa a Fase 2.
+
+#### Schema dati: campo `ripeti` su ogni fase
+
+```json
+"fasi": [
+    {"nome": "Apri task", "x": 6.5, "y": -6.6, "ripeti": false},
+    {"nome": "Click ripetuto", "x": 6.5, "y": -6.6, "ripeti": true},
+    {"nome": "Conferma", "x": 6.5, "y": -6.6, "ripeti": false}
+]
+```
+
+Le fasi gia' presenti senza il campo `ripeti` vengono lette con
+default `False` (retrocompatibilita'). La migrazione e' automatica
+ed e' applicata al primo salvataggio.
+
+#### API nuove
+
+`TaskManager.imposta_ripeti_fase(id_task, idx_fase, ripeti)`
+  - facade per `task_dettagli_manager.imposta_ripeti_fase`
+  - persiste su disco automaticamente
+
+`TaskManager.aggiungi_fase(id_task, nome, x, y, ripeti=False)`
+  - aggiunto parametro opzionale `ripeti`
+
+#### Implementazione runtime
+
+La logica del loop NON e' nel subprocess (per non doverlo far
+dipendere da pymem). E' tutta nel bot principale:
+
+In `tasks_process.py`, due punti coordinati:
+
+1. **Durante l'esecuzione** (`_controlla_processo_task`): controlla
+   ad ogni frame se la fase corrente ha `ripeti=True` E lo step in
+   RAM e' avanzato. In tal caso ferma il subprocess senza marcare done.
+
+2. **Dopo l'esecuzione** (post-poll): se il subprocess e' finito con
+   ret==0 e la fase corrente ha `ripeti=True` E lo step in RAM non e'
+   avanzato E la task non e' done in RAM, **rilancia il subprocess
+   con lo stesso step**. Pausa di 0.3s tra un ciclo e l'altro per
+   dare al gioco il tempo di aggiornare la RAM.
+
+Due nuovi helper:
+- `_fase_corrente_e_ripeti(task)`: True se la fase corrente ha ripeti=True
+- `_fase_da_ripetere(task)`: True se va effettivamente rilanciata
+  (incrocio dei 3 segnali: ripeti, ram_step, ram_done)
+
+### UI: editor task
+
+Nell'editor delle fasi (`tasks_popups_edit.py`), ogni fase ha ora un
+checkbox "[R]" accanto al pulsante "[X]" (elimina). L'utente puo'
+selezionare quali fasi devono essere ripetute. Lo stato viene salvato
+istantaneamente nel JSON.
+
+Lo `child_window` della lista fasi e' stato anche allargato (210px ->
+320px) e ha `horizontal_scrollbar=True` per leggere nomi di fase
+lunghi senza troncamento. Stessa modifica per la lista alternativi.
+
+### UI: editor azioni
+
+La lista delle azioni nell'editor (componente `TAG_LIST` in
+`ui_build.py`) ora ha `horizontal_scrollbar=True`. Quando un'azione
+ha una descrizione lunga (poligoni con molti punti, parametri
+verbose), si puo' scorrere lateralmente invece che vedere il testo
+tagliato.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/managers/task_dettagli_manager.py` | aggiunto `ripeti=False` a `aggiungi_fase`; nuovo `imposta_ripeti_fase` |
+| `among_us_ai/managers/task_manager.py` | facade aggiornato |
+| `among_us_ai/ui/mixins/tasks_process.py` | logica loop "ripeti" + 2 helper nuovi |
+| `among_us_ai/ui/mixins/tasks_popups_edit.py` | checkbox "[R]" per fase, scroll orizzontale |
+| `among_us_ai/ui/editor_mixins/ui_build.py` | scroll orizzontale lista azioni |
+
+### Verifica fatta
+
+- Syntax check di tutti i file modificati: OK
+- Test funzionale `imposta_ripeti_fase`: lettura/scrittura/persistenza OK
+- Import del package completo: OK
+
+### Cosa NON e' cambiato
+
+- Schema fasi esistenti: retrocompatibile (default `ripeti=False`)
+- Subprocess delle task: completamente invariato (la logica vive
+  nel bot principale che monitora la RAM)
+- API pubblica del motore: invariata
+
+
 ## v2.1.11 — Fix import mancanti negli handler del package modulare
 
 ### Bug riportato

@@ -51,6 +51,10 @@ class MemorySyncMixin:
                         # riavviata).
                         if reg and reg['id'] in self.task_internal_steps:
                             self.task_internal_steps[reg['id']] = 0
+                        # Reset anche del counter tentativi: la task e'
+                        # finita, il prossimo lancio parte da zero.
+                        if reg and reg['id'] in getattr(self, 'task_retry_counts', {}):
+                            self.task_retry_counts.pop(reg['id'], None)
 
             # --- 4) Sleep tra letture ---
             # 50 ms = 20 letture al secondo. Sufficiente per una camera

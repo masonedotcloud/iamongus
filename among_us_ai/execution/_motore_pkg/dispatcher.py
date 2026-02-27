@@ -145,4 +145,12 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False):
     if not is_test and current_step < len(cooldowns):
         print(f"__COOLDOWN__:{cooldowns[current_step]}", flush=True)
 
+    # --- 4) RITORNO ---
+    # Tutte le azioni del chunk sono state eseguite senza eccezioni
+    # bloccanti -> esecuzione conclusa con successo.
+    # NB: senza questo return esplicito, Python ritornerebbe None e il
+    # lifecycle interpreterebbe il task come "fallito" (exit code 1),
+    # causando un falso errore.
+    return True
+
 

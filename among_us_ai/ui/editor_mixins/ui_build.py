@@ -29,7 +29,12 @@ class EditorUIMixin:
             col_section = (255, 200, 0)
             with dpg.group(horizontal=True):
                 # ----- Colonna sinistra: controlli -----
-                with dpg.child_window(width=420, height=-1):
+                # `horizontal_scrollbar=True`: la colonna ha larghezza
+                # fissa 420px ma alcuni controlli (input lunghi, label
+                # con testi tradotti, ecc.) possono superarla. Lo
+                # scrollbar permette di leggere tutto senza tagliare.
+                with dpg.child_window(width=420, height=-1,
+                                      horizontal_scrollbar=True):
 
                     # ========== 1. FINESTRA BERSAGLIO ==========
                     dpg.add_text("1. FINESTRA BERSAGLIO", color=col_section)
@@ -271,7 +276,12 @@ class EditorUIMixin:
                     dpg.add_spacer(height=6)
                     dpg.add_text("5. LISTA AZIONI REGISTRATE", color=col_section)
                     dpg.add_separator()
-                    with dpg.child_window(tag=self.TAG_LIST, height=180):
+                    # `horizontal_scrollbar=True`: permette di scorrere lateralmente
+                    # quando la descrizione di un'azione e' troppo lunga (es.
+                    # poligoni con molti punti, parametri verbose, ecc.) cosi'
+                    # tutto il testo resta leggibile senza troncamento.
+                    with dpg.child_window(tag=self.TAG_LIST, height=180,
+                                          horizontal_scrollbar=True):
                         pass
 
                     dpg.add_spacer(height=4)
