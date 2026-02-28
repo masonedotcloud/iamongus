@@ -26,13 +26,59 @@ class GPSConfig:
     # --- Pathfinding ---
     CELL_STEP              = 0.15    # deve combaciare con lo step del mapper
     WAYPOINT_ADVANCE       = 0.55    # Raggio ampio per transizioni fluide tra i punti
-    AUTO_ARRIVAL_THRESHOLD = 0.25    # Maggiore precisione per l'arrivo finale
+
+    # AUTO_ARRIVAL_THRESHOLD: distanza dal target sotto la quale si considera
+    # "arrivato" e si lancia la task. Valore basso = arrivo piu' preciso ma
+    # piu' rischio di stuck per imprecisioni del pathfinding. 0.15 e' un
+    # compromesso fra precisione e robustezza (era 0.25 in v2.x, ridotto in
+    # v2.2.11 per arrivare meglio nel raggio di attivazione del pulsante Use).
+    AUTO_ARRIVAL_THRESHOLD = 0.15
+
+    # AUTO_FINAL_NUDGE: dopo aver toccato la soglia di arrivo, il bot fa
+    # un piccolo "nudge" (movimento di rifinitura) di N secondi puntando
+    # ancora al target con i tasti direzionali. Serve per recuperare gli
+    # ultimi centimetri quando il pathfinding lascia un piccolo margine.
+    # 0 = disabilitato.
+    AUTO_FINAL_NUDGE_SEC   = 0.20
+
+    # EXEC_MODE: modalita' di esecuzione delle task (v2.2.17+).
+    #   - 'subprocess' : esegue il file .py come processo Python separato
+    #                    via subprocess.Popen. Modalita' originale, robusta
+    #                    e isolata. (Default consigliato)
+    #   - 'thread'     : esegue il motore come THREAD interno al bot
+    #                    principale. Risparmia ~300-500ms di startup di
+    #                    Python ma redirige sys.stdout (globale per processo)
+    #                    causando potenziali problemi con altre print del
+    #                    bot. SPERIMENTALE - usa solo se subprocess e' lento.
+    #
+    # In entrambi i modi i file .py in tasks_exec/ vengono generati e
+    # restano funzionanti se l'utente li lancia a mano dalla shell.
+    EXEC_MODE = 'subprocess'
+
     AUTO_AXIS_THRESHOLD    = 0.10    # sotto cui non premo il tasto
     AUTO_STUCK_TIME        = 0.8     # Tempo ridotto per un replan piu' rapido
     AUTO_STUCK_DELTA       = 0.06
     AUTO_REPLAN_ON_STUCK   = True
     NEAREST_SEARCH_RADIUS  = 80      # ricerca cella calpestabile piu' vicina
     ASTAR_MAX_NODES        = 20000   # safety limit
+
+    # --- Simon Says (Reactor) ---
+    # Tempo massimo (in secondi) per cui aspettiamo che il pannello del
+    # minigioco si "stabilizzi" prima di catturare la base_img per
+    # l'analisi della sequenza luminosa.
+    #
+    # Se il pannello si apre velocemente (~100-200ms), la stabilita'
+    # viene rilevata in 60-150ms grazie al polling ogni 30ms - molto
+    # prima del timeout.
+    #
+    # Aumentare se il tuo PC e' lento o il minigioco ha animazioni di
+    # apertura piu' lunghe. Diminuire se vuoi essere ancora piu' rapido
+    # (ma rischi di catturare una base imperfetta).
+    #
+    # NB: questo valore puo' essere sovrascritto per singola azione
+    # tramite il campo `panel_timeout` nel JSON dell'azione simon_says
+    # (es. {"tipo":"simon_says","panel_timeout":2.0,...}).
+    SIMON_PANEL_TIMEOUT_SEC = 1.0
 
     # --- Zone nominate ---
     ZONE_FILE = "zone_skeld.json"

@@ -112,6 +112,18 @@ class TasksLaunchMixin:
                 self._avvia_subprocess_task(id_task)
                 return
 
+            # === PRE-WARMING DEL SUBPROCESS ===
+            # Avvia il subprocess ADESSO con --wait-trigger. Cosi' fa
+            # tutto il startup di Python (~300-500ms) e import del motore
+            # MENTRE il bot fa il check visuale + animazione popup, e
+            # quando si preme SPAZIO il subprocess e' gia' caricato e
+            # pronto. Il trigger "GO" gli arriva dopo SPAZIO e l'analisi
+            # parte istantanea.
+            #
+            # Beneficio: ~500-800ms di anticipo sull'analisi, cruciale
+            # per Simon Says (Reactor) e altri minigiochi tempo-critici.
+            self._avvia_subprocess_task(id_task, wait_trigger=True)
+
             # Pausa il thread per il tempo specificato (secondi)
             time.sleep(0.3) # pausa per stabilita' visiva (frame capture screen)
 
@@ -180,8 +192,17 @@ class TasksLaunchMixin:
                 # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item("task_launch_popup")
 
-            # --- PREMUTA DELLA BARRA SPAZIATRICE ---
-            # Simula la pressione di SPAZIO per far aprire il minigioco.
+            # --- ORDINE OTTIMIZZATO CON PRE-WARMING (v2.2.20+) ---
+            # Il subprocess e' gia' stato avviato in `on_arrivo()` con
+            # --wait-trigger. Adesso e' caricato e in attesa di "GO" su
+            # stdin.
+            #
+            # FASE B: premi SPAZIO -> il pannello del minigioco si apre.
+            # FASE C: invia "GO" sullo stdin -> il subprocess parte
+            #   istantaneo (no startup, gia' fatto).
+            id_task = getattr(self, '_task_launch_id', None)
+
+            # FASE B: premi SPAZIO per aprire il pannello del minigioco.
             try:
                 # Invia un evento tastiera a livello scan-code (DirectInput)
                 _send_scan(SCAN_CODES['SPACE'], keyup=False)
@@ -191,11 +212,13 @@ class TasksLaunchMixin:
                 _send_scan(SCAN_CODES['SPACE'], keyup=True)
             except Exception as e:
                 print(f"[Input] Errore pressione SPAZIO: {e}")
-            # ---------------------------------------
 
-            id_task = getattr(self, '_task_launch_id', None)
+            # FASE C: invia il trigger al subprocess pre-warmed.
+            # A questo punto il subprocess e' caricato e in attesa.
+            # Mandando "GO" parte istantaneo.
             if id_task is not None:
-                self._avvia_subprocess_task(id_task)
+                self._invia_trigger_subprocess()
+            # ---------------------------------------
 
     def _esegui_generazione_py(self, t):
         """Esegue generazione py."""

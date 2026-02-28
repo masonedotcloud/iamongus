@@ -163,6 +163,12 @@ def _scrivi_thin_wrapper(task, azioni_effettive, src_id, tasks_exec_dir):
     t_lunghezza = task.get('lunghezza', 'N/A')
     t_fasi      = task.get('fasi', [])
     t_id_padre  = task.get('id_padre')
+    # Pausa iniziale (sec) che il motore deve rispettare prima di iniziare
+    # le azioni. Default 0 (parte subito). Configurabile per task nel popup
+    # di modifica. Utile per minigiochi con animazione di apertura lenta
+    # (es. Reactor Simon Says): se imposti 1.5s, il bot aspetta che il
+    # pannello sia stabile prima di analizzare.
+    t_delay_avvio = float(task.get('delay_avvio', 0.0))
     t_params    = task.get('esecuzione', {}).get('parametri',
                   task.get('esecuzione', {}).get('params', {}))
 
@@ -176,6 +182,7 @@ def _scrivi_thin_wrapper(task, azioni_effettive, src_id, tasks_exec_dir):
         t_id, t_nome, t_x, t_y, t_tipo, t_id_stanza,
         t_vitale, t_due_p, t_lunghezza, t_id_padre,
         t_fasi, t_params, azioni_effettive,
+        t_delay_avvio,
     )
     main_block = _build_main_block()
 
@@ -241,20 +248,58 @@ def _build_header(t_id, t_nome, t_x, t_y, t_zona, t_tipo, t_id_stanza,
 
 def _build_meta(t_id, t_nome, t_x, t_y, t_tipo, t_id_stanza,
                 t_vitale, t_due_p, t_lunghezza, t_id_padre,
-                t_fasi, t_params, t_azioni):
+                t_fasi, t_params, t_azioni,
+                t_delay_avvio=0.0):
     """Dizionario TASK_META + costante AZIONI (parsing args CLI incluso)."""
+    # Leggi valori dalla config corrente per "iniettarli" come costanti
+    # globali nel file generato. Questo permette al motore (motore_pkg)
+    # di usarli senza dover importare GPSConfig (che non e' disponibile
+    # nei file autonomi). Se l'utente cambia la config, basta rigenerare
+    # i file delle task per propagare il nuovo valore.
+    try:
+        from ..core.config import GPSConfig as _GPSCfg
+        simon_panel_timeout = float(getattr(_GPSCfg, 'SIMON_PANEL_TIMEOUT_SEC', 1.0))
+    except Exception:
+        simon_panel_timeout = 1.0
+
     return (
         "# --- Parsing argomenti CLI ---\n"
         "# Lo step indica QUALE chunk di azioni eseguire (le azioni\n"
         "# sono divise in chunk dai 'cooldown'). Il TaskManager passa\n"
         "# lo step appropriato in base alla RAM del gioco (es. step 1\n"
         "# se siamo nella seconda fase di una task multi-fase).\n"
+        "#\n"
+        "# --start-from-action N : per il modello 'ripeti azione', il\n"
+        "# bot rilancia il subprocess saltando le prime N azioni del\n"
+        "# chunk corrente (utile quando solo alcune azioni hanno\n"
+        "# [Ripeti]=True e va riprovata solo la parte finale).\n"
+        "#\n"
+        "# --wait-trigger : modalita' pre-warming. Il subprocess fa il\n"
+        "# setup (import, mss apertura, ecc.) poi ASPETTA una riga 'GO'\n"
+        "# su stdin prima di iniziare l'esecuzione. Il bot principale\n"
+        "# usa questo per avviare il subprocess in anticipo (es. durante\n"
+        "# l'arrivo al target) e poi triggerarlo al press SPAZIO. Cosi'\n"
+        "# tutto il startup di Python (~300-500ms) e l'import del motore\n"
+        "# avvengono PRIMA del trigger, e all'analisi parte istantanea.\n"
         "import argparse\n"
         "_parser = argparse.ArgumentParser()\n"
         "_parser.add_argument('--step', type=int, default=0,\n"
         "                     help='Indice del chunk di azioni da eseguire')\n"
+        "_parser.add_argument('--start-from-action', type=int, default=0,\n"
+        "                     dest='start_from_action',\n"
+        "                     help='Salta le prime N azioni del chunk')\n"
+        "_parser.add_argument('--wait-trigger', action='store_true',\n"
+        "                     dest='wait_trigger',\n"
+        "                     help='Aspetta GO su stdin prima di partire')\n"
         "_args, _ = _parser.parse_known_args()\n"
-        "CURRENT_STEP = _args.step\n\n"
+        "CURRENT_STEP = _args.step\n"
+        "START_FROM_ACTION = _args.start_from_action\n"
+        "WAIT_TRIGGER = bool(_args.wait_trigger)\n\n"
+        "# --- Costanti di config iniettate dal task_writer ---\n"
+        "# Lette da among_us_ai/core/config.py al momento della\n"
+        "# generazione del file. Se modifichi la config, rigenera i\n"
+        "# file delle task per propagare i nuovi valori.\n"
+        f"SIMON_PANEL_TIMEOUT_SEC = {simon_panel_timeout!r}  # default 1.0s\n\n"
         "# --- Metadati della task ---\n"
         "TASK_META = {\n"
         f"    'id':            {t_id!r},\n"
@@ -269,7 +314,12 @@ def _build_meta(t_id, t_nome, t_x, t_y, t_tipo, t_id_stanza,
         f"    'id_padre':      {t_id_padre!r},\n"
         f"    'fasi':          {t_fasi!r},\n"
         f"    'parametri':     {t_params!r},\n"
-        "    'step':          CURRENT_STEP,\n"
+        f"    'delay_avvio':   {t_delay_avvio!r},  # sec di pausa pre-azioni (0 = subito)\n"
+        "    'step':                CURRENT_STEP,\n"
+        "    'start_from_action':   START_FROM_ACTION,\n"
+        "    'wait_trigger':        WAIT_TRIGGER,\n"
+        "    # Costante config iniettata dal task_writer:\n"
+        "    'simon_panel_timeout': SIMON_PANEL_TIMEOUT_SEC,\n"
         "}\n\n"
         "# --- Lista azioni della task ---\n"
         f"AZIONI = {t_azioni!r}\n\n"
