@@ -9,10 +9,30 @@ from ._imports import *
 
 class TasksProcessMixin:
     """Mixin con i metodi di tasks process di GPSVisualizerPro."""
-    def _avvia_subprocess_task(self, id_task):
+    def _avvia_subprocess_task(self, id_task, start_from_action=0,
+                               wait_trigger=False):
         """
         Avvia il file .py della task come processo separato (non bloccante).
         Se c'e' gia' un processo attivo per la stessa task, non ne avvia un secondo.
+
+        Parametri
+        ---------
+        id_task : int
+            ID della task da eseguire.
+        start_from_action : int (default 0)
+            Numero di azioni iniziali del chunk da SALTARE. Usato in
+            modalita' "ripeti azione": dopo un fallimento, il bot rilancia
+            il subprocess con start_from_action = indice della prima azione
+            con [Ripeti]=True, in modo da non rifare le azioni precedenti
+            (gia' completate dal punto di vista RAM).
+        wait_trigger : bool (default False)
+            Modalita' pre-warming: il subprocess viene avviato in anticipo
+            (es. durante l'arrivo al target) e aspetta una riga "GO\\n" su
+            stdin prima di iniziare l'analisi. Il bot principale chiama
+            poi `self._task_process.stdin.write(b"GO\\n")` quando vuole
+            far partire la task (es. al press SPAZIO).
+            Cosi' il startup di Python avviene PRIMA del SPAZIO e
+            l'analisi parte istantanea.
         """
         task = self.task_mgr.get_by_id(id_task)
         if task is None:
@@ -30,33 +50,44 @@ class TasksProcessMixin:
         target_exec = target_task.setdefault('esecuzione', {})
         filepath  = target_exec.get('file')
 
+        # In thread mode non e' richiesto il file .py (il motore riceve
+        # direttamente le azioni in memoria), ma lo generiamo lo stesso
+        # SOLO se manca, cosi' resta retrocompatibile con subprocess mode
+        # e con lancio manuale del .py da shell. Skip della verifica
+        # "obsoleto" per non rallentare ogni avvio.
+        exec_mode_pre = getattr(GPSConfig, 'EXEC_MODE', 'thread')
+
         # Se il file non esiste ancora, crealo ora
         if not filepath or not os.path.exists(filepath):
             # Genera (o ri-genera) il file .py autonomo della task
             filepath = self.task_mgr.crea_file_esecuzione(target_id)
             if not filepath:
-                # Messaggio di stato mostrato all'utente nel pannello
-                self.auto_status_msg = f"Errore: impossibile creare file .py per '{target_task['nome']}'"
-                return
-            exec_info['file'] = filepath
-            target_exec['file'] = filepath
-            # Salva il registro delle task su disco
-            self.task_mgr.salva()
-
-        # Se il file esiste ma e' vecchio (senza blocco __main__), rigeneralo
-        try:
-            with open(filepath, 'r', encoding='utf-8') as fh:
-                contenuto = fh.read()
-            if ('current_step=TASK_META' not in contenuto or 'sys.exit(1)' not in contenuto or 'GetForegroundWindow() != hwnd' not in contenuto) and not target_task.get('codice_personalizzato', False):
-                print(f"[Exec] File '{os.path.basename(filepath)}' obsoleto - rigenero")
-                # Genera (o ri-genera) il file .py autonomo della task
-                filepath = self.task_mgr.crea_file_esecuzione(target_id)
+                if exec_mode_pre != 'thread':
+                    # In subprocess mode, senza file e' un errore fatale
+                    self.auto_status_msg = f"Errore: impossibile creare file .py per '{target_task['nome']}'"
+                    return
+            else:
                 exec_info['file'] = filepath
                 target_exec['file'] = filepath
-                # Salva il registro delle task su disco
                 self.task_mgr.salva()
-        except Exception:
-            pass
+
+        # In subprocess mode: se il file esiste ma e' vecchio (senza
+        # blocco __main__), rigeneralo. In thread mode, skip: il file
+        # NON viene usato per l'esecuzione, basta che esista.
+        if exec_mode_pre != 'thread' and filepath and os.path.exists(filepath):
+            try:
+                with open(filepath, 'r', encoding='utf-8') as fh:
+                    contenuto = fh.read()
+                if ('current_step=TASK_META' not in contenuto or 'sys.exit(1)' not in contenuto or 'GetForegroundWindow() != hwnd' not in contenuto or 'WAIT_TRIGGER' not in contenuto) and not target_task.get('codice_personalizzato', False):
+                    print(f"[Exec] File '{os.path.basename(filepath)}' obsoleto - rigenero")
+                    # Genera (o ri-genera) il file .py autonomo della task
+                    filepath = self.task_mgr.crea_file_esecuzione(target_id)
+                    exec_info['file'] = filepath
+                    target_exec['file'] = filepath
+                    # Salva il registro delle task su disco
+                    self.task_mgr.salva()
+            except Exception:
+                pass
 
         # Evita doppio avvio dello stesso processo
         if (self._task_process is not None
@@ -73,25 +104,80 @@ class TasksProcessMixin:
         internal_step = self.task_internal_steps.get(id_task, 0)
         script_step = max(ram_step, internal_step)
 
+        # Salva lo step lanciato per questa task. Serve a `_fase_da_ripetere_ext`
+        # per sapere quale fase e' stata "appena eseguita" dal subprocess
+        # (l'`internal_step` non e' affidabile in caso di ultima fase senza
+        # cooldown finale: il subprocess termina senza stampare __COOLDOWN__:
+        # quindi `internal_step` resta fermo).
+        if not hasattr(self, 'task_last_launched_step'):
+            self.task_last_launched_step = {}
+        self.task_last_launched_step[id_task] = script_step
+
         try:
-            abs_filepath = os.path.abspath(filepath)
+            # In thread mode il file potrebbe essere None se la generazione
+            # e' fallita; fallback a stringa descrittiva per i log.
+            abs_filepath = os.path.abspath(filepath) if filepath else f"<thread:{target_task['nome']}>"
             # cwd = directory di lancio del bot (dove stanno mappa_skeld.json,
             # i modelli .pt, ecc.). Nell'originale __file__ era main.py nella
             # cartella radice; con il package __file__ e' dentro among_us_ai/ui/
             # quindi usiamo os.getcwd() che e' la cwd del processo principale.
-            self._task_process = subprocess.Popen(
-                [sys.executable, "-u", abs_filepath, "--step", str(script_step)],
-                cwd=os.getcwd(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,   # unifica stderr in stdout
-                bufsize=0,
-            )
+            cmd = [sys.executable, "-u", abs_filepath,
+                   "--step", str(script_step)]
+            # Modalita' "ripeti azione": passa --start-from-action solo se > 0
+            # (cosi' i file vecchi che non riconoscono il flag continuano a
+            # funzionare grazie a parse_known_args).
+            if start_from_action > 0:
+                cmd += ["--start-from-action", str(start_from_action)]
+            # Modalita' pre-warming: passa --wait-trigger se richiesto.
+            # Il subprocess fara' setup/import poi aspettera' "GO" su stdin.
+            if wait_trigger:
+                cmd += ["--wait-trigger"]
+
+            # === MODALITA' DI ESECUZIONE: thread o subprocess ===
+            # In v2.2.17+ il default e' 'thread': il motore gira come
+            # thread interno del bot. Risparmia ~300-500ms di startup
+            # di Python e tutta l'IPC. Critico per minigiochi reattivi
+            # come Simon Says.
+            exec_mode = getattr(GPSConfig, 'EXEC_MODE', 'thread')
+
+            if exec_mode == 'thread':
+                # ---- THREAD MODE ----
+                # Costruisco TASK_META + AZIONI dalla task corrente,
+                # IDENTICO a quello che il file .py costruirebbe.
+                task_meta = self._build_task_meta_for_thread(
+                    target_task, azioni_eff,
+                    script_step, start_from_action,
+                )
+                from ...execution.task_thread_runner import TaskThreadProcess
+                self._task_process = TaskThreadProcess(
+                    task_meta=task_meta,
+                    azioni=list(azioni_eff),
+                    nome_task=task['nome'],
+                )
+                avvio_label = f"thread-{self._task_process.pid}"
+            else:
+                # ---- SUBPROCESS MODE (legacy) ----
+                # Se in modalita' pre-warming, apriamo stdin come PIPE
+                # cosi' poi possiamo inviare "GO\n" per triggerare il
+                # subprocess. Senza wait_trigger, stdin e' chiuso.
+                popen_stdin = subprocess.PIPE if wait_trigger else subprocess.DEVNULL
+                self._task_process = subprocess.Popen(
+                    cmd,
+                    cwd=os.getcwd(),
+                    stdin=popen_stdin,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,   # unifica stderr in stdout
+                    bufsize=0,
+                )
+                avvio_label = f"PID {self._task_process.pid}"
+                if wait_trigger:
+                    avvio_label += " (pre-warm)"
             self._task_process_task_id = id_task
             # Aggiorna lo stato di esecuzione (idle/running/done/error)
             self.task_mgr.imposta_stato_esecuzione(id_task, 'running')
             # Messaggio di stato mostrato all'utente nel pannello
-            self.auto_status_msg = f"> '{task['nome']}' avviata (PID {self._task_process.pid})"
-            print(f"[Exec] Avviato '{abs_filepath}' - PID {self._task_process.pid}", flush=True)
+            self.auto_status_msg = f"> '{task['nome']}' avviata ({avvio_label})"
+            print(f"[Exec] Avviato '{abs_filepath}' - {avvio_label}", flush=True)
 
             # Thread che legge stdout del processo e stampa riga per riga
             proc_ref  = self._task_process
@@ -129,6 +215,69 @@ class TasksProcessMixin:
             # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Errore avvio: {e}"
             print(f"[Exec] Errore avvio '{filepath}': {e}")
+
+    def _invia_trigger_subprocess(self):
+        """
+        Invia "GO\\n" sullo stdin del subprocess pre-warmed, facendolo
+        partire immediatamente.
+
+        Da chiamare quando si preme SPAZIO per aprire il pannello del
+        minigioco. Il subprocess, gia' avviato in anticipo con
+        --wait-trigger, era in stand-by. Ricevuto "GO" parte subito.
+
+        Idempotente: se il subprocess non e' attivo, in modalita' thread,
+        o gia' triggerato, non fa nulla.
+        """
+        if self._task_process is None:
+            return
+        # Solo subprocess mode ha stdin (TaskThreadProcess non lo espone).
+        proc_stdin = getattr(self._task_process, 'stdin', None)
+        if proc_stdin is None:
+            return
+        try:
+            # Invia "GO\n" e flush. Il subprocess fa readline() su stdin
+            # in lifecycle.py:run_task e riprende l'esecuzione.
+            proc_stdin.write(b"GO\n")
+            proc_stdin.flush()
+            # Chiudo stdin: cosi' eventuali altre readline() ritornano
+            # subito stringa vuota e non bloccano (ma non dovrebbero
+            # capitare).
+            proc_stdin.close()
+            print(f"[Trigger] Inviato GO al subprocess", flush=True)
+        except (BrokenPipeError, ValueError, OSError) as e:
+            # Il subprocess potrebbe essere gia' terminato o stdin gia'
+            # chiuso: non e' un errore fatale.
+            print(f"[Trigger] Stdin non scrivibile (subprocess terminato?): {e}",
+                  flush=True)
+
+    def _build_task_meta_for_thread(self, target_task, azioni_eff,
+                                    script_step, start_from_action):
+        """
+        Costruisce il dizionario TASK_META per la modalita' thread.
+
+        Replica esattamente la struttura che il file .py autonomo
+        costruirebbe via task_writer._build_meta. Cosi' il motore
+        riceve un input identico nei due mode (subprocess/thread).
+        """
+        return {
+            'id':            target_task.get('id'),
+            'nome':          target_task.get('nome'),
+            'x':             float(target_task.get('x', 0.0)),
+            'y':             float(target_task.get('y', 0.0)),
+            'tipo':          target_task.get('tipo'),
+            'id_stanza':     target_task.get('id_stanza'),
+            'vitale':        bool(target_task.get('vitale', False)),
+            'due_giocatori': bool(target_task.get('due_giocatori', False)),
+            'lunghezza':     target_task.get('lunghezza', 'N/A'),
+            'id_padre':      target_task.get('id_padre'),
+            'fasi':          target_task.get('fasi', []),
+            'parametri':     (target_task.get('esecuzione', {})
+                              .get('parametri',
+                                   target_task.get('esecuzione', {}).get('params', {}))),
+            'delay_avvio':   float(target_task.get('delay_avvio', 0.0)),
+            'step':                int(script_step),
+            'start_from_action':   int(start_from_action),
+        }
 
     def _controlla_processo_task(self):
         """
@@ -228,13 +377,21 @@ class TasksProcessMixin:
             # normale aggiorni lo stato.
             #
             # Altrimenti: se la fase ha ripeti=True, RILANCIA il subprocess.
+            # Altrimenti: se la fase ha ripeti=True, RILANCIA il subprocess.
             if task and self._fase_da_ripetere_ext(task, ret):
-                print(f"[Ripeti] Fase con ripeti=True, RAM dice non finita. Rilancio.")
+                # Calcola start_from_action: indice della PRIMA azione con
+                # ripeti=True nel chunk corrente. Cosi' al rilancio il
+                # subprocess salta le azioni precedenti (che si presume
+                # abbiano gia' avuto effetto - es. il click che ha pescato
+                # la carta) e riprova solo la parte ripetibile.
+                start_from = self._calcola_start_from_action(task)
+                print(f"[Ripeti] Fase con ripeti=True, RAM dice non finita. "
+                      f"Rilancio subprocess saltando {start_from} azioni iniziali.")
                 self._task_process         = None
                 self._task_process_task_id = None
                 # Pausa breve prima del rilancio (anti-loop frenetico)
                 time.sleep(0.3)
-                self._avvia_subprocess_task(id_task)
+                self._avvia_subprocess_task(id_task, start_from_action=start_from)
                 return
             # ----------------------------------------------------------------
 
@@ -552,24 +709,31 @@ class TasksProcessMixin:
         internal_step = self.task_internal_steps.get(id_task, 0)
 
         # Determina quale chunk e' "appena finito":
-        # - Se ci sono cooldown: ad ogni cooldown internal_step viene
-        #   incrementato. Quindi la fase appena finita e' (internal_step - 1)
-        #   se internal_step >= 1, oppure non c'e' fase finita se step==0.
-        # - Se NON ci sono cooldown: il subprocess esegue tutto il chunk 0
-        #   e termina senza printare __COOLDOWN__:. internal_step resta 0
-        #   ma la fase appena finita e' comunque la 0 (l'unica).
-        if len(chunks) == 1:
-            # Singola fase: l'unica esistente e' quella appena finita
-            idx_fase = 0
-        elif internal_step == 0:
-            # Nessun chunk eseguito ancora (caso anomalo)
-            print(f"[Ripeti] Task '{nome_t}': multi-fase ma internal_step=0, no rilancio.")
-            return False
-        else:
-            # Multi-fase: la fase appena finita e' (internal_step - 1)
-            idx_fase = internal_step - 1
-            if idx_fase >= len(chunks):
+        #
+        # PRIMA usavo `internal_step - 1`, ma quel ragionamento e' SBAGLIATO
+        # quando l'ultima fase non ha un cooldown dopo: il subprocess
+        # termina senza stampare `__COOLDOWN__:`, quindi `internal_step`
+        # NON viene incrementato e (internal_step - 1) punta alla fase
+        # precedente invece che a quella appena eseguita.
+        #
+        # La fase appena eseguita e' quella che il subprocess ha ricevuto
+        # come parametro `--step`, salvata in `task_last_launched_step`.
+        idx_fase = self.task_last_launched_step.get(id_task) if hasattr(self, 'task_last_launched_step') else None
+        if idx_fase is None:
+            # Fallback: se per qualche motivo non abbiamo lo step lanciato,
+            # usiamo la vecchia logica.
+            if len(chunks) == 1:
+                idx_fase = 0
+            elif internal_step == 0:
+                print(f"[Ripeti] Task '{nome_t}': multi-fase ma internal_step=0, no rilancio.")
                 return False
+            else:
+                idx_fase = internal_step - 1
+
+        if idx_fase >= len(chunks) or idx_fase < 0:
+            print(f"[Ripeti] Task '{nome_t}': idx_fase={idx_fase} fuori range "
+                  f"({len(chunks)} chunk), no rilancio.")
+            return False
         chunk_corr = chunks[idx_fase]
 
         # Almeno un'azione del chunk deve avere ripeti=True
@@ -658,6 +822,14 @@ class TasksProcessMixin:
             self._premi_esc()
             # Reset counter: prossimo lancio parte pulito
             self._reset_retry_count(id_task, idx_fase)
+            # Reset anche dell'internal_step: cosi' al prossimo lancio
+            # la task ricomincia da fase 0 (ESC ha presumibilmente
+            # chiuso/annullato il minigioco, quindi il gioco riportera'
+            # lo step in RAM a 0).
+            self.task_internal_steps[id_task] = 0
+            # E rimuovo lo step lanciato (per coerenza)
+            if hasattr(self, 'task_last_launched_step'):
+                self.task_last_launched_step.pop(id_task, None)
             return False
 
         print(f"[Ripeti] Task '{nome_t}' fase {idx_fase}: "
@@ -699,6 +871,61 @@ class TasksProcessMixin:
             print("[Ripeti] ESC inviato per chiudere il minigioco.")
         except Exception as e:
             print(f"[Ripeti] Errore invio ESC: {e}")
+
+    def _calcola_start_from_action(self, task):
+        """
+        Calcola da quale azione del chunk corrente rilanciare il subprocess.
+
+        Logica:
+        - Trova il chunk attivo (ultimo lanciato, o derivato da
+          internal_step / task_last_launched_step).
+        - Trova l'indice della PRIMA azione con `ripeti=True` in quel chunk.
+        - Ritorna quell'indice.
+
+        Esempio Swipe Card (no cooldown -> 1 solo chunk):
+            azioni = [
+                {tipo: click_poly, ripeti: False},
+                {tipo: drag_zone,  ripeti: True},
+            ]
+            -> ritorna 1 (salta il click, ripete solo lo slide)
+
+        Se nessuna azione ha ripeti=True (caso anomalo, non dovrebbe
+        accadere perche' siamo qui solo se _fase_da_ripetere_ext ha
+        ritornato True), ritorna 0 (= riparte da capo come fallback).
+        """
+        id_task = task['id']
+        azioni_eff, _ = self.task_mgr.get_azioni_effettive(id_task)
+
+        # Ricostruisci i chunk (split sui cooldown, identico al dispatcher)
+        chunks = []
+        current_chunk = []
+        for az in azioni_eff:
+            if az.get('tipo') == 'cooldown':
+                chunks.append(current_chunk)
+                current_chunk = []
+            else:
+                current_chunk.append(az)
+        chunks.append(current_chunk)
+
+        # Quale chunk e' attivo? Uso task_last_launched_step se disponibile
+        idx_fase = (self.task_last_launched_step.get(id_task)
+                    if hasattr(self, 'task_last_launched_step') else None)
+        if idx_fase is None:
+            internal_step = self.task_internal_steps.get(id_task, 0)
+            idx_fase = internal_step if internal_step < len(chunks) else len(chunks) - 1
+
+        if idx_fase < 0 or idx_fase >= len(chunks):
+            return 0
+
+        chunk_corr = chunks[idx_fase]
+
+        # Trova la prima azione con ripeti=True nel chunk
+        for i, a in enumerate(chunk_corr):
+            if a.get('ripeti', False):
+                return i
+
+        # Fallback: nessun ripeti -> riparte da capo
+        return 0
 
     def _controlla_task_attiva(self, task_x, task_y):
         """
