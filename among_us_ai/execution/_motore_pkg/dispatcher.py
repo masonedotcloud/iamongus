@@ -56,22 +56,28 @@ _DISPATCH_MAP = {
     'ocr_keypad':     _h_ocr_keypad,
 }
 
-def esegui_azioni(azioni, hwnd, current_step=0, is_test=False):
+def esegui_azioni(azioni, hwnd, current_step=0, is_test=False, start_from_action=0):
     # =========================================================================
     # DISPATCHER PRINCIPALE
     # =========================================================================
     # Esegue una lista di azioni nel gioco. Macro-passi:
     #   1) Suddivide le azioni in CHUNK separati dai cooldown
     #   2) Sceglie il chunk da eseguire (current_step), tutto se test
-    #   3) Per ogni azione:
+    #   3) Salta le prime `start_from_action` azioni del chunk (per
+    #      la modalita' "ripeti azione": il bot rilancia il subprocess
+    #      saltando le azioni che hanno gia' avuto successo)
+    #   4) Per ogni azione rimanente:
     #      - aspetta che il gioco sia in primo piano
     #      - legge il rect del client
     #      - delega all'handler in _DISPATCH_MAP[tipo]
     # Parametri:
-    #   azioni        list[dict]
-    #   hwnd          handle finestra del gioco
-    #   current_step  int (chunk_id da eseguire)
-    #   is_test       True se chiamato dall'editor
+    #   azioni             list[dict]
+    #   hwnd               handle finestra del gioco
+    #   current_step       int (chunk_id da eseguire)
+    #   is_test            True se chiamato dall'editor
+    #   start_from_action  int (default 0) - salta le prime N azioni del chunk.
+    #                      Usato dal bot per ripetere SOLO le azioni con
+    #                      [Ripeti]=True senza rifare quelle precedenti.
     # =========================================================================
     if not _OK:
         return False
@@ -95,6 +101,19 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False):
 
     # In TEST tutto, in PRODUZIONE solo il chunk corrente
     azioni_da_eseguire = chunks[current_step] if not is_test else azioni
+
+    # 1b) Salta le prime N azioni del chunk (modalita' "ripeti azione").
+    # Esempio: chunk = [click_carta, drag_zone_slide], start_from_action=1
+    # -> esegue solo drag_zone_slide. Utile quando il click ha gia' avuto
+    # successo (RAM e' avanzata) ma lo slide e' fallito.
+    if not is_test and start_from_action > 0:
+        if start_from_action >= len(azioni_da_eseguire):
+            print(f"[esegui_azioni] start_from_action ({start_from_action}) >= "
+                  f"numero azioni ({len(azioni_da_eseguire)}), niente da eseguire.")
+            return True
+        print(f"[esegui_azioni] Salto le prime {start_from_action} azioni del chunk "
+              f"(modalita' ripeti azione).", flush=True)
+        azioni_da_eseguire = azioni_da_eseguire[start_from_action:]
 
     # --- 2) LOOP PRINCIPALE: dispatch per ogni azione ---
     for az in azioni_da_eseguire:
