@@ -1,5 +1,110 @@
 # Changelog
 
+## v2.2.8 — Fix critico: ripete SOLO la fase con [Ripeti], non tutta la task
+
+### Bug riportato
+
+> Adesso e' come se mi ripetesse la task. Io voglio che ripete solo
+> la fase da me selezionata con il checkbox.
+
+### Causa
+
+In `_fase_da_ripetere_ext`, l'`idx_fase` (cioe' "quale fase e' stata
+appena eseguita") veniva calcolato come `internal_step - 1`. Ma questo
+calcolo e' SBAGLIATO per l'**ultima fase** di una task multi-step.
+
+Spiegazione tecnica:
+- `internal_step` viene incrementato solo quando il subprocess stampa
+  `__COOLDOWN__:` a stdout. Lo fa al termine di ogni chunk, MA SOLO se
+  ci sono altri chunk dopo.
+- Per la swipe card (2 fasi: click + slide):
+  - Subprocess parte con `--step 0`, esegue fase 0 click,
+    stampa `__COOLDOWN__:0.5` -> `internal_step` diventa 1.
+  - Bot rilancia con `--step 1`, esegue fase 1 slide,
+    NON stampa altro `__COOLDOWN__:` (e' l'ultima fase) -> termina.
+  - `internal_step` resta a 1.
+  - `_fase_da_ripetere_ext` calcola `idx_fase = 1 - 1 = 0` ❌
+    Sta puntando alla fase 0 (click) invece che alla 1 (slide).
+
+Quindi il bot controllava se la fase 0 aveva `[Ripeti]` (e di solito
+no, l'utente la mette sulla fase 1 dello slide), e in pratica non
+ripeteva mai la fase giusta. Oppure, se l'utente metteva `[Ripeti]`
+su entrambe le fasi, ripeteva tutta la task da capo (fase 0 + 1).
+
+### Fix
+
+#### 1. Salvo lo step del subprocess al lancio
+
+Nuovo dict `self.task_last_launched_step: { id_task: step }` in
+`_avvia_subprocess_task`. Salva il valore esatto di `--step`
+passato al subprocess. Questo e' la vera "fase appena eseguita"
+e non dipende da quanti `__COOLDOWN__:` sono stati stampati.
+
+```python
+self.task_last_launched_step[id_task] = script_step
+```
+
+#### 2. Uso `task_last_launched_step` invece di `internal_step - 1`
+
+In `_fase_da_ripetere_ext`, ora `idx_fase` viene letto direttamente
+dal dict. Cosi':
+- Subprocess parte con `--step 1`, esegue fase 1 slide, fallisce.
+- `task_last_launched_step[id] = 1` -> `idx_fase = 1` (corretto!)
+- Il bot controlla se la fase 1 ha `[Ripeti]`. Se si', rilancia
+  con `--step 1` (calcolato da `max(ram_step, internal_step) = max(0, 1) = 1`).
+
+La vecchia logica (`internal_step - 1`) resta come fallback.
+
+#### 3. Reset internal_step quando si abbandona con ESC
+
+Quando si raggiunge il limite tentativi e si preme ESC:
+- `internal_step` viene resettato a 0
+- `task_last_launched_step` viene rimosso
+
+Cosi' al prossimo lancio (manuale o automatico) la task ricomincia
+da fase 0, dato che ESC ha presumibilmente chiuso/annullato il
+minigioco e il gioco ha riportato lo step in RAM a 0.
+
+### Comportamento atteso adesso (Swipe Card)
+
+```
+Azioni:
+  1. click_poly su carta       D:0.0s P:0.5s [---]    (no ripeti)
+  2. cooldown                  D:0.5s
+  3. drag_zone slide cursore   D:0.5s P:0.0s [Ripeti] Max: 5
+```
+
+Flusso:
+1. Subprocess fase 0 (click): eseguito una volta, NON si ripete
+   (la fase 0 non ha [Ripeti]).
+2. RAM avanza a step=1 (carta presa).
+3. Subprocess fase 1 (slide): eseguito.
+   - Se RAM avanza a step=2 (done) -> task finita, prossima task.
+   - Se RAM resta a 1 -> fase 1 da ripetere (counter 1/5).
+4. Ripete fino a 5 volte. Se non riesce -> ESC + abbandona.
+
+**Importante**: la fase 0 (click) NON viene ripetuta dopo un fallimento
+della fase 1, perche' nel rilancio `script_step = max(ram_step=1, internal_step=1) = 1`,
+quindi il subprocess parte direttamente da fase 1.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/tasks_process.py` | salvataggio `task_last_launched_step` + uso in `_fase_da_ripetere_ext` + reset internal_step su ESC |
+
+### Verifica fatta
+
+Test simulazione "Swipe Card con [Ripeti] solo sulla fase 1":
+- Scenario 1: dopo fase 0 (click), il bot decide `ripete=False` perche'
+  la fase 0 non ha [Ripeti]. ✓
+- Scenario 2: dopo fase 1 (slide) fallita, il bot decide `ripete=True`
+  per 2 tentativi, poi al 3° tentativo (max=3) preme ESC e abbandona. ✓
+- Verifica dello step rilanciato: dopo fallimento fase 1,
+  `script_step = max(ram_step=0, internal_step=1) = 1`. Il subprocess
+  riparte direttamente da fase 1, non da 0. ✓
+
+
 ## v2.2.7 — Limite tentativi ripetizione + ESC fallback
 
 ### Bug riportato
