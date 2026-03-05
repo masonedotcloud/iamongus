@@ -1,5 +1,102 @@
 # Changelog
 
+## v2.2.9 — Ripeti SOLO le azioni con [Ripeti], non quelle prima
+
+### Problema riportato
+
+> Continua a ripetere tutte le fasi.
+
+### Causa
+
+Le tue task NON usano i cooldown per separare le fasi. Esempio Swipe Card:
+
+```
+AZIONI = [
+    {tipo: click_poly carta},   # azione 0, NO [Ripeti]
+    {tipo: drag_zone slide},    # azione 1, [Ripeti]
+]
+```
+
+Senza cooldown, il sistema considera entrambe le azioni come **una
+singola fase (chunk)**. Quindi quando lo slide falliva, il bot rilanciava
+il subprocess che faceva di nuovo TUTTO (click + slide), invece di
+saltare il click e ripetere solo lo slide.
+
+L'analisi del JSON delle tue task lo conferma:
+
+```
+Task con cooldown: 1
+Task senza cooldown: 20
+```
+
+### Fix: nuovo parametro `--start-from-action`
+
+Adesso il bot puo' rilanciare il subprocess saltando le prime N azioni
+del chunk. La logica:
+
+1. Quando una fase con `[Ripeti]=True` fallisce, il bot trova l'indice
+   della **prima azione con `[Ripeti]=True`** nel chunk corrente.
+2. Rilancia il subprocess passando `--start-from-action N`.
+3. Il subprocess salta le prime N azioni e parte dalla N-esima.
+
+### Esempio Swipe Card
+
+```python
+AZIONI = [
+    {tipo: click_poly,  ripeti: False},   # azione 0
+    {tipo: drag_zone,   ripeti: True},    # azione 1
+]
+```
+
+**Lancio iniziale**:
+- Bot lancia: `python task_001.py --step 0`
+- Subprocess esegue: click + slide
+- Slide fallisce (RAM resta a 0/2)
+
+**Rilancio (modalita' ripeti)**:
+- Bot calcola `start_from_action = 1` (prima azione con [Ripeti])
+- Bot lancia: `python task_001.py --step 0 --start-from-action 1`
+- Subprocess esegue: **solo slide** (salta il click che era gia' OK)
+- Se ancora fallisce -> ripete (max 5 volte), poi ESC
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/task_writer.py` | aggiunto parsing `--start-from-action` nel meta block + campo `start_from_action` in TASK_META |
+| `among_us_ai/execution/_motore_pkg/dispatcher.py` | nuovo parametro `start_from_action` in `esegui_azioni`: salta le prime N azioni del chunk |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | passa `task_meta['start_from_action']` a `esegui_azioni` |
+| `among_us_ai/ui/mixins/tasks_process.py` | nuovo parametro in `_avvia_subprocess_task` + nuovo metodo `_calcola_start_from_action` + uso al rilancio |
+
+### Verifica fatta
+
+Test simulazione Swipe Card senza cooldown:
+
+| Caso | start_from_action | Comportamento |
+|---|---|---|
+| Lancio iniziale | 0 | Esegue click + slide |
+| Rilancio dopo fallimento | **1** | Esegue solo slide (corretto!) |
+| Ripeti 1/3, 2/3, 3/3 | 1 ogni volta | Slide ripetuto |
+| Tentativo 3/3 esaurito | - | ESC + abbandono |
+| Nessuna azione [Ripeti] | 0 | Fallback: riparte da capo |
+
+Tutti i test passano.
+
+### Retrocompatibilita'
+
+Per chi ha task **CON cooldown** (modello "fasi separate"):
+- Il cooldown chunkifica le azioni come prima
+- `start_from_action` si applica DENTRO il chunk corrente
+- Esempio: se hai 3 fasi (chunk 0, 1, 2), il bot lancia con `--step 1`
+  per la fase 1. Se fallisce e ha [Ripeti], rilancia con `--step 1
+  --start-from-action <prima azione [Ripeti] DEL CHUNK 1>`.
+
+Quindi: **nessuna regressione** per le task con cooldown.
+
+I file `.py` vecchi (senza il flag `--start-from-action`) continuano a
+funzionare grazie a `parse_known_args`: ignorano gli argomenti sconosciuti.
+
+
 ## v2.2.8 — Fix critico: ripete SOLO la fase con [Ripeti], non tutta la task
 
 ### Bug riportato
