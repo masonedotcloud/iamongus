@@ -1,5 +1,105 @@
 # Changelog
 
+## v2.2.11 — Arrivo piu' preciso al target della task
+
+### Problema riportato
+
+> A volte non arriva nella zona di attivazione della task. Vorrei
+> piu' precisione per arrivare nel raggio di attivazione.
+
+### Causa
+
+La soglia `AUTO_ARRIVAL_THRESHOLD` era 0.25 unita' di gioco. Il bot
+si fermava entro un cerchio di raggio 0.25 dal target e lanciava
+subito la task, ma a volte questo cerchio era ancora fuori dal raggio
+di interazione del gioco (il pulsante "Use" non si illuminava).
+
+Il pathfinding inoltre lascia naturalmente un piccolo margine sul
+waypoint finale per evitare di "incollarsi" al target.
+
+### Fix
+
+Due modifiche complementari per arrivare meglio nel raggio di
+attivazione del pulsante Use:
+
+#### 1. Soglia di arrivo ridotta: 0.25 -> 0.15
+
+`AUTO_ARRIVAL_THRESHOLD` passa da 0.25 a 0.15 unita'. Il bot si
+fermera' naturalmente piu' vicino al target.
+
+#### 2. "Final nudge" prima del callback
+
+Quando il bot tocca la soglia di arrivo, prima di lanciare la task
+fa un piccolo movimento di rifinitura premendo i tasti direzionali
+(W/A/S/D) verso il target per `AUTO_FINAL_NUDGE_SEC` secondi
+(default 0.20s).
+
+Questo recupera gli ultimi centimetri che il pathfinding lascia
+come margine. Risultato: il bot si avvicina al target per altri
+~0.1 unita' prima di lanciare la task.
+
+Il movimento e' bloccante (`time.sleep(0.2)`) perche' la finestra
+e' molto breve. Il sistema rilascia comunque tutti i tasti dopo il
+nudge per non lasciare il personaggio in movimento durante l'esecuzione
+della task.
+
+#### Nuovi parametri config
+
+In `among_us_ai/core/config.py`:
+
+```python
+AUTO_ARRIVAL_THRESHOLD = 0.15   # era 0.25
+AUTO_FINAL_NUDGE_SEC   = 0.20   # nuovo, 0 = disabilitato
+```
+
+Per disabilitare il nudge (e tornare al solo arrivo standard):
+imposta `AUTO_FINAL_NUDGE_SEC = 0`. Per arrivo ancora piu' preciso,
+puoi ridurre `AUTO_ARRIVAL_THRESHOLD` a 0.10 (a tuo rischio: piu'
+basso = piu' rischio di stuck per imprecisioni del pathfinding).
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/core/config.py` | `AUTO_ARRIVAL_THRESHOLD` 0.25->0.15, nuovo `AUTO_FINAL_NUDGE_SEC=0.20` |
+| `among_us_ai/ui/mixins/auto_move.py` | logica final nudge prima del callback di arrivo |
+
+### Verifica fatta
+
+Test logico delle direzioni di nudge:
+
+| Posizione target | Tasti premuti |
+|---|---|
+| NE (dx>0, dy>0) | D + W |
+| NO (dx<0, dy>0) | A + W |
+| SE (dx>0, dy<0) | D + S |
+| SO (dx<0, dy<0) | A + S |
+| Sopra | W |
+| Sotto | S |
+| Destra | D |
+| Sinistra | A |
+| Troppo vicino (<0.05) | nessuno |
+
+Tutti corretti.
+
+### Cosa NON e' cambiato
+
+- Pathfinding e replan: invariati
+- Logica stuck detection: invariata
+- Soglia waypoint intermedi (`WAYPOINT_ADVANCE` 0.55): invariata
+- Logica fallback su `alternativi`: invariata
+- Tutto il resto del bot: invariato
+
+### Considerazione futura
+
+Hai chiesto se non fosse meglio rilevare il pulsante "Use" a video.
+L'idea e' valida ma richiede un meccanismo aggiuntivo (screenshot
+ROI angolo basso destro, threshold luminosita', timeout). Per ora
+abbiamo scelto la via piu' semplice (precisione di arrivo). Se dopo
+queste modifiche dovessero ancora capitare casi in cui non arriva
+nel raggio, possiamo aggiungere il rilevamento del pulsante.
+
+
 ## v2.2.10 — Pulizia anti-flicker dei player rilevati (vivi e morti)
 
 ### Bug riportato
