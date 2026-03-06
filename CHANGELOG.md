@@ -1,5 +1,120 @@
 # Changelog
 
+## v2.2.13 — Simon Says (Reactor) reattivo: pre-warming + base dinamica
+
+### Problema riportato
+
+> Quando avvio task del Reactor con Simon Says devo essere rapido ad
+> analizzare per poterlo replicare in tempo. Tra apertura pannello e
+> inizio analisi c'e' troppo lag.
+
+### Causa
+
+Il flusso pre-fix era:
+
+```
+1. Bot preme SPAZIO            → t=0  (apre pannello)
+2. Avvia subprocess            → t=0  (Python startup ~300-500ms)
+3. SetForegroundWindow         → t≈500ms
+4. sleep(0.4) grace period     → t=900ms
+5. Cattura base_img            → t=910ms
+6. Inizio analisi (primo frame)→ t=920ms
+```
+
+Tra apertura pannello e primo frame analizzato passavano ~900ms.
+La sequenza Simon Says puo' iniziare entro 200-500ms dall'apertura,
+quindi il primo flash veniva spesso perso.
+
+### Fix: 3 ottimizzazioni complementari
+
+#### 1. Inversione ordine: subprocess PRIMA di SPAZIO
+
+In `tasks_launch.py`, ora avviamo il subprocess prima di premere
+SPAZIO. Mentre il subprocess fa lo startup (~300-500ms), in parallelo
+premiamo SPAZIO che apre il pannello. Quando il subprocess e' pronto,
+il pannello e' gia' aperto.
+
+#### 2. Skip `sleep(0.4)` se finestra gia' in foreground
+
+In `lifecycle.py`, ora il subprocess controlla se la finestra del
+gioco e' gia' in foreground. Se si', skippa `SetForegroundWindow +
+sleep(0.4)`. Risparmio: **400ms** per ogni avvio.
+
+```python
+if _win32gui.GetForegroundWindow() != hwnd:
+    _win32gui.SetForegroundWindow(hwnd)
+    _time.sleep(0.4)  # solo se serve davvero
+```
+
+#### 3. Base dinamica robusta in `_h_simon_says`
+
+PROBLEMA: dopo l'inversione (#1), il subprocess potrebbe partire
+PRIMA che il pannello sia completamente aperto. Catturare `base_img`
+in quel momento sarebbe inutile (la base sarebbe la mappa del gioco,
+non il pannello).
+
+SOLUZIONE: invece di catturare `base_img` subito, aspettiamo che
+2 frame consecutivi siano "simili" sui display point (= pannello
+stabilizzato). Polling rapido a 30ms, max 1 secondo di attesa.
+
+Vantaggi:
+- Robusto: funziona sia se il pannello e' gia' aperto sia se sta
+  ancora aprendosi
+- **Non perdiamo flash**: se il primo flash inizia mentre stiamo
+  ancora stabilizzando la base, il polling lo cattura comunque
+  appena la base si fissa
+- Fallback graceful: se il pannello non si stabilizza in 1s,
+  procediamo con la base imperfetta invece di bloccarci
+
+### Timing post-fix
+
+```
+1. Avvia subprocess        t=0
+2. Premi SPAZIO            t=5ms  (parallelo)
+3. Pannello si apre        t≈100-200ms
+4. Subprocess pronto       t≈300-500ms  (sovrapposto con apertura!)
+5. Focus check (skip sleep)t≈500ms
+6. Handler parte           t≈510ms
+7. Stabilita' base         t≈600-700ms
+8. Inizio polling vero     t=700ms
+```
+
+**Da ~920ms a ~700ms** prima del primo frame analizzato.
+**Risparmio: ~220ms**, e MOLTO piu' robusto contro race condition.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/tasks_launch.py` | inversione ordine: subprocess prima, SPAZIO dopo |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | skip `SetForegroundWindow + sleep(0.4)` se gia' in foreground |
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | base dinamica: aspetta stabilita' di 2 frame consecutivi |
+
+### Verifica fatta
+
+- Syntax OK su tutti i file modificati
+- Import del package: OK
+- La logica della base dinamica e' compatibile con la vecchia base
+  fissa (caso pannello gia' stabile -> 1 polling, base catturata in
+  ~30-60ms)
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Logica di analisi della sequenza Simon Says: invariata (stessa
+  soglia diff > 50, stesso polling, stesso click sequence)
+- Tutti gli altri handler: invariati
+- Compatibilita' con file `.py` task vecchi: invariata
+
+### Considerazione
+
+Se il problema persiste su Reactor, possibili cause aggiuntive:
+- Il punto display Simon Says non e' calibrato bene (i pixel
+  monitorati non corrispondono ai LED veri del minigioco)
+- Il pannello del Reactor ha un'animazione di "apertura" piu' lunga
+  di 1 secondo (in tal caso aumenta il timeout a 2s in handlers_simon)
+
+
 ## v2.2.11 — Arrivo piu' preciso al target della task
 
 ### Problema riportato
