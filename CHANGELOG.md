@@ -1,5 +1,97 @@
 # Changelog
 
+## v2.2.10 — Pulizia anti-flicker dei player rilevati (vivi e morti)
+
+### Bug riportato
+
+> Mi servirebbe sistemare il fatto della rilevazione dei player se
+> rianalizza la zona e non trovi piu' il player e' inutile mantenerlo
+> segnato sia per morti che per vivi.
+
+### Stato pre-fix
+
+In `yolo_scanner.py`, la pulizia dei player rilevati aveva 2 problemi:
+
+1. **I morti erano immortali**: la regola di scadenza `current_time -
+   dp['time'] < 30.0` aveva un'eccezione `or dp.get('is_dead', False)`,
+   quindi i cadaveri non venivano mai rimossi.
+
+2. **L'invecchiamento era lento**: per i vivi, quando la camera
+   inquadrava una zona ma non trovava il player, il `time` veniva
+   ridotto di 5s. Servivano ~6 cicli per superare la soglia 30s.
+
+Risultato: la mappa si "saturava" di player che in realta' erano gia'
+morti/spostati altrove.
+
+### Fix: nuovo contatore `missed_scans`
+
+Ogni player rilevato ora ha un campo `missed_scans` che traccia in
+quanti scan consecutivi il player era "atteso" (entro view_radius
+dalla camera) ma non e' stato rilevato.
+
+Logica:
+- Se in uno scan il player viene matchato da una nuova detection ->
+  `missed_scans = 0` (reset).
+- Se il player e' dentro `view_radius` (4.5 unita') dalla camera ma
+  nessuna detection vicina e' stata trovata -> `missed_scans += 1`.
+- Quando `missed_scans >= 3` -> il player viene **rimosso**.
+
+Soglia 3 scelta come anti-flicker: con scan rate ~5/s, un player
+sparito viene rimosso in ~0.6 secondi. Abbastanza rapido per non
+avere "fantasmi", ma robusto contro frame YOLO occasionalmente
+vuoti (occlusione, distanza, falso negativo).
+
+### Cambio chiave: vale anche per i morti
+
+A differenza della logica precedente, ora **vivi e morti seguono lo
+stesso comportamento**: se non sono piu' visibili nella zona inquadrata,
+spariscono dopo 3 scansioni mancate. Questo perche':
+
+- Se il bot guarda l'Admin e prima vedeva un cadavere, ma ora il
+  cadavere non c'e' piu' (perche' qualcuno l'ha riportato), e' giusto
+  rimuoverlo dalla mappa.
+- Se il bot si allontana dall'Admin e poi torna, il cadavere viene
+  ri-rilevato e ri-aggiunto.
+
+### Safety net 60s
+
+Aggiunta una rimozione automatica per player MOLTO vecchi (>60s) che
+non sono mai stati ri-inquadrati. Vale anche per i morti (prima ne
+erano esenti). Evita che la lista cresca indefinitamente per player
+in zone della mappa che non visitiamo piu'.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/yolo_scanner.py` | aggiunto campo `missed_scans` ai player + nuova logica di pulizia anti-flicker |
+
+### Verifica fatta
+
+7 test funzionali su scenari diversi:
+
+| Scenario | Risultato |
+|---|---|
+| Player visto in zona | Resta, missed=0 |
+| Player non visto 1 volta | Resta, missed=1 |
+| Player vivo non visto 3 volte | **Rimosso** |
+| Player morto non visto 3 volte | **Rimosso** (nuovo!) |
+| Anti-flicker: 1 frame mancato + ritrovato | Resta, missed resetta a 0 |
+| Player fuori inquadratura | Non toccato (corretto) |
+| Safety net 60s su player dimenticato | Rimosso |
+
+Tutti passano correttamente.
+
+### Cosa NON e' cambiato
+
+- `view_radius` (4.5 unita'): invariato
+- Tolleranza match (1.5 unita'): invariato
+- Logica anti-teleport e anti-zombie: invariate
+- Logica calibrazione camera, rendering, ecc.: invariate
+
+Solo la sezione "Pulizia fantasmi" e' stata sostituita.
+
+
 ## v2.2.9 — Ripeti SOLO le azioni con [Ripeti], non quelle prima
 
 ### Problema riportato
