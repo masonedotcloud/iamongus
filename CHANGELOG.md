@@ -1,5 +1,105 @@
 # Changelog
 
+## v2.2.14 — Timeout Simon Says configurabile
+
+### Richiesta
+
+> Fai che posso impostare questo delay di base metti 1s altrimenti
+> fai che lo posso mettere io.
+
+### Cosa e' cambiato
+
+Il timeout di stabilizzazione del pannello Simon Says (introdotto
+in v2.2.13) era hard-coded a 1 secondo. Ora e' configurabile su
+**due livelli** con priorita':
+
+#### Livello 1: campo `panel_timeout` nella singola azione
+
+Nel JSON dell'azione `simon_says` puoi mettere un override per
+quella specifica task:
+
+```json
+{
+  "tipo": "simon_says",
+  "display": [...],
+  "keypad":  [...],
+  "panel_timeout": 2.0,
+  "durata": 0.2,
+  "attesa": 0.5
+}
+```
+
+Utile se per Reactor ti serve 2s ma per altri minigiochi va bene
+0.5s.
+
+#### Livello 2: config globale `SIMON_PANEL_TIMEOUT_SEC`
+
+Default di tutte le task che NON hanno override per azione. In
+`among_us_ai/core/config.py`:
+
+```python
+SIMON_PANEL_TIMEOUT_SEC = 1.0  # default v2.2.14+
+```
+
+Se modifichi questo valore, **rigenera i file `.py`** delle task
+(es. modifica un'azione qualsiasi e salva). Il `task_writer` legge
+la config al momento della generazione e la inietta nel TASK_META
+del file generato.
+
+#### Livello 3: fallback hard-coded
+
+Se nessuno dei due e' definito (improbabile, ma per robustezza),
+default a 1.0s nell'handler.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/core/config.py` | nuovo `SIMON_PANEL_TIMEOUT_SEC = 1.0` |
+| `among_us_ai/execution/task_writer.py` | inietta valore di config in TASK_META al momento della generazione |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | propaga `simon_panel_timeout` da TASK_META alle azioni `simon_says` (se non gia' settato) |
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | legge `panel_timeout` da `az` (priorita' azione > config > 1.0s) |
+
+### Verifica fatta
+
+4 test logici sulle priorita':
+
+| Caso | Risultato |
+|---|---|
+| `az.panel_timeout = 2.5` | usa 2.5 (override azione) |
+| `TASK_META.simon_panel_timeout = 1.5`, az senza override | usa 1.5 (config globale) |
+| `az.panel_timeout = 0.5`, TASK_META = 1.5 | usa 0.5 (azione vince su config) |
+| Nessun valore | usa 1.0 (fallback) |
+
+Tutti corretti.
+
+Generazione file: il file `.py` autonomo della Reactor (task 17)
+ora contiene:
+```
+SIMON_PANEL_TIMEOUT_SEC = 1.0  # default 1.0s
+TASK_META = {
+    ...
+    'simon_panel_timeout': SIMON_PANEL_TIMEOUT_SEC,
+}
+```
+
+### Come usarlo per Reactor
+
+Se 1s non basta per il tuo PC:
+
+**Opzione A (tutte le task)**: in `among_us_ai/core/config.py`:
+```python
+SIMON_PANEL_TIMEOUT_SEC = 2.0
+```
+Poi rigenera i file (modifica qualsiasi azione e salva).
+
+**Opzione B (solo Reactor)**: nell'editor azioni della task Start
+Reactor, aggiungi nel JSON dell'azione `simon_says` il campo:
+```json
+"panel_timeout": 2.0
+```
+
+
 ## v2.2.13 — Simon Says (Reactor) reattivo: pre-warming + base dinamica
 
 ### Problema riportato
