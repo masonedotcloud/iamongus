@@ -1,5 +1,143 @@
 # Changelog
 
+## v2.2.17 — Motore come thread interno (avvio quasi istantaneo)
+
+### Problema riportato
+
+> [Exec] Avviato 'task_017_Start_Reactor.py' - PID 35560
+> [Start Reactor] Setup...
+> [Start Reactor] Esecuzione...
+> Troppo tempo passa, a questo punto tieni pronta ogni task e
+> appena clicco spazio subito dopo pochi millesecondi e' pronta.
+
+### Causa
+
+Anche con tutti gli altri ottimismi (delay_avvio=0, skip animazione,
+auto-stabilizzazione), restava un ritardo intrinseco al subprocess
+mode:
+
+- **Startup di Python** del subprocess: ~300-500ms (fork + import
+  di tutto il motore + librerie)
+- **IPC overhead**: stdout via pipe del SO, gestito dal kernel
+- **Re-import del package** `_motore_pkg`: gia' caricato nel bot
+  principale ma ricaricato da zero nel subprocess
+
+Risultato: tra "press SPAZIO" e "primo frame analizzato" passavano
+ancora 500-800ms anche nel best case.
+
+### Fix: motore come thread interno
+
+Riarchitettato l'esecuzione delle task per girare come **thread**
+nel processo principale, invece che come subprocess separato.
+
+#### Nuovo modulo `task_thread_runner.py`
+
+Wrapper `TaskThreadProcess` che mima `subprocess.Popen` (poll, wait,
+terminate, pid, stdout) ma esegue `esegui_lifecycle(task_meta, azioni)`
+in un `threading.Thread`. Il codice esistente (`_controlla_processo_task`,
+`_fase_da_ripetere_ext`, lettura stdout per `__COOLDOWN__:`) **non
+ha richiesto modifiche** grazie alla compatibilita' di API.
+
+#### Cattura stdout
+
+Le `print()` del motore vengono catturate via redirect di
+`sys.stdout` (per il thread runner) verso una pipe in-memory
+(`os.pipe()`). Il reader thread del bot principale legge dalla pipe
+esattamente come faceva con la pipe del subprocess.
+
+#### Crash isolation
+
+Tutto il motore e' wrappato in `try/except` robusto:
+- `SystemExit` -> rispetta exit code
+- `KeyboardInterrupt` -> exit 130
+- Altre eccezioni -> log nella pipe + exit 1
+
+Una crash del motore NON crasha il bot principale.
+
+#### Configurazione
+
+Nuova opzione in `core/config.py`:
+
+```python
+EXEC_MODE = 'thread'      # default v2.2.17+
+# EXEC_MODE = 'subprocess'  # fallback al vecchio comportamento
+```
+
+Per chi preferisce l'isolamento del subprocess o ha problemi con
+pyautogui da thread non-main, basta cambiare a `'subprocess'`.
+
+#### Compatibilita' con file .py
+
+I file `.py` in `tasks_exec/` continuano a essere generati e
+funzionanti se eseguiti standalone dall'utente (es. da shell per
+debug). In thread mode pero' non vengono usati per l'esecuzione:
+il motore riceve `task_meta` e `azioni` direttamente in memoria.
+
+In thread mode SKIP della verifica "file obsoleto": ogni avvio
+risparmia ~10-50ms di I/O su disco.
+
+### Timing post-fix
+
+```
+PRIMA (v2.2.16, subprocess):
+  Press SPAZIO          → t=0
+  Avvio subprocess       → t≈300-500ms (fork + python startup)
+  Import motore          → t≈500-700ms
+  SetForegroundWindow    → t≈700ms (ma skip se gia' foreground)
+  Cattura base Simon     → t≈700-1100ms (stabilizzazione)
+  Primo frame analizzato → ~1000ms
+
+DOPO (v2.2.17, thread):
+  Press SPAZIO          → t=0
+  Avvio thread          → t≈5-20ms (zero startup Python!)
+  Cattura base Simon    → t≈20-300ms (auto-stabilizzazione)
+  Primo frame analizzato → ~200-300ms
+```
+
+**Risparmio: ~500-700ms** per ogni avvio task.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/task_thread_runner.py` | NUOVO modulo `TaskThreadProcess` |
+| `among_us_ai/core/config.py` | nuova opzione `EXEC_MODE = 'thread'` |
+| `among_us_ai/ui/mixins/tasks_process.py` | `_avvia_subprocess_task` con bivio thread/subprocess + helper `_build_task_meta_for_thread` + skip rigenerazione file in thread mode |
+
+### Verifica fatta
+
+Test funzionale del `TaskThreadProcess`:
+
+| Test | Esito |
+|---|---|
+| Task con click semplice | Termina con exit_code, output via stdout pipe ✓ |
+| `poll()` durante esecuzione | Ritorna None ✓ |
+| `wait()` blocca fino a fine + ritorna exit_code | ✓ |
+| `terminate()` su task lunga | Ferma il thread (best-effort) ✓ |
+| Compatibilita' API con codice esistente | nessuna modifica richiesta a `_controlla_processo_task` ✓ |
+
+Test pyautogui da thread non-main: gia' usato in produzione dall'editor
+(`save_test.py::_esegui_test_thread`), nessun problema noto.
+
+### Cosa NON e' cambiato
+
+- API del motore (`esegui_azioni`, `esegui_lifecycle`, `run_task`): invariate
+- Logica di Ripeti, ESC fallback, start_from_action: invariate
+- Logica di lettura `__COOLDOWN__:` per multi-step: invariata
+- Generazione file .py via `task_writer`: invariata
+- File .py esistenti: continuano a funzionare standalone
+- API DPG, scanner YOLO, pathfinding: tutto invariato
+
+### Note tecniche
+
+- Single-task-at-a-time: la nostra architettura gia' garantisce
+  che giri una sola task per volta (controllo `_task_process is not None`)
+  quindi il redirect di `sys.stdout` e' sicuro.
+- Su Windows `os.pipe()` funziona correttamente da Python 3.4+.
+- Il `pid` del `TaskThreadProcess` e' l'ident del thread, non un
+  vero PID di OS. Solo cosmetico nei log.
+
+
 ## v2.2.16 — Simon Says: cattura base intelligente (auto-stabilizzazione)
 
 ### Problema riportato
