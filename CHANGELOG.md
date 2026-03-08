@@ -1,5 +1,112 @@
 # Changelog
 
+## v2.2.15 — `delay_avvio` per task: avvio rapido + pausa configurabile
+
+### Richiesta dell'utente
+
+> Voglio che la task parta subito di default. Poi se serve, decido io
+> mettendo un valore nell'interfaccia di modifica task. Default 0 =
+> parte subito, valore > 0 = aspetta N secondi prima di iniziare.
+
+### Modifiche
+
+#### 1. Default "parte subito" per Simon Says
+
+`panel_timeout` di `_h_simon_says` ora ha default `0.0` (era `1.0`).
+Quando `panel_timeout=0`, il primo frame viene preso direttamente
+come base senza attendere stabilizzazione. Questa e' la modalita'
+"parte subito" ora di default.
+
+Se imposti `panel_timeout > 0` nel JSON dell'azione, la vecchia logica
+di stabilizzazione frame-to-frame e' ancora disponibile per chi la
+preferisce.
+
+#### 2. Nuovo campo `delay_avvio` per task
+
+Aggiunto un campo `delay_avvio` a livello di **TASK** (non singola
+azione). Default `0.0`. Quando > 0, il motore aspetta N secondi
+PRIMA di iniziare l'esecuzione di qualsiasi azione.
+
+Vale **per ogni tipo di task** (click, drag, simon_says, yolo_*,
+ecc.) - basta un solo punto centrale nel `lifecycle.run_task` che
+applica la pausa indipendentemente dal tipo di azioni.
+
+#### 3. UI: campo "Delay avvio (s)" nel popup di modifica task
+
+Nella finestra che si apre cliccando "Modifica task", in sezione
+IDENTITA', sotto "Lunghezza", appare:
+
+```
+Delay avvio (s): [  0.00  ]   (0 = parte subito)
+```
+
+Input numerico con step 0.1, range 0-10 secondi. Quando salvi, il
+valore va in `tasks_dettagli.json` come `delay_avvio` della task.
+
+### Esempio d'uso
+
+**Task normale** (la maggior parte): lascia `delay_avvio = 0`. Il
+bot parte istantaneamente quando il pannello si apre.
+
+**Reactor Simon Says**: se la sequenza luminosa parte appena dopo
+l'apertura del pannello, ma il bot deve "vedere" il pannello stabile
+prima di catturare la base, imposti `delay_avvio = 1.5`. Il bot
+aspettera' 1.5 secondi dopo aver premuto SPAZIO prima di iniziare
+l'analisi.
+
+### Comportamento prima/dopo
+
+```
+Prima (v2.2.13):
+  Premi SPAZIO  → t=0
+  Subprocess pronto → t≈500ms
+  Stabilizzazione base (1s timeout) → t≈700-1500ms (sempre attesa)
+  Inizio analisi → t≈700-1500ms
+
+Adesso (v2.2.15) con delay_avvio = 0 (default):
+  Premi SPAZIO  → t=0
+  Subprocess pronto → t≈500ms
+  Cattura base immediata → t≈510ms
+  Inizio analisi → t≈510ms
+
+Adesso (v2.2.15) con delay_avvio = 1.5 (configurato dall'utente):
+  Premi SPAZIO  → t=0
+  Subprocess pronto → t≈500ms
+  delay_avvio sleep → t≈500-2000ms
+  Cattura base immediata → t≈2010ms
+  Inizio analisi → t≈2010ms
+```
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/tasks_popups_edit.py` | nuovo input "Delay avvio (s)" nel popup |
+| `among_us_ai/managers/task_dettagli_manager.py` | `aggiorna()` accetta e salva `delay_avvio` |
+| `among_us_ai/managers/task_manager.py` | facade `aggiorna()` propaga `delay_avvio` |
+| `among_us_ai/execution/task_writer.py` | inietta `delay_avvio` in `TASK_META` del file generato |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | `run_task` rispetta `delay_avvio` prima di `esegui_azioni` |
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | `panel_timeout` default ora `0.0` (era `1.0`) |
+
+### Verifica fatta
+
+Test funzionale:
+- `tm.aggiorna(17, ..., delay_avvio=1.5)` salva il valore in JSON ✓
+- `tm.crea_file_esecuzione(17)` genera `.py` con `'delay_avvio': 1.5` in `TASK_META` ✓
+- `lifecycle.py` legge `task_meta.get('delay_avvio', 0.0)` e fa
+  `_time.sleep(delay_avvio)` se > 0 ✓
+- Import del package: OK
+- Syntax OK su tutti i file modificati
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Comportamento delle task con `delay_avvio = 0` (default per le task
+  esistenti che non hanno il campo): identico a prima MA piu' veloce
+  perche' Simon Says ora parte subito (era 1s di stabilizzazione)
+- Nessuna regressione attesa
+
+
 ## v2.2.14 — Timeout Simon Says configurabile
 
 ### Richiesta
