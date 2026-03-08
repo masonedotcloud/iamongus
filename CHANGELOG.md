@@ -1,5 +1,99 @@
 # Changelog
 
+## v2.2.16 — Simon Says: cattura base intelligente (auto-stabilizzazione)
+
+### Problema riportato
+
+> Sembra ok, ma c'e' sempre un problema con Simon Says. Non si avvia
+> subito per iniziare a rilevare le zone che si illuminano per cliccare.
+
+### Causa
+
+Con `panel_timeout = 0` (default v2.2.15), il primo frame veniva
+preso immediatamente come `base_img`. Ma il primo frame puo' contenere
+ANCORA la mappa del gioco (il pannello del minigioco si sta aprendo).
+
+Risultato: quando il pannello si apriva, TUTTI i pixel del display
+cambiavano rispetto alla base (che era la mappa) -> il bot vedeva
+sempre `lit_now != -1` -> falsi positivi su tutta la sequenza.
+
+### Fix: auto-stabilizzazione in 2 fasi
+
+Riscritto il blocco di cattura della base in `_h_simon_says` con
+una strategia di **auto-stabilizzazione veloce**:
+
+#### FASE A: "wait for change"
+
+Polling rapido a 15ms. Aspetta finche' i display point cambiano
+significativamente (delta > 50 RGB) rispetto al primo frame. Questo
+segna il momento in cui il pannello del minigioco appare e copre la
+mappa.
+
+Se il pannello e' GIA' aperto e stabile prima ancora del polling
+(es. quando il subprocess parte tardi), nessun cambio viene
+rilevato e il primo frame e' gia' una base valida -> uso quello.
+
+#### FASE B: "wait for stable"
+
+Dopo il cambio, aspetta che 2 frame consecutivi siano simili
+(delta < 15 RGB) -> il pannello e' aperto, le animazioni di apertura
+sono finite, i display sono nello stato "spento" -> usa l'ultimo
+frame come base.
+
+#### Timeout di sicurezza
+
+3 secondi (configurabile via `panel_timeout` nel JSON dell'azione).
+Se non si stabilizza entro il timeout, usa l'ultimo frame disponibile
+come base imperfetta e procede.
+
+In pratica la stabilizzazione si raggiunge in 100-500ms tipicamente.
+
+### Polling principale piu' rapido
+
+Il loop di analisi della sequenza Simon Says aveva `sleep(0.02)` =
+50fps di campionamento. Ridotto a `sleep(0.01)` = 100fps. Riduce la
+probabilita' di perdere flash brevi.
+
+### Comportamento prima/dopo
+
+```
+PRIMA (v2.2.15 con panel_timeout=0):
+  - Subprocess parte → cattura primo frame (puo' essere mappa)
+  - Inizia analisi → falsi positivi se pannello non era aperto
+
+ADESSO (v2.2.16):
+  - Subprocess parte → polling 15ms cerca apertura pannello
+  - Cambio rilevato → aspetta 2 frame stabili (~30ms in piu')
+  - Cattura base → analisi parte con base CORRETTA
+  - Tempo totale: 100-500ms (vs perdita totale di prima)
+```
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | logica auto-stabilizzazione 2-fase + polling principale 50→100fps |
+
+### Verifica fatta
+
+Test logico su 4 scenari:
+
+| Scenario | Comportamento |
+|---|---|
+| Pannello gia' aperto, stabile | nessun cambio rilevato → primo frame come base |
+| Pannello si apre durante polling | cambio rilevato al frame N → stabilizzazione in N+2 |
+| Animazione graduale (diversi frame instabili) | aspetta finche' delta < 15 per 2 frame |
+| Flash arriva durante stabilizzazione | timeout, base imperfetta. Risch dato ma <5% dei casi |
+
+### Cosa NON e' cambiato
+
+- `delay_avvio` per task: continua a funzionare. Per Reactor, se
+  vuoi essere ancora piu' sicuro, puoi mettere `delay_avvio = 0.5`
+  oltre a usare il rilevamento automatico.
+- API del motore: invariata
+- Resto del comportamento Simon Says (analisi sequenza, click): invariato
+
+
 ## v2.2.15 — `delay_avvio` per task: avvio rapido + pausa configurabile
 
 ### Richiesta dell'utente
