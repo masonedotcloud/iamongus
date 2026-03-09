@@ -1,5 +1,92 @@
 # Changelog
 
+## v2.2.18 — Simon Says: distinzione flash vs apertura pannello
+
+### Problema riportato
+
+> Sembra che il Simon Says non funzioni piu'.
+
+### Causa
+
+In v2.2.16 avevo introdotto la "auto-stabilizzazione" usando
+`max_delta` (massimo delta RGB tra tutti i display point) come
+metrica di stabilita'. Funzionava per distinguere "pannello fermo"
+da "pannello in animazione di apertura".
+
+PROBLEMA: con il thread mode di v2.2.17, il bot e' molto piu'
+veloce e arriva a campionare gia' il primo flash della sequenza
+**durante** la fase di stabilizzazione. Il flash fa salire `max_delta`
+a 200+ -> il pannello viene visto come "instabile" all'infinito ->
+timeout dopo 3s -> base imperfetta o sbagliata.
+
+In pratica:
+- Apertura pannello: TUTTI i display cambiano (max_delta alto, 2°
+  delta alto)
+- Flash della sequenza: UN solo display cambia (max_delta alto, 2°
+  delta basso!)
+
+`max_delta` non distingueva i due casi.
+
+### Fix: usa il SECONDO delta piu' alto
+
+Cambio metrica di stabilita' da `max_delta` a `second_delta`.
+
+```python
+deltas = sorted([delta_rgb(a[i], b[i]) for i in range(N)], reverse=True)
+second_delta = deltas[1]
+stable = (second_delta < 20)  # solo 1 display cambia = stabile
+```
+
+Cosi':
+- Apertura pannello (tutti cambiano) -> second_delta alto -> instabile (giusto)
+- Flash su 1 display -> second_delta basso -> **stabile, base catturata**
+- L'unico display "in flash" verra' rilevato dal loop di analisi
+  (gia' presente) come `lit_now` con `diff > 50` contro la base
+
+### Cambiamenti nei tuning
+
+| Parametro | v2.2.16 | v2.2.18 |
+|---|---|---|
+| Soglia stabilita' | `max_delta < 15` | `second_delta < 20` |
+| panel_timeout default | 3.0s | 2.0s |
+| Filosofia | wait change + wait stable | wait stable robusto |
+
+### Nuovi log diagnostici
+
+Adesso il handler stampa in tempo reale:
+- `[Simon] Base catturata dopo 320ms (12 frame, second_delta=8, max_delta=180)`
+- `[Simon] Round 1: rilevato flash 0 (seq=[0])`
+- `[Simon] Round 1: nessun flash rilevato in 10s, esco` (caso fallimento)
+
+Cosi' nel tuo log vedi esattamente quando la base e' stata
+catturata e quali flash sono rilevati.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | semplificazione: solo "wait stable" con second_delta + log diagnostici per round |
+
+### Verifica fatta
+
+Test logico su 5 scenari:
+
+| Scenario | Atteso | Risultato |
+|---|---|---|
+| Pannello idle stabile | stabile | ✓ |
+| Apertura pannello (tutti cambiano) | instabile (skip) | ✓ |
+| 1 flash sequenza, altri fermi | **stabile** (base OK) | ✓ |
+| 2 flash insieme (raro) | instabile (skip) | ✓ |
+| Rumore rendering ±5 RGB | stabile | ✓ |
+
+### Cosa NON e' cambiato
+
+- Loop di analisi della sequenza (`diff > 50` contro base): identico
+- Logica click sui keypad: identica
+- `delay_avvio` per task: continua a funzionare come prima
+- API del motore: invariata
+
+
 ## v2.2.17 — Motore come thread interno (avvio quasi istantaneo)
 
 ### Problema riportato
