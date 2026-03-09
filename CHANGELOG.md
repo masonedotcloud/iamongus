@@ -1,5 +1,107 @@
 # Changelog
 
+## v2.2.19 — Rollback: subprocess come default + Simon Says semplice
+
+### Problema riportato
+
+> Il software si avvia e si blocca proprio. All'inizio funzionava
+> quando ti mandai il codice all'inizio inizio, cerca di farlo funzionare.
+
+### Cause
+
+Due problemi introdotti dalle ultime versioni:
+
+#### 1. Thread mode (v2.2.17) blocca il bot
+
+In thread mode il motore esegue `sys.stdout = pipe_writer` per
+catturare le print. Ma `sys.stdout` e' **globale per processo, non
+per thread**. Quindi:
+- Le print del bot principale (DPG, log, render) finiscono nella
+  pipe del motore
+- Se la pipe si riempie (4-64KB su Windows), `write()` blocca
+- Deadlock con il reader thread o con altri thread del bot
+
+Inoltre `pyautogui` da thread non-main su Windows puo' causare
+problemi con SendInput in alcune configurazioni.
+
+#### 2. Auto-stabilizzazione di Simon Says (v2.2.13-2.2.18) era piu'
+   complessa del necessario
+
+Ho introdotto progressivamente logica per "auto-stabilizzare" la
+base_img di Simon Says (wait change + wait stable, max_delta poi
+second_delta). Ognuna di queste modifiche aveva edge case che la
+rendevano fragile in scenari reali.
+
+### Fix: rollback selettivo
+
+#### 1. `EXEC_MODE = 'subprocess'` come default
+
+Torna al subprocess come default. Il thread mode resta come opzione
+sperimentale per chi vuole provarlo:
+
+```python
+# In among_us_ai/core/config.py
+EXEC_MODE = 'subprocess'  # default v2.2.19+
+# EXEC_MODE = 'thread'    # sperimentale
+```
+
+Il subprocess parte in ~300-500ms (latenza naturale del Python
+startup) ma **non ha rischio di deadlock**. La latenza extra
+funziona anche da "delay naturale" che lascia tempo al pannello del
+minigioco di aprirsi prima che il motore inizi l'analisi.
+
+#### 2. Handler Simon Says: torno alla versione semplice originale
+
+Riscritto `_h_simon_says` come la versione **semplice e funzionante**
+di v2.1.x:
+
+```python
+# Cattura il primo frame come base, parte subito.
+base_img = sct.grab(monitor)
+base_colors = [base_img[p[1]-cy, p[0]-cx, :3] for p in disp_pts]
+
+# Loop standard di analisi sequenza
+for rnd in range(1, 6):
+    ...
+```
+
+Niente piu' wait change, wait stable, max_delta, second_delta. Solo
+quello che funzionava all'inizio.
+
+Per pannelli con animazione di apertura lenta (es. Reactor): usa
+il campo `delay_avvio` della task nel popup di modifica per
+aspettare prima dell'analisi. v2.2.15 aveva gia' aggiunto questo
+meccanismo, e' la via pulita.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/core/config.py` | `EXEC_MODE = 'subprocess'` (era `'thread'`) |
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | rollback alla versione semplice di v2.1.x |
+
+### Cosa NON e' stato rimosso
+
+- Codice del thread mode (`task_thread_runner.py`): mantenuto come
+  feature opt-in via `EXEC_MODE = 'thread'`. Chi vuole provarlo
+  puo' farlo, ma sa di andare incontro ai potenziali deadlock.
+- `delay_avvio` per task: continua a funzionare, e' la via
+  raccomandata per i minigiochi con apertura lenta.
+- Auto-stabilizzazione: rimossa dal handler, ma restano le idee
+  sviluppate (campo `panel_timeout` nel JSON, log diagnostici).
+
+### Considerazione futura
+
+Se volessimo davvero il thread mode senza deadlock, servirebbe:
+- Pipe non bloccante (buffer infinito o lettura asincrona)
+- Cattura print thread-local (via `contextvars` o thread-local
+  redirection)
+- Guard per pyautogui da thread non-main
+
+Lavoro non banale. Per ora la via piu' pratica e' subprocess +
+delay_avvio configurabile dall'utente.
+
+
 ## v2.2.18 — Simon Says: distinzione flash vs apertura pannello
 
 ### Problema riportato
