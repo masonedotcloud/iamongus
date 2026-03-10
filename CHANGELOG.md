@@ -1,5 +1,129 @@
 # Changelog
 
+## v2.2.20 — Pre-warming subprocess: avvio istantaneo all'analisi
+
+### Problema riportato
+
+> Funziona, ma purtroppo inizia un pochino troppo tardi rispetto a
+> quando si apre l'interfaccia. Appena si apre l'interfaccia parte
+> con il Simon Says. Quindi appena clicco SPAZIO per avviare la task
+> deve essere pronto ad analizzare.
+
+### Causa
+
+Anche con subprocess mode (la versione che funziona), c'e' un
+ritardo intrinseco fra "press SPAZIO" e "primo frame analizzato":
+
+- Press SPAZIO -> apre il pannello del minigioco (~immediato)
+- Avvio subprocess -> Python startup (~300-500ms)
+- Import del motore -> ~100ms
+- mss.mss() apertura -> ~50-100ms
+
+Totale: ~500-800ms di latenza fra apertura pannello e primo frame.
+In Simon Says (Reactor) la sequenza puo' iniziare entro 200-500ms
+dall'apertura -> rischio di perdere il primo flash.
+
+### Fix: pre-warming del subprocess con trigger via stdin
+
+#### Idea
+
+Avviamo il subprocess **prima** della press SPAZIO (al momento
+dell'arrivo al target), ma con un nuovo flag `--wait-trigger`. Il
+subprocess fa tutto il setup (import, mss, motore) poi **resta in
+attesa** su `stdin.readline()` per la stringa "GO\\n".
+
+Quando il bot principale preme SPAZIO, manda "GO\\n" sullo stdin.
+Il subprocess lo riceve e parte istantaneamente: il startup Python
+e' gia' avvenuto.
+
+#### Sequenza nuova
+
+```
+on_arrivo() chiamato
+  ├── FASE A: avvia subprocess --wait-trigger
+  │           (subprocess fa setup ~500ms, poi readline su stdin)
+  ├── time.sleep(0.3) (stabilita' visiva esistente)
+  ├── _controlla_task_attiva() (check pulsante Use esistente)
+  ├── animazione popup STATI_LAUNCH
+  └── _update_task_launch() chiamato:
+      ├── FASE B: press SPAZIO -> pannello minigioco si apre
+      └── FASE C: invia "GO\\n" su stdin -> subprocess parte istantaneo
+```
+
+Tempo di anticipo: ~500-1000ms tra avvio subprocess e SPAZIO,
+sufficiente per completare tutto il startup di Python.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/task_writer.py` | nuovo flag `--wait-trigger` nel parser + variabile `WAIT_TRIGGER` + campo `wait_trigger` in TASK_META |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | gestione `wait_trigger` in `run_task`: aspetta "GO" su stdin prima di proseguire |
+| `among_us_ai/ui/mixins/tasks_process.py` | nuovo parametro `wait_trigger` in `_avvia_subprocess_task` + `stdin=PIPE` quando attivo + nuovo metodo `_invia_trigger_subprocess()` |
+| `among_us_ai/ui/mixins/tasks_launch.py` | pre-warming all'arrivo (FASE A) + trigger dopo SPAZIO (FASE C) |
+
+### Auto-rigenerazione file vecchi
+
+Il check di "file obsoleto" in `_avvia_subprocess_task` ora include
+anche `WAIT_TRIGGER`: i file `.py` esistenti vengono automaticamente
+rigenerati al primo lancio, propagando il nuovo argparse.
+
+I file `.py` non rigenerati ricevono `--wait-trigger` come argomento
+sconosciuto, che viene IGNORATO da `parse_known_args`. Non c'e'
+errore, ma manca il pre-warming finche' il file non viene
+rigenerato.
+
+### Compatibilita'
+
+- File `.py` rigenerati: hanno `WAIT_TRIGGER` e supportano il
+  pre-warming.
+- File `.py` non rigenerati: `--wait-trigger` ignorato, parte subito
+  come prima (no pre-warming).
+- Lancio manuale del file `.py` da shell senza `--wait-trigger`:
+  funziona normalmente (parte subito).
+- Thread mode (sperimentale): non supporta wait_trigger - parte subito.
+
+### Verifica fatta
+
+Test rigenerazione file `.py`:
+- File generato contiene `--wait-trigger` nell'argparse ✓
+- Variabile `WAIT_TRIGGER` definita ✓
+- TASK_META.wait_trigger correttamente iniettato ✓
+
+Test import del package: OK
+Syntax OK su tutti i file modificati
+
+### Timing post-fix (stima)
+
+```
+PRIMA (v2.2.19):
+  Press SPAZIO            t=0
+  Apre pannello           t≈100ms
+  Avvio subprocess        t=0
+  Subprocess pronto       t≈500-700ms
+  Primo frame analizzato  t≈600-800ms
+
+DOPO (v2.2.20):
+  on_arrivo()             t=0
+  Avvia subprocess        t≈5ms
+  Subprocess pronto       t≈500ms (in stand-by)
+  Press SPAZIO            t≈800ms (dopo check visuale)
+  Apre pannello           t≈900ms
+  Trigger "GO" inviato    t≈900ms
+  Subprocess riprende     t≈905ms
+  Primo frame analizzato  t≈920ms
+```
+
+L'analisi parte **al momento del SPAZIO**, non dopo 500ms di startup.
+
+### Cosa NON e' cambiato
+
+- Logica di Simon Says (handler semplice): invariata
+- Logica di Ripeti, ESC fallback, start_from_action: invariate
+- delay_avvio per task: continua a funzionare per chi lo usa
+- API del motore (`esegui_lifecycle`, `run_task`): invariata
+
+
 ## v2.2.19 — Rollback: subprocess come default + Simon Says semplice
 
 ### Problema riportato
