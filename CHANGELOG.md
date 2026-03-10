@@ -1,5 +1,115 @@
 # Changelog
 
+## v2.2.21 — Simon Says: fix multi-round con ricattura base
+
+### Problema riportato
+
+> Sembra che il Simon Says rileva i colori ma adesso non funzioni
+> piu' bene, ricontrolla il funzionamento. Si blocca dopo il round 1.
+
+### Causa
+
+Il flusso del Simon Says di Among Us e' progressivo:
+- Round 1: gioco mostra LED A -> bot clicca [A]
+- Round 2: gioco mostra LED A,B -> bot clicca [A,B]
+- Round 3: gioco mostra LED A,B,C -> bot clicca [A,B,C]
+- ecc.
+
+Tra un round e il successivo, dopo i click del bot:
+- **Animazione di feedback dei click**: il gioco mostra una luce/glow
+  sul pulsante cliccato per ~200-500ms
+- **Pausa di transizione**: ~300-700ms prima che inizi la nuova sequenza
+- **Possibili artefatti visivi** nei display point (riflessi, glow)
+
+Il vecchio handler:
+1. Non aspettava abbastanza tra fine click round N e inizio rilevamento
+   round N+1 -> rilevava artefatti di feedback come "flash"
+2. Non ricatturava la `base_img` -> la base era stata catturata
+   all'inizio (pannello appena aperto), ma dopo i click lo stato dei
+   display point poteva essere leggermente diverso (es. pulsanti in
+   stato "appena cliccato")
+3. Il `start_t` veniva resettato all'INIZIO del round invece che ad
+   ogni nuovo flash -> timeout di 10s rigido che poteva non essere
+   sufficiente per round con flash distanti
+
+### Fix
+
+#### 1. Pausa POST-CLICK + ricattura base ad ogni round
+
+Tra la fine dei click di un round e l'inizio del rilevamento del
+successivo, ora il bot:
+- Aspetta `POST_CLICK_PAUSE = 1.0s` (lascia finire animazioni
+  feedback + transizione)
+- **Ricattura la `base_img`** dopo la pausa (cosi' il prossimo round
+  monitora contro lo stato "spento" reale del momento)
+
+```python
+for rnd in range(1, 6):
+    # ... rilevamento + click ...
+    if rnd < 5:
+        time.sleep(POST_CLICK_PAUSE)   # 1 sec
+        base_colors = _read_base()      # NUOVA base
+```
+
+#### 2. Reset timer per ogni nuovo flash (era gia' presente, mantenuto)
+
+Quando il bot rileva un nuovo flash, resetta `start_t = time.time()`,
+cosi' i 10s di timeout sono "tra un flash e il successivo", non
+"per tutto il round".
+
+#### 3. Log diagnostici per debug
+
+Adesso il handler stampa:
+- `[Simon] Base iniziale catturata su 4 display point`
+- `[Simon] Round 2: aspetto 2 flash...`
+- `[Simon] Round 2: flash #1 = LED 0 (seq=[0])`
+- `[Simon] Round 2: flash #2 = LED 2 (seq=[0, 2])`
+- `[Simon] Round 2: clicco 2 keypad...`
+- `[Simon] Round 2: pausa 1.0s e ricattura base per round 3`
+- `[Simon] Round 3: TIMEOUT, nessun flash rilevato. Esco.` (caso fail)
+
+Cosi' nei log puoi vedere esattamente in che round si blocca e
+perche'.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | pausa post-click + ricattura base + log diagnostici |
+
+### Verifica fatta
+
+Test logico su 4 scenari:
+
+| Round | Sequenza gioco | Sequenza rilevata |
+|---|---|---|
+| R1 | [0] | [0] ✓ |
+| R2 | [0, 2] | [0, 2] ✓ |
+| R3 | [0, 2, 1] | [0, 2, 1] ✓ |
+| R2 ripeti | [1, 1] (stesso LED 2 volte) | [1, 1] ✓ |
+
+Tutti corretti. Il caso "stesso LED ripetuto consecutivamente"
+e' un edge case importante che funziona grazie alla logica di
+`last_lit = -1` quando i display sono tutti spenti.
+
+### Cosa NON e' cambiato
+
+- Soglia `diff > 50` per considerare un LED acceso: invariata
+- Logica `last_lit` per non contare lo stesso flash piu' volte: invariata
+- `delay_avvio` per task: continua a funzionare
+- Pre-warming del subprocess (v2.2.20): invariato
+- Tutto il resto del bot: invariato
+
+### Considerazione
+
+Se il problema persiste, controlla i log. In particolare:
+- Vedi `Round 2: TIMEOUT`? -> Il pannello non sta mostrando
+  nuovi flash (forse il bot ha cliccato i keypad sbagliati al round 1
+  e il gioco ha terminato la task come "fallita")
+- Vedi `Round 2: flash #1 = LED X` ma X e' un numero strano? -> Sta
+  rilevando artefatti, prova a aumentare `POST_CLICK_PAUSE` a 1.5s
+
+
 ## v2.2.20 — Pre-warming subprocess: avvio istantaneo all'analisi
 
 ### Problema riportato
