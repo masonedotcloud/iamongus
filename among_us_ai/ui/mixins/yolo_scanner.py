@@ -198,7 +198,14 @@ class YoloScannerMixin:
                     
                     new_detections.append({
                         'x': world_x, 'y': world_y, 'time': current_time, 
-                        'color': player_col, 'name': color_name, 'is_dead': is_dead
+                        'color': player_col, 'name': color_name, 'is_dead': is_dead,
+                        # Contatore scan in cui il player era atteso (entro
+                        # view_radius dalla camera) ma non e' stato rilevato.
+                        # Si resetta a 0 quando il player viene matchato.
+                        # Quando supera la soglia (3), il player viene
+                        # rimosso dalla lista (anti-flicker robusto contro
+                        # frame YOLO occasionalmente vuoti).
+                        'missed_scans': 0,
                     })
                     
                 for nd in new_detections:
@@ -239,6 +246,9 @@ class YoloScannerMixin:
                         best_match['y'] = nd['y']
                         best_match['time'] = nd['time']
                         best_match['is_dead'] = nd['is_dead']
+                        # Player ri-trovato: azzera il contatore di scan
+                        # mancati. Importante per la logica anti-flicker.
+                        best_match['missed_scans'] = 0
                         
                         if best_match.get('name') == 'Unknown' and nd['name'] != 'Unknown':
                             best_match['name'] = nd['name']
@@ -252,18 +262,77 @@ class YoloScannerMixin:
                     else:
                         self.detected_players.append(nd)
 
-                # Pulizia fantasmi: se guardiamo un punto e il player non c'e' piu', lo facciamo sparire
+                # === PULIZIA ANTI-FLICCKER (vivi e morti) ===
+                # Se la camera sta inquadrando una zona dove c'era un
+                # player segnato (entro view_radius) e in questo scan
+                # NON c'e' una detection vicina, incrementa missed_scans.
+                # Quando missed_scans >= MAX_MISSED, il player viene
+                # rimosso dalla lista. La soglia evita di farli sparire
+                # per un singolo frame mancato (occlusione, distanza,
+                # falso negativo YOLO).
+                #
+                # Soglia 3 scansioni: con scan rate ~5/s, un player
+                # sparito viene rimosso in ~0.6 secondi. Abbastanza
+                # rapido per non avere "fantasmi" in giro, ma robusto
+                # contro flicker.
                 view_radius = 4.5
+                MAX_MISSED = 3
+
+                # Vincolo: solo scan "informativi" (cioe' senza centinaia
+                # di detection finte) contano per la pulizia.
                 if len(new_detections) < 10:
                     for dp in self.detected_players:
-                        if not dp.get('is_dead', False):
-                            dist_cam = math.hypot(dp['x'] - self.pos_target[0], dp['y'] - self.pos_target[1])
-                            if dist_cam < view_radius:
-                                if not any(math.hypot(nd['x'] - dp['x'], nd['y'] - dp['y']) < 1.5 for nd in new_detections):
-                                    dp['time'] -= 5.0  # Invecchia rapidamente
-                                    
-                # Rimuovi player troppo vecchi (30s) per non saturare la memoria
-                self.detected_players = [dp for dp in self.detected_players if current_time - dp['time'] < 30.0 or dp.get('is_dead', False)]
+                        # Inizializza missed_scans su player vecchi (creati
+                        # prima di questa modifica, non hanno il campo)
+                        if 'missed_scans' not in dp:
+                            dp['missed_scans'] = 0
+
+                        # Distanza del player dal punto inquadrato dalla
+                        # camera. Solo i player ATTESI in zona (entro
+                        # view_radius) sono soggetti al check missed.
+                        dist_cam = math.hypot(
+                            dp['x'] - self.pos_target[0],
+                            dp['y'] - self.pos_target[1],
+                        )
+                        if dist_cam >= view_radius:
+                            # Fuori inquadratura, non possiamo dire nulla
+                            # del suo stato. Resta com'e'.
+                            continue
+
+                        # Cerca una detection di QUESTO scan vicina al
+                        # player. Tolleranza 1.5u (lo stesso valore della
+                        # vecchia logica fantasmi).
+                        trovato_in_scan = any(
+                            math.hypot(nd['x'] - dp['x'],
+                                       nd['y'] - dp['y']) < 1.5
+                            for nd in new_detections
+                        )
+                        if trovato_in_scan:
+                            # Match trovato: il reset e' gia' stato fatto
+                            # nel blocco best_match piu' sopra. Qui
+                            # garantiamo idempotenza.
+                            dp['missed_scans'] = 0
+                        else:
+                            # Atteso ma non visto: incrementa il contatore
+                            dp['missed_scans'] = dp.get('missed_scans', 0) + 1
+
+                # Rimuovi i player con troppe scansioni mancate consecutive.
+                # Si applica sia ai vivi che ai morti: se l'utente non li
+                # vede piu' nella zona inquadrata, non ha senso tenerli
+                # segnati sulla mappa.
+                self.detected_players = [
+                    dp for dp in self.detected_players
+                    if dp.get('missed_scans', 0) < MAX_MISSED
+                ]
+
+                # Safety net: rimuovi player molto vecchi (>60s) anche se
+                # non sono mai stati ri-inquadrati (potrebbero essere in
+                # zone della mappa che non visiteremo piu').
+                # Vale per vivi E morti adesso (prima i morti erano esenti).
+                self.detected_players = [
+                    dp for dp in self.detected_players
+                    if current_time - dp['time'] < 60.0
+                ]
 
             # --- RILEVAMENTO PORTE CHIUSE ---
             if door_model:

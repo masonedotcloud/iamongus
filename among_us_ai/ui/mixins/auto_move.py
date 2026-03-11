@@ -255,6 +255,44 @@ class AutoMoveMixin:
         # Avanzamento waypoint standard
         if dist < advance_th:
             if is_last:
+                # === FINAL NUDGE: ultimi centimetri per arrivare nel raggio
+                # di attivazione del pulsante Use del gioco ===
+                #
+                # Il pathfinding lascia un piccolo margine (advance_th =
+                # AUTO_ARRIVAL_THRESHOLD) per evitare di "incollarsi" al
+                # target. Pero' a volte questo margine e' troppo grande e
+                # il bot non entra nel raggio di interazione del gioco
+                # (il pulsante Use non si illumina).
+                #
+                # Per rifinire l'arrivo, premiamo i tasti direzionali
+                # verso il target per ulteriori AUTO_FINAL_NUDGE_SEC.
+                # Lo facciamo qui in modo bloccante (con time.sleep) perche'
+                # il movimento e' molto breve e non serve interruzione.
+                nudge_sec = getattr(GPSConfig, 'AUTO_FINAL_NUDGE_SEC', 0.0)
+                if nudge_sec > 0 and self.auto_final_target:
+                    fx, fy = self.auto_final_target
+                    fdx, fdy = fx - cx, fy - cy
+                    fdist = math.hypot(fdx, fdy)
+                    if fdist > 0.05:  # solo se vale la pena
+                        # Direzione di nudge (tasti binari, niente PWM:
+                        # la finestra e' troppo breve per fare modulazione).
+                        # Coerente con il mapping principale:
+                        #   dx > 0 -> 'D' (destra), dx < 0 -> 'A' (sinistra)
+                        #   dy > 0 -> 'W' (su),     dy < 0 -> 'S' (giu')
+                        nudge_keys = set()
+                        if   fdx >  0.05: nudge_keys.add('D')
+                        elif fdx < -0.05: nudge_keys.add('A')
+                        if   fdy >  0.05: nudge_keys.add('W')
+                        elif fdy < -0.05: nudge_keys.add('S')
+
+                        if nudge_keys:
+                            # Rilascia tasti gia' premuti (probabili)
+                            self.key_ctrl.release_all()
+                            for k in nudge_keys:
+                                self.key_ctrl.press(k)
+                            time.sleep(nudge_sec)
+                            self.key_ctrl.release_all()
+
                 # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Arrivato OK"
                 self._cancel_auto_move(silent=True, stop_auto_all=False)

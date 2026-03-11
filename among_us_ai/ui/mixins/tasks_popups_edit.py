@@ -177,12 +177,20 @@ class TasksPopupsEditMixin:
             due_p_v  = dpg.get_value("mt_due_p")
             custom_v = dpg.get_value("mt_custom")
             lung_v   = dpg.get_value("mt_lunghezza")
+            # Delay avvio (sec): 0 = parte subito, >0 = aspetta N secondi
+            # dopo l'apertura del minigioco prima di iniziare le azioni.
+            delay_v  = (dpg.get_value("mt_delay_avvio")
+                        if dpg.does_item_exist("mt_delay_avvio") else 0.0)
             # Verifica se l'elemento DPG e' gia' stato creato
             parent_v = dpg.get_value("mt_parent") if dpg.does_item_exist("mt_parent") else "- (nessuno)"
             if not nome_v:
                 return
             # Aggiorna i dati strutturali della task
-            self.task_mgr.aggiorna(id_t, nome_v, x_v, y_v, vitale=vitale_v, due_giocatori=due_p_v, codice_personalizzato=custom_v, lunghezza=lung_v)
+            self.task_mgr.aggiorna(id_t, nome_v, x_v, y_v, vitale=vitale_v,
+                                   due_giocatori=due_p_v,
+                                   codice_personalizzato=custom_v,
+                                   lunghezza=lung_v,
+                                   delay_avvio=max(0.0, float(delay_v)))
             # Estrai id del padre dal combo (formato "[ID] nome" o "- (nessuno)")
             new_parent = None
             if parent_v and parent_v.startswith("["):
@@ -267,7 +275,24 @@ class TasksPopupsEditMixin:
             with dpg.group(horizontal=True):
                 dpg.add_text("Lunghezza:")
                 dpg.add_combo(items=["N/A", "Short", "Long", "Common"], tag="mt_lunghezza", default_value=t.get('lunghezza', 'N/A'), width=120)
-            
+
+            # === DELAY AVVIO (in secondi) ===
+            # Pausa applicata UNA volta sola dopo l'apertura del minigioco
+            # e prima di iniziare l'esecuzione delle azioni della task.
+            # Utile per minigiochi con animazione di apertura lenta:
+            # se metti es. 1.5 secondi, il bot aspetta che il pannello
+            # sia completamente visibile prima di analizzare/cliccare.
+            # Default: 0 (parte subito).
+            with dpg.group(horizontal=True):
+                dpg.add_text("Delay avvio (s):")
+                dpg.add_input_float(
+                    tag="mt_delay_avvio",
+                    default_value=float(t.get('delay_avvio', 0.0)),
+                    width=80, step=0.1, format="%.2f",
+                    min_value=0.0, max_value=10.0, min_clamped=True,
+                )
+                dpg.add_text("(0 = parte subito)", color=Colors.TEXT_DIM)
+
             dpg.add_checkbox(tag="mt_custom", label=" Codice Custom (non sovrascrivere il .py)",
                              default_value=bool(t.get('codice_personalizzato', False)))
 

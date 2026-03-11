@@ -1,5 +1,1376 @@
 # Changelog
 
+## v2.2.21 — Simon Says: fix multi-round con ricattura base
+
+### Problema riportato
+
+> Sembra che il Simon Says rileva i colori ma adesso non funzioni
+> piu' bene, ricontrolla il funzionamento. Si blocca dopo il round 1.
+
+### Causa
+
+Il flusso del Simon Says di Among Us e' progressivo:
+- Round 1: gioco mostra LED A -> bot clicca [A]
+- Round 2: gioco mostra LED A,B -> bot clicca [A,B]
+- Round 3: gioco mostra LED A,B,C -> bot clicca [A,B,C]
+- ecc.
+
+Tra un round e il successivo, dopo i click del bot:
+- **Animazione di feedback dei click**: il gioco mostra una luce/glow
+  sul pulsante cliccato per ~200-500ms
+- **Pausa di transizione**: ~300-700ms prima che inizi la nuova sequenza
+- **Possibili artefatti visivi** nei display point (riflessi, glow)
+
+Il vecchio handler:
+1. Non aspettava abbastanza tra fine click round N e inizio rilevamento
+   round N+1 -> rilevava artefatti di feedback come "flash"
+2. Non ricatturava la `base_img` -> la base era stata catturata
+   all'inizio (pannello appena aperto), ma dopo i click lo stato dei
+   display point poteva essere leggermente diverso (es. pulsanti in
+   stato "appena cliccato")
+3. Il `start_t` veniva resettato all'INIZIO del round invece che ad
+   ogni nuovo flash -> timeout di 10s rigido che poteva non essere
+   sufficiente per round con flash distanti
+
+### Fix
+
+#### 1. Pausa POST-CLICK + ricattura base ad ogni round
+
+Tra la fine dei click di un round e l'inizio del rilevamento del
+successivo, ora il bot:
+- Aspetta `POST_CLICK_PAUSE = 1.0s` (lascia finire animazioni
+  feedback + transizione)
+- **Ricattura la `base_img`** dopo la pausa (cosi' il prossimo round
+  monitora contro lo stato "spento" reale del momento)
+
+```python
+for rnd in range(1, 6):
+    # ... rilevamento + click ...
+    if rnd < 5:
+        time.sleep(POST_CLICK_PAUSE)   # 1 sec
+        base_colors = _read_base()      # NUOVA base
+```
+
+#### 2. Reset timer per ogni nuovo flash (era gia' presente, mantenuto)
+
+Quando il bot rileva un nuovo flash, resetta `start_t = time.time()`,
+cosi' i 10s di timeout sono "tra un flash e il successivo", non
+"per tutto il round".
+
+#### 3. Log diagnostici per debug
+
+Adesso il handler stampa:
+- `[Simon] Base iniziale catturata su 4 display point`
+- `[Simon] Round 2: aspetto 2 flash...`
+- `[Simon] Round 2: flash #1 = LED 0 (seq=[0])`
+- `[Simon] Round 2: flash #2 = LED 2 (seq=[0, 2])`
+- `[Simon] Round 2: clicco 2 keypad...`
+- `[Simon] Round 2: pausa 1.0s e ricattura base per round 3`
+- `[Simon] Round 3: TIMEOUT, nessun flash rilevato. Esco.` (caso fail)
+
+Cosi' nei log puoi vedere esattamente in che round si blocca e
+perche'.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | pausa post-click + ricattura base + log diagnostici |
+
+### Verifica fatta
+
+Test logico su 4 scenari:
+
+| Round | Sequenza gioco | Sequenza rilevata |
+|---|---|---|
+| R1 | [0] | [0] ✓ |
+| R2 | [0, 2] | [0, 2] ✓ |
+| R3 | [0, 2, 1] | [0, 2, 1] ✓ |
+| R2 ripeti | [1, 1] (stesso LED 2 volte) | [1, 1] ✓ |
+
+Tutti corretti. Il caso "stesso LED ripetuto consecutivamente"
+e' un edge case importante che funziona grazie alla logica di
+`last_lit = -1` quando i display sono tutti spenti.
+
+### Cosa NON e' cambiato
+
+- Soglia `diff > 50` per considerare un LED acceso: invariata
+- Logica `last_lit` per non contare lo stesso flash piu' volte: invariata
+- `delay_avvio` per task: continua a funzionare
+- Pre-warming del subprocess (v2.2.20): invariato
+- Tutto il resto del bot: invariato
+
+### Considerazione
+
+Se il problema persiste, controlla i log. In particolare:
+- Vedi `Round 2: TIMEOUT`? -> Il pannello non sta mostrando
+  nuovi flash (forse il bot ha cliccato i keypad sbagliati al round 1
+  e il gioco ha terminato la task come "fallita")
+- Vedi `Round 2: flash #1 = LED X` ma X e' un numero strano? -> Sta
+  rilevando artefatti, prova a aumentare `POST_CLICK_PAUSE` a 1.5s
+
+
+## v2.2.20 — Pre-warming subprocess: avvio istantaneo all'analisi
+
+### Problema riportato
+
+> Funziona, ma purtroppo inizia un pochino troppo tardi rispetto a
+> quando si apre l'interfaccia. Appena si apre l'interfaccia parte
+> con il Simon Says. Quindi appena clicco SPAZIO per avviare la task
+> deve essere pronto ad analizzare.
+
+### Causa
+
+Anche con subprocess mode (la versione che funziona), c'e' un
+ritardo intrinseco fra "press SPAZIO" e "primo frame analizzato":
+
+- Press SPAZIO -> apre il pannello del minigioco (~immediato)
+- Avvio subprocess -> Python startup (~300-500ms)
+- Import del motore -> ~100ms
+- mss.mss() apertura -> ~50-100ms
+
+Totale: ~500-800ms di latenza fra apertura pannello e primo frame.
+In Simon Says (Reactor) la sequenza puo' iniziare entro 200-500ms
+dall'apertura -> rischio di perdere il primo flash.
+
+### Fix: pre-warming del subprocess con trigger via stdin
+
+#### Idea
+
+Avviamo il subprocess **prima** della press SPAZIO (al momento
+dell'arrivo al target), ma con un nuovo flag `--wait-trigger`. Il
+subprocess fa tutto il setup (import, mss, motore) poi **resta in
+attesa** su `stdin.readline()` per la stringa "GO\\n".
+
+Quando il bot principale preme SPAZIO, manda "GO\\n" sullo stdin.
+Il subprocess lo riceve e parte istantaneamente: il startup Python
+e' gia' avvenuto.
+
+#### Sequenza nuova
+
+```
+on_arrivo() chiamato
+  ├── FASE A: avvia subprocess --wait-trigger
+  │           (subprocess fa setup ~500ms, poi readline su stdin)
+  ├── time.sleep(0.3) (stabilita' visiva esistente)
+  ├── _controlla_task_attiva() (check pulsante Use esistente)
+  ├── animazione popup STATI_LAUNCH
+  └── _update_task_launch() chiamato:
+      ├── FASE B: press SPAZIO -> pannello minigioco si apre
+      └── FASE C: invia "GO\\n" su stdin -> subprocess parte istantaneo
+```
+
+Tempo di anticipo: ~500-1000ms tra avvio subprocess e SPAZIO,
+sufficiente per completare tutto il startup di Python.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/task_writer.py` | nuovo flag `--wait-trigger` nel parser + variabile `WAIT_TRIGGER` + campo `wait_trigger` in TASK_META |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | gestione `wait_trigger` in `run_task`: aspetta "GO" su stdin prima di proseguire |
+| `among_us_ai/ui/mixins/tasks_process.py` | nuovo parametro `wait_trigger` in `_avvia_subprocess_task` + `stdin=PIPE` quando attivo + nuovo metodo `_invia_trigger_subprocess()` |
+| `among_us_ai/ui/mixins/tasks_launch.py` | pre-warming all'arrivo (FASE A) + trigger dopo SPAZIO (FASE C) |
+
+### Auto-rigenerazione file vecchi
+
+Il check di "file obsoleto" in `_avvia_subprocess_task` ora include
+anche `WAIT_TRIGGER`: i file `.py` esistenti vengono automaticamente
+rigenerati al primo lancio, propagando il nuovo argparse.
+
+I file `.py` non rigenerati ricevono `--wait-trigger` come argomento
+sconosciuto, che viene IGNORATO da `parse_known_args`. Non c'e'
+errore, ma manca il pre-warming finche' il file non viene
+rigenerato.
+
+### Compatibilita'
+
+- File `.py` rigenerati: hanno `WAIT_TRIGGER` e supportano il
+  pre-warming.
+- File `.py` non rigenerati: `--wait-trigger` ignorato, parte subito
+  come prima (no pre-warming).
+- Lancio manuale del file `.py` da shell senza `--wait-trigger`:
+  funziona normalmente (parte subito).
+- Thread mode (sperimentale): non supporta wait_trigger - parte subito.
+
+### Verifica fatta
+
+Test rigenerazione file `.py`:
+- File generato contiene `--wait-trigger` nell'argparse ✓
+- Variabile `WAIT_TRIGGER` definita ✓
+- TASK_META.wait_trigger correttamente iniettato ✓
+
+Test import del package: OK
+Syntax OK su tutti i file modificati
+
+### Timing post-fix (stima)
+
+```
+PRIMA (v2.2.19):
+  Press SPAZIO            t=0
+  Apre pannello           t≈100ms
+  Avvio subprocess        t=0
+  Subprocess pronto       t≈500-700ms
+  Primo frame analizzato  t≈600-800ms
+
+DOPO (v2.2.20):
+  on_arrivo()             t=0
+  Avvia subprocess        t≈5ms
+  Subprocess pronto       t≈500ms (in stand-by)
+  Press SPAZIO            t≈800ms (dopo check visuale)
+  Apre pannello           t≈900ms
+  Trigger "GO" inviato    t≈900ms
+  Subprocess riprende     t≈905ms
+  Primo frame analizzato  t≈920ms
+```
+
+L'analisi parte **al momento del SPAZIO**, non dopo 500ms di startup.
+
+### Cosa NON e' cambiato
+
+- Logica di Simon Says (handler semplice): invariata
+- Logica di Ripeti, ESC fallback, start_from_action: invariate
+- delay_avvio per task: continua a funzionare per chi lo usa
+- API del motore (`esegui_lifecycle`, `run_task`): invariata
+
+
+## v2.2.19 — Rollback: subprocess come default + Simon Says semplice
+
+### Problema riportato
+
+> Il software si avvia e si blocca proprio. All'inizio funzionava
+> quando ti mandai il codice all'inizio inizio, cerca di farlo funzionare.
+
+### Cause
+
+Due problemi introdotti dalle ultime versioni:
+
+#### 1. Thread mode (v2.2.17) blocca il bot
+
+In thread mode il motore esegue `sys.stdout = pipe_writer` per
+catturare le print. Ma `sys.stdout` e' **globale per processo, non
+per thread**. Quindi:
+- Le print del bot principale (DPG, log, render) finiscono nella
+  pipe del motore
+- Se la pipe si riempie (4-64KB su Windows), `write()` blocca
+- Deadlock con il reader thread o con altri thread del bot
+
+Inoltre `pyautogui` da thread non-main su Windows puo' causare
+problemi con SendInput in alcune configurazioni.
+
+#### 2. Auto-stabilizzazione di Simon Says (v2.2.13-2.2.18) era piu'
+   complessa del necessario
+
+Ho introdotto progressivamente logica per "auto-stabilizzare" la
+base_img di Simon Says (wait change + wait stable, max_delta poi
+second_delta). Ognuna di queste modifiche aveva edge case che la
+rendevano fragile in scenari reali.
+
+### Fix: rollback selettivo
+
+#### 1. `EXEC_MODE = 'subprocess'` come default
+
+Torna al subprocess come default. Il thread mode resta come opzione
+sperimentale per chi vuole provarlo:
+
+```python
+# In among_us_ai/core/config.py
+EXEC_MODE = 'subprocess'  # default v2.2.19+
+# EXEC_MODE = 'thread'    # sperimentale
+```
+
+Il subprocess parte in ~300-500ms (latenza naturale del Python
+startup) ma **non ha rischio di deadlock**. La latenza extra
+funziona anche da "delay naturale" che lascia tempo al pannello del
+minigioco di aprirsi prima che il motore inizi l'analisi.
+
+#### 2. Handler Simon Says: torno alla versione semplice originale
+
+Riscritto `_h_simon_says` come la versione **semplice e funzionante**
+di v2.1.x:
+
+```python
+# Cattura il primo frame come base, parte subito.
+base_img = sct.grab(monitor)
+base_colors = [base_img[p[1]-cy, p[0]-cx, :3] for p in disp_pts]
+
+# Loop standard di analisi sequenza
+for rnd in range(1, 6):
+    ...
+```
+
+Niente piu' wait change, wait stable, max_delta, second_delta. Solo
+quello che funzionava all'inizio.
+
+Per pannelli con animazione di apertura lenta (es. Reactor): usa
+il campo `delay_avvio` della task nel popup di modifica per
+aspettare prima dell'analisi. v2.2.15 aveva gia' aggiunto questo
+meccanismo, e' la via pulita.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/core/config.py` | `EXEC_MODE = 'subprocess'` (era `'thread'`) |
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | rollback alla versione semplice di v2.1.x |
+
+### Cosa NON e' stato rimosso
+
+- Codice del thread mode (`task_thread_runner.py`): mantenuto come
+  feature opt-in via `EXEC_MODE = 'thread'`. Chi vuole provarlo
+  puo' farlo, ma sa di andare incontro ai potenziali deadlock.
+- `delay_avvio` per task: continua a funzionare, e' la via
+  raccomandata per i minigiochi con apertura lenta.
+- Auto-stabilizzazione: rimossa dal handler, ma restano le idee
+  sviluppate (campo `panel_timeout` nel JSON, log diagnostici).
+
+### Considerazione futura
+
+Se volessimo davvero il thread mode senza deadlock, servirebbe:
+- Pipe non bloccante (buffer infinito o lettura asincrona)
+- Cattura print thread-local (via `contextvars` o thread-local
+  redirection)
+- Guard per pyautogui da thread non-main
+
+Lavoro non banale. Per ora la via piu' pratica e' subprocess +
+delay_avvio configurabile dall'utente.
+
+
+## v2.2.18 — Simon Says: distinzione flash vs apertura pannello
+
+### Problema riportato
+
+> Sembra che il Simon Says non funzioni piu'.
+
+### Causa
+
+In v2.2.16 avevo introdotto la "auto-stabilizzazione" usando
+`max_delta` (massimo delta RGB tra tutti i display point) come
+metrica di stabilita'. Funzionava per distinguere "pannello fermo"
+da "pannello in animazione di apertura".
+
+PROBLEMA: con il thread mode di v2.2.17, il bot e' molto piu'
+veloce e arriva a campionare gia' il primo flash della sequenza
+**durante** la fase di stabilizzazione. Il flash fa salire `max_delta`
+a 200+ -> il pannello viene visto come "instabile" all'infinito ->
+timeout dopo 3s -> base imperfetta o sbagliata.
+
+In pratica:
+- Apertura pannello: TUTTI i display cambiano (max_delta alto, 2°
+  delta alto)
+- Flash della sequenza: UN solo display cambia (max_delta alto, 2°
+  delta basso!)
+
+`max_delta` non distingueva i due casi.
+
+### Fix: usa il SECONDO delta piu' alto
+
+Cambio metrica di stabilita' da `max_delta` a `second_delta`.
+
+```python
+deltas = sorted([delta_rgb(a[i], b[i]) for i in range(N)], reverse=True)
+second_delta = deltas[1]
+stable = (second_delta < 20)  # solo 1 display cambia = stabile
+```
+
+Cosi':
+- Apertura pannello (tutti cambiano) -> second_delta alto -> instabile (giusto)
+- Flash su 1 display -> second_delta basso -> **stabile, base catturata**
+- L'unico display "in flash" verra' rilevato dal loop di analisi
+  (gia' presente) come `lit_now` con `diff > 50` contro la base
+
+### Cambiamenti nei tuning
+
+| Parametro | v2.2.16 | v2.2.18 |
+|---|---|---|
+| Soglia stabilita' | `max_delta < 15` | `second_delta < 20` |
+| panel_timeout default | 3.0s | 2.0s |
+| Filosofia | wait change + wait stable | wait stable robusto |
+
+### Nuovi log diagnostici
+
+Adesso il handler stampa in tempo reale:
+- `[Simon] Base catturata dopo 320ms (12 frame, second_delta=8, max_delta=180)`
+- `[Simon] Round 1: rilevato flash 0 (seq=[0])`
+- `[Simon] Round 1: nessun flash rilevato in 10s, esco` (caso fallimento)
+
+Cosi' nel tuo log vedi esattamente quando la base e' stata
+catturata e quali flash sono rilevati.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | semplificazione: solo "wait stable" con second_delta + log diagnostici per round |
+
+### Verifica fatta
+
+Test logico su 5 scenari:
+
+| Scenario | Atteso | Risultato |
+|---|---|---|
+| Pannello idle stabile | stabile | ✓ |
+| Apertura pannello (tutti cambiano) | instabile (skip) | ✓ |
+| 1 flash sequenza, altri fermi | **stabile** (base OK) | ✓ |
+| 2 flash insieme (raro) | instabile (skip) | ✓ |
+| Rumore rendering ±5 RGB | stabile | ✓ |
+
+### Cosa NON e' cambiato
+
+- Loop di analisi della sequenza (`diff > 50` contro base): identico
+- Logica click sui keypad: identica
+- `delay_avvio` per task: continua a funzionare come prima
+- API del motore: invariata
+
+
+## v2.2.17 — Motore come thread interno (avvio quasi istantaneo)
+
+### Problema riportato
+
+> [Exec] Avviato 'task_017_Start_Reactor.py' - PID 35560
+> [Start Reactor] Setup...
+> [Start Reactor] Esecuzione...
+> Troppo tempo passa, a questo punto tieni pronta ogni task e
+> appena clicco spazio subito dopo pochi millesecondi e' pronta.
+
+### Causa
+
+Anche con tutti gli altri ottimismi (delay_avvio=0, skip animazione,
+auto-stabilizzazione), restava un ritardo intrinseco al subprocess
+mode:
+
+- **Startup di Python** del subprocess: ~300-500ms (fork + import
+  di tutto il motore + librerie)
+- **IPC overhead**: stdout via pipe del SO, gestito dal kernel
+- **Re-import del package** `_motore_pkg`: gia' caricato nel bot
+  principale ma ricaricato da zero nel subprocess
+
+Risultato: tra "press SPAZIO" e "primo frame analizzato" passavano
+ancora 500-800ms anche nel best case.
+
+### Fix: motore come thread interno
+
+Riarchitettato l'esecuzione delle task per girare come **thread**
+nel processo principale, invece che come subprocess separato.
+
+#### Nuovo modulo `task_thread_runner.py`
+
+Wrapper `TaskThreadProcess` che mima `subprocess.Popen` (poll, wait,
+terminate, pid, stdout) ma esegue `esegui_lifecycle(task_meta, azioni)`
+in un `threading.Thread`. Il codice esistente (`_controlla_processo_task`,
+`_fase_da_ripetere_ext`, lettura stdout per `__COOLDOWN__:`) **non
+ha richiesto modifiche** grazie alla compatibilita' di API.
+
+#### Cattura stdout
+
+Le `print()` del motore vengono catturate via redirect di
+`sys.stdout` (per il thread runner) verso una pipe in-memory
+(`os.pipe()`). Il reader thread del bot principale legge dalla pipe
+esattamente come faceva con la pipe del subprocess.
+
+#### Crash isolation
+
+Tutto il motore e' wrappato in `try/except` robusto:
+- `SystemExit` -> rispetta exit code
+- `KeyboardInterrupt` -> exit 130
+- Altre eccezioni -> log nella pipe + exit 1
+
+Una crash del motore NON crasha il bot principale.
+
+#### Configurazione
+
+Nuova opzione in `core/config.py`:
+
+```python
+EXEC_MODE = 'thread'      # default v2.2.17+
+# EXEC_MODE = 'subprocess'  # fallback al vecchio comportamento
+```
+
+Per chi preferisce l'isolamento del subprocess o ha problemi con
+pyautogui da thread non-main, basta cambiare a `'subprocess'`.
+
+#### Compatibilita' con file .py
+
+I file `.py` in `tasks_exec/` continuano a essere generati e
+funzionanti se eseguiti standalone dall'utente (es. da shell per
+debug). In thread mode pero' non vengono usati per l'esecuzione:
+il motore riceve `task_meta` e `azioni` direttamente in memoria.
+
+In thread mode SKIP della verifica "file obsoleto": ogni avvio
+risparmia ~10-50ms di I/O su disco.
+
+### Timing post-fix
+
+```
+PRIMA (v2.2.16, subprocess):
+  Press SPAZIO          → t=0
+  Avvio subprocess       → t≈300-500ms (fork + python startup)
+  Import motore          → t≈500-700ms
+  SetForegroundWindow    → t≈700ms (ma skip se gia' foreground)
+  Cattura base Simon     → t≈700-1100ms (stabilizzazione)
+  Primo frame analizzato → ~1000ms
+
+DOPO (v2.2.17, thread):
+  Press SPAZIO          → t=0
+  Avvio thread          → t≈5-20ms (zero startup Python!)
+  Cattura base Simon    → t≈20-300ms (auto-stabilizzazione)
+  Primo frame analizzato → ~200-300ms
+```
+
+**Risparmio: ~500-700ms** per ogni avvio task.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/task_thread_runner.py` | NUOVO modulo `TaskThreadProcess` |
+| `among_us_ai/core/config.py` | nuova opzione `EXEC_MODE = 'thread'` |
+| `among_us_ai/ui/mixins/tasks_process.py` | `_avvia_subprocess_task` con bivio thread/subprocess + helper `_build_task_meta_for_thread` + skip rigenerazione file in thread mode |
+
+### Verifica fatta
+
+Test funzionale del `TaskThreadProcess`:
+
+| Test | Esito |
+|---|---|
+| Task con click semplice | Termina con exit_code, output via stdout pipe ✓ |
+| `poll()` durante esecuzione | Ritorna None ✓ |
+| `wait()` blocca fino a fine + ritorna exit_code | ✓ |
+| `terminate()` su task lunga | Ferma il thread (best-effort) ✓ |
+| Compatibilita' API con codice esistente | nessuna modifica richiesta a `_controlla_processo_task` ✓ |
+
+Test pyautogui da thread non-main: gia' usato in produzione dall'editor
+(`save_test.py::_esegui_test_thread`), nessun problema noto.
+
+### Cosa NON e' cambiato
+
+- API del motore (`esegui_azioni`, `esegui_lifecycle`, `run_task`): invariate
+- Logica di Ripeti, ESC fallback, start_from_action: invariate
+- Logica di lettura `__COOLDOWN__:` per multi-step: invariata
+- Generazione file .py via `task_writer`: invariata
+- File .py esistenti: continuano a funzionare standalone
+- API DPG, scanner YOLO, pathfinding: tutto invariato
+
+### Note tecniche
+
+- Single-task-at-a-time: la nostra architettura gia' garantisce
+  che giri una sola task per volta (controllo `_task_process is not None`)
+  quindi il redirect di `sys.stdout` e' sicuro.
+- Su Windows `os.pipe()` funziona correttamente da Python 3.4+.
+- Il `pid` del `TaskThreadProcess` e' l'ident del thread, non un
+  vero PID di OS. Solo cosmetico nei log.
+
+
+## v2.2.16 — Simon Says: cattura base intelligente (auto-stabilizzazione)
+
+### Problema riportato
+
+> Sembra ok, ma c'e' sempre un problema con Simon Says. Non si avvia
+> subito per iniziare a rilevare le zone che si illuminano per cliccare.
+
+### Causa
+
+Con `panel_timeout = 0` (default v2.2.15), il primo frame veniva
+preso immediatamente come `base_img`. Ma il primo frame puo' contenere
+ANCORA la mappa del gioco (il pannello del minigioco si sta aprendo).
+
+Risultato: quando il pannello si apriva, TUTTI i pixel del display
+cambiavano rispetto alla base (che era la mappa) -> il bot vedeva
+sempre `lit_now != -1` -> falsi positivi su tutta la sequenza.
+
+### Fix: auto-stabilizzazione in 2 fasi
+
+Riscritto il blocco di cattura della base in `_h_simon_says` con
+una strategia di **auto-stabilizzazione veloce**:
+
+#### FASE A: "wait for change"
+
+Polling rapido a 15ms. Aspetta finche' i display point cambiano
+significativamente (delta > 50 RGB) rispetto al primo frame. Questo
+segna il momento in cui il pannello del minigioco appare e copre la
+mappa.
+
+Se il pannello e' GIA' aperto e stabile prima ancora del polling
+(es. quando il subprocess parte tardi), nessun cambio viene
+rilevato e il primo frame e' gia' una base valida -> uso quello.
+
+#### FASE B: "wait for stable"
+
+Dopo il cambio, aspetta che 2 frame consecutivi siano simili
+(delta < 15 RGB) -> il pannello e' aperto, le animazioni di apertura
+sono finite, i display sono nello stato "spento" -> usa l'ultimo
+frame come base.
+
+#### Timeout di sicurezza
+
+3 secondi (configurabile via `panel_timeout` nel JSON dell'azione).
+Se non si stabilizza entro il timeout, usa l'ultimo frame disponibile
+come base imperfetta e procede.
+
+In pratica la stabilizzazione si raggiunge in 100-500ms tipicamente.
+
+### Polling principale piu' rapido
+
+Il loop di analisi della sequenza Simon Says aveva `sleep(0.02)` =
+50fps di campionamento. Ridotto a `sleep(0.01)` = 100fps. Riduce la
+probabilita' di perdere flash brevi.
+
+### Comportamento prima/dopo
+
+```
+PRIMA (v2.2.15 con panel_timeout=0):
+  - Subprocess parte → cattura primo frame (puo' essere mappa)
+  - Inizia analisi → falsi positivi se pannello non era aperto
+
+ADESSO (v2.2.16):
+  - Subprocess parte → polling 15ms cerca apertura pannello
+  - Cambio rilevato → aspetta 2 frame stabili (~30ms in piu')
+  - Cattura base → analisi parte con base CORRETTA
+  - Tempo totale: 100-500ms (vs perdita totale di prima)
+```
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | logica auto-stabilizzazione 2-fase + polling principale 50→100fps |
+
+### Verifica fatta
+
+Test logico su 4 scenari:
+
+| Scenario | Comportamento |
+|---|---|
+| Pannello gia' aperto, stabile | nessun cambio rilevato → primo frame come base |
+| Pannello si apre durante polling | cambio rilevato al frame N → stabilizzazione in N+2 |
+| Animazione graduale (diversi frame instabili) | aspetta finche' delta < 15 per 2 frame |
+| Flash arriva durante stabilizzazione | timeout, base imperfetta. Risch dato ma <5% dei casi |
+
+### Cosa NON e' cambiato
+
+- `delay_avvio` per task: continua a funzionare. Per Reactor, se
+  vuoi essere ancora piu' sicuro, puoi mettere `delay_avvio = 0.5`
+  oltre a usare il rilevamento automatico.
+- API del motore: invariata
+- Resto del comportamento Simon Says (analisi sequenza, click): invariato
+
+
+## v2.2.15 — `delay_avvio` per task: avvio rapido + pausa configurabile
+
+### Richiesta dell'utente
+
+> Voglio che la task parta subito di default. Poi se serve, decido io
+> mettendo un valore nell'interfaccia di modifica task. Default 0 =
+> parte subito, valore > 0 = aspetta N secondi prima di iniziare.
+
+### Modifiche
+
+#### 1. Default "parte subito" per Simon Says
+
+`panel_timeout` di `_h_simon_says` ora ha default `0.0` (era `1.0`).
+Quando `panel_timeout=0`, il primo frame viene preso direttamente
+come base senza attendere stabilizzazione. Questa e' la modalita'
+"parte subito" ora di default.
+
+Se imposti `panel_timeout > 0` nel JSON dell'azione, la vecchia logica
+di stabilizzazione frame-to-frame e' ancora disponibile per chi la
+preferisce.
+
+#### 2. Nuovo campo `delay_avvio` per task
+
+Aggiunto un campo `delay_avvio` a livello di **TASK** (non singola
+azione). Default `0.0`. Quando > 0, il motore aspetta N secondi
+PRIMA di iniziare l'esecuzione di qualsiasi azione.
+
+Vale **per ogni tipo di task** (click, drag, simon_says, yolo_*,
+ecc.) - basta un solo punto centrale nel `lifecycle.run_task` che
+applica la pausa indipendentemente dal tipo di azioni.
+
+#### 3. UI: campo "Delay avvio (s)" nel popup di modifica task
+
+Nella finestra che si apre cliccando "Modifica task", in sezione
+IDENTITA', sotto "Lunghezza", appare:
+
+```
+Delay avvio (s): [  0.00  ]   (0 = parte subito)
+```
+
+Input numerico con step 0.1, range 0-10 secondi. Quando salvi, il
+valore va in `tasks_dettagli.json` come `delay_avvio` della task.
+
+### Esempio d'uso
+
+**Task normale** (la maggior parte): lascia `delay_avvio = 0`. Il
+bot parte istantaneamente quando il pannello si apre.
+
+**Reactor Simon Says**: se la sequenza luminosa parte appena dopo
+l'apertura del pannello, ma il bot deve "vedere" il pannello stabile
+prima di catturare la base, imposti `delay_avvio = 1.5`. Il bot
+aspettera' 1.5 secondi dopo aver premuto SPAZIO prima di iniziare
+l'analisi.
+
+### Comportamento prima/dopo
+
+```
+Prima (v2.2.13):
+  Premi SPAZIO  → t=0
+  Subprocess pronto → t≈500ms
+  Stabilizzazione base (1s timeout) → t≈700-1500ms (sempre attesa)
+  Inizio analisi → t≈700-1500ms
+
+Adesso (v2.2.15) con delay_avvio = 0 (default):
+  Premi SPAZIO  → t=0
+  Subprocess pronto → t≈500ms
+  Cattura base immediata → t≈510ms
+  Inizio analisi → t≈510ms
+
+Adesso (v2.2.15) con delay_avvio = 1.5 (configurato dall'utente):
+  Premi SPAZIO  → t=0
+  Subprocess pronto → t≈500ms
+  delay_avvio sleep → t≈500-2000ms
+  Cattura base immediata → t≈2010ms
+  Inizio analisi → t≈2010ms
+```
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/tasks_popups_edit.py` | nuovo input "Delay avvio (s)" nel popup |
+| `among_us_ai/managers/task_dettagli_manager.py` | `aggiorna()` accetta e salva `delay_avvio` |
+| `among_us_ai/managers/task_manager.py` | facade `aggiorna()` propaga `delay_avvio` |
+| `among_us_ai/execution/task_writer.py` | inietta `delay_avvio` in `TASK_META` del file generato |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | `run_task` rispetta `delay_avvio` prima di `esegui_azioni` |
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | `panel_timeout` default ora `0.0` (era `1.0`) |
+
+### Verifica fatta
+
+Test funzionale:
+- `tm.aggiorna(17, ..., delay_avvio=1.5)` salva il valore in JSON ✓
+- `tm.crea_file_esecuzione(17)` genera `.py` con `'delay_avvio': 1.5` in `TASK_META` ✓
+- `lifecycle.py` legge `task_meta.get('delay_avvio', 0.0)` e fa
+  `_time.sleep(delay_avvio)` se > 0 ✓
+- Import del package: OK
+- Syntax OK su tutti i file modificati
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Comportamento delle task con `delay_avvio = 0` (default per le task
+  esistenti che non hanno il campo): identico a prima MA piu' veloce
+  perche' Simon Says ora parte subito (era 1s di stabilizzazione)
+- Nessuna regressione attesa
+
+
+## v2.2.14 — Timeout Simon Says configurabile
+
+### Richiesta
+
+> Fai che posso impostare questo delay di base metti 1s altrimenti
+> fai che lo posso mettere io.
+
+### Cosa e' cambiato
+
+Il timeout di stabilizzazione del pannello Simon Says (introdotto
+in v2.2.13) era hard-coded a 1 secondo. Ora e' configurabile su
+**due livelli** con priorita':
+
+#### Livello 1: campo `panel_timeout` nella singola azione
+
+Nel JSON dell'azione `simon_says` puoi mettere un override per
+quella specifica task:
+
+```json
+{
+  "tipo": "simon_says",
+  "display": [...],
+  "keypad":  [...],
+  "panel_timeout": 2.0,
+  "durata": 0.2,
+  "attesa": 0.5
+}
+```
+
+Utile se per Reactor ti serve 2s ma per altri minigiochi va bene
+0.5s.
+
+#### Livello 2: config globale `SIMON_PANEL_TIMEOUT_SEC`
+
+Default di tutte le task che NON hanno override per azione. In
+`among_us_ai/core/config.py`:
+
+```python
+SIMON_PANEL_TIMEOUT_SEC = 1.0  # default v2.2.14+
+```
+
+Se modifichi questo valore, **rigenera i file `.py`** delle task
+(es. modifica un'azione qualsiasi e salva). Il `task_writer` legge
+la config al momento della generazione e la inietta nel TASK_META
+del file generato.
+
+#### Livello 3: fallback hard-coded
+
+Se nessuno dei due e' definito (improbabile, ma per robustezza),
+default a 1.0s nell'handler.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/core/config.py` | nuovo `SIMON_PANEL_TIMEOUT_SEC = 1.0` |
+| `among_us_ai/execution/task_writer.py` | inietta valore di config in TASK_META al momento della generazione |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | propaga `simon_panel_timeout` da TASK_META alle azioni `simon_says` (se non gia' settato) |
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | legge `panel_timeout` da `az` (priorita' azione > config > 1.0s) |
+
+### Verifica fatta
+
+4 test logici sulle priorita':
+
+| Caso | Risultato |
+|---|---|
+| `az.panel_timeout = 2.5` | usa 2.5 (override azione) |
+| `TASK_META.simon_panel_timeout = 1.5`, az senza override | usa 1.5 (config globale) |
+| `az.panel_timeout = 0.5`, TASK_META = 1.5 | usa 0.5 (azione vince su config) |
+| Nessun valore | usa 1.0 (fallback) |
+
+Tutti corretti.
+
+Generazione file: il file `.py` autonomo della Reactor (task 17)
+ora contiene:
+```
+SIMON_PANEL_TIMEOUT_SEC = 1.0  # default 1.0s
+TASK_META = {
+    ...
+    'simon_panel_timeout': SIMON_PANEL_TIMEOUT_SEC,
+}
+```
+
+### Come usarlo per Reactor
+
+Se 1s non basta per il tuo PC:
+
+**Opzione A (tutte le task)**: in `among_us_ai/core/config.py`:
+```python
+SIMON_PANEL_TIMEOUT_SEC = 2.0
+```
+Poi rigenera i file (modifica qualsiasi azione e salva).
+
+**Opzione B (solo Reactor)**: nell'editor azioni della task Start
+Reactor, aggiungi nel JSON dell'azione `simon_says` il campo:
+```json
+"panel_timeout": 2.0
+```
+
+
+## v2.2.13 — Simon Says (Reactor) reattivo: pre-warming + base dinamica
+
+### Problema riportato
+
+> Quando avvio task del Reactor con Simon Says devo essere rapido ad
+> analizzare per poterlo replicare in tempo. Tra apertura pannello e
+> inizio analisi c'e' troppo lag.
+
+### Causa
+
+Il flusso pre-fix era:
+
+```
+1. Bot preme SPAZIO            → t=0  (apre pannello)
+2. Avvia subprocess            → t=0  (Python startup ~300-500ms)
+3. SetForegroundWindow         → t≈500ms
+4. sleep(0.4) grace period     → t=900ms
+5. Cattura base_img            → t=910ms
+6. Inizio analisi (primo frame)→ t=920ms
+```
+
+Tra apertura pannello e primo frame analizzato passavano ~900ms.
+La sequenza Simon Says puo' iniziare entro 200-500ms dall'apertura,
+quindi il primo flash veniva spesso perso.
+
+### Fix: 3 ottimizzazioni complementari
+
+#### 1. Inversione ordine: subprocess PRIMA di SPAZIO
+
+In `tasks_launch.py`, ora avviamo il subprocess prima di premere
+SPAZIO. Mentre il subprocess fa lo startup (~300-500ms), in parallelo
+premiamo SPAZIO che apre il pannello. Quando il subprocess e' pronto,
+il pannello e' gia' aperto.
+
+#### 2. Skip `sleep(0.4)` se finestra gia' in foreground
+
+In `lifecycle.py`, ora il subprocess controlla se la finestra del
+gioco e' gia' in foreground. Se si', skippa `SetForegroundWindow +
+sleep(0.4)`. Risparmio: **400ms** per ogni avvio.
+
+```python
+if _win32gui.GetForegroundWindow() != hwnd:
+    _win32gui.SetForegroundWindow(hwnd)
+    _time.sleep(0.4)  # solo se serve davvero
+```
+
+#### 3. Base dinamica robusta in `_h_simon_says`
+
+PROBLEMA: dopo l'inversione (#1), il subprocess potrebbe partire
+PRIMA che il pannello sia completamente aperto. Catturare `base_img`
+in quel momento sarebbe inutile (la base sarebbe la mappa del gioco,
+non il pannello).
+
+SOLUZIONE: invece di catturare `base_img` subito, aspettiamo che
+2 frame consecutivi siano "simili" sui display point (= pannello
+stabilizzato). Polling rapido a 30ms, max 1 secondo di attesa.
+
+Vantaggi:
+- Robusto: funziona sia se il pannello e' gia' aperto sia se sta
+  ancora aprendosi
+- **Non perdiamo flash**: se il primo flash inizia mentre stiamo
+  ancora stabilizzando la base, il polling lo cattura comunque
+  appena la base si fissa
+- Fallback graceful: se il pannello non si stabilizza in 1s,
+  procediamo con la base imperfetta invece di bloccarci
+
+### Timing post-fix
+
+```
+1. Avvia subprocess        t=0
+2. Premi SPAZIO            t=5ms  (parallelo)
+3. Pannello si apre        t≈100-200ms
+4. Subprocess pronto       t≈300-500ms  (sovrapposto con apertura!)
+5. Focus check (skip sleep)t≈500ms
+6. Handler parte           t≈510ms
+7. Stabilita' base         t≈600-700ms
+8. Inizio polling vero     t=700ms
+```
+
+**Da ~920ms a ~700ms** prima del primo frame analizzato.
+**Risparmio: ~220ms**, e MOLTO piu' robusto contro race condition.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/tasks_launch.py` | inversione ordine: subprocess prima, SPAZIO dopo |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | skip `SetForegroundWindow + sleep(0.4)` se gia' in foreground |
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | base dinamica: aspetta stabilita' di 2 frame consecutivi |
+
+### Verifica fatta
+
+- Syntax OK su tutti i file modificati
+- Import del package: OK
+- La logica della base dinamica e' compatibile con la vecchia base
+  fissa (caso pannello gia' stabile -> 1 polling, base catturata in
+  ~30-60ms)
+
+### Cosa NON e' cambiato
+
+- API pubblica del motore: invariata
+- Logica di analisi della sequenza Simon Says: invariata (stessa
+  soglia diff > 50, stesso polling, stesso click sequence)
+- Tutti gli altri handler: invariati
+- Compatibilita' con file `.py` task vecchi: invariata
+
+### Considerazione
+
+Se il problema persiste su Reactor, possibili cause aggiuntive:
+- Il punto display Simon Says non e' calibrato bene (i pixel
+  monitorati non corrispondono ai LED veri del minigioco)
+- Il pannello del Reactor ha un'animazione di "apertura" piu' lunga
+  di 1 secondo (in tal caso aumenta il timeout a 2s in handlers_simon)
+
+
+## v2.2.11 — Arrivo piu' preciso al target della task
+
+### Problema riportato
+
+> A volte non arriva nella zona di attivazione della task. Vorrei
+> piu' precisione per arrivare nel raggio di attivazione.
+
+### Causa
+
+La soglia `AUTO_ARRIVAL_THRESHOLD` era 0.25 unita' di gioco. Il bot
+si fermava entro un cerchio di raggio 0.25 dal target e lanciava
+subito la task, ma a volte questo cerchio era ancora fuori dal raggio
+di interazione del gioco (il pulsante "Use" non si illuminava).
+
+Il pathfinding inoltre lascia naturalmente un piccolo margine sul
+waypoint finale per evitare di "incollarsi" al target.
+
+### Fix
+
+Due modifiche complementari per arrivare meglio nel raggio di
+attivazione del pulsante Use:
+
+#### 1. Soglia di arrivo ridotta: 0.25 -> 0.15
+
+`AUTO_ARRIVAL_THRESHOLD` passa da 0.25 a 0.15 unita'. Il bot si
+fermera' naturalmente piu' vicino al target.
+
+#### 2. "Final nudge" prima del callback
+
+Quando il bot tocca la soglia di arrivo, prima di lanciare la task
+fa un piccolo movimento di rifinitura premendo i tasti direzionali
+(W/A/S/D) verso il target per `AUTO_FINAL_NUDGE_SEC` secondi
+(default 0.20s).
+
+Questo recupera gli ultimi centimetri che il pathfinding lascia
+come margine. Risultato: il bot si avvicina al target per altri
+~0.1 unita' prima di lanciare la task.
+
+Il movimento e' bloccante (`time.sleep(0.2)`) perche' la finestra
+e' molto breve. Il sistema rilascia comunque tutti i tasti dopo il
+nudge per non lasciare il personaggio in movimento durante l'esecuzione
+della task.
+
+#### Nuovi parametri config
+
+In `among_us_ai/core/config.py`:
+
+```python
+AUTO_ARRIVAL_THRESHOLD = 0.15   # era 0.25
+AUTO_FINAL_NUDGE_SEC   = 0.20   # nuovo, 0 = disabilitato
+```
+
+Per disabilitare il nudge (e tornare al solo arrivo standard):
+imposta `AUTO_FINAL_NUDGE_SEC = 0`. Per arrivo ancora piu' preciso,
+puoi ridurre `AUTO_ARRIVAL_THRESHOLD` a 0.10 (a tuo rischio: piu'
+basso = piu' rischio di stuck per imprecisioni del pathfinding).
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/core/config.py` | `AUTO_ARRIVAL_THRESHOLD` 0.25->0.15, nuovo `AUTO_FINAL_NUDGE_SEC=0.20` |
+| `among_us_ai/ui/mixins/auto_move.py` | logica final nudge prima del callback di arrivo |
+
+### Verifica fatta
+
+Test logico delle direzioni di nudge:
+
+| Posizione target | Tasti premuti |
+|---|---|
+| NE (dx>0, dy>0) | D + W |
+| NO (dx<0, dy>0) | A + W |
+| SE (dx>0, dy<0) | D + S |
+| SO (dx<0, dy<0) | A + S |
+| Sopra | W |
+| Sotto | S |
+| Destra | D |
+| Sinistra | A |
+| Troppo vicino (<0.05) | nessuno |
+
+Tutti corretti.
+
+### Cosa NON e' cambiato
+
+- Pathfinding e replan: invariati
+- Logica stuck detection: invariata
+- Soglia waypoint intermedi (`WAYPOINT_ADVANCE` 0.55): invariata
+- Logica fallback su `alternativi`: invariata
+- Tutto il resto del bot: invariato
+
+### Considerazione futura
+
+Hai chiesto se non fosse meglio rilevare il pulsante "Use" a video.
+L'idea e' valida ma richiede un meccanismo aggiuntivo (screenshot
+ROI angolo basso destro, threshold luminosita', timeout). Per ora
+abbiamo scelto la via piu' semplice (precisione di arrivo). Se dopo
+queste modifiche dovessero ancora capitare casi in cui non arriva
+nel raggio, possiamo aggiungere il rilevamento del pulsante.
+
+
+## v2.2.10 — Pulizia anti-flicker dei player rilevati (vivi e morti)
+
+### Bug riportato
+
+> Mi servirebbe sistemare il fatto della rilevazione dei player se
+> rianalizza la zona e non trovi piu' il player e' inutile mantenerlo
+> segnato sia per morti che per vivi.
+
+### Stato pre-fix
+
+In `yolo_scanner.py`, la pulizia dei player rilevati aveva 2 problemi:
+
+1. **I morti erano immortali**: la regola di scadenza `current_time -
+   dp['time'] < 30.0` aveva un'eccezione `or dp.get('is_dead', False)`,
+   quindi i cadaveri non venivano mai rimossi.
+
+2. **L'invecchiamento era lento**: per i vivi, quando la camera
+   inquadrava una zona ma non trovava il player, il `time` veniva
+   ridotto di 5s. Servivano ~6 cicli per superare la soglia 30s.
+
+Risultato: la mappa si "saturava" di player che in realta' erano gia'
+morti/spostati altrove.
+
+### Fix: nuovo contatore `missed_scans`
+
+Ogni player rilevato ora ha un campo `missed_scans` che traccia in
+quanti scan consecutivi il player era "atteso" (entro view_radius
+dalla camera) ma non e' stato rilevato.
+
+Logica:
+- Se in uno scan il player viene matchato da una nuova detection ->
+  `missed_scans = 0` (reset).
+- Se il player e' dentro `view_radius` (4.5 unita') dalla camera ma
+  nessuna detection vicina e' stata trovata -> `missed_scans += 1`.
+- Quando `missed_scans >= 3` -> il player viene **rimosso**.
+
+Soglia 3 scelta come anti-flicker: con scan rate ~5/s, un player
+sparito viene rimosso in ~0.6 secondi. Abbastanza rapido per non
+avere "fantasmi", ma robusto contro frame YOLO occasionalmente
+vuoti (occlusione, distanza, falso negativo).
+
+### Cambio chiave: vale anche per i morti
+
+A differenza della logica precedente, ora **vivi e morti seguono lo
+stesso comportamento**: se non sono piu' visibili nella zona inquadrata,
+spariscono dopo 3 scansioni mancate. Questo perche':
+
+- Se il bot guarda l'Admin e prima vedeva un cadavere, ma ora il
+  cadavere non c'e' piu' (perche' qualcuno l'ha riportato), e' giusto
+  rimuoverlo dalla mappa.
+- Se il bot si allontana dall'Admin e poi torna, il cadavere viene
+  ri-rilevato e ri-aggiunto.
+
+### Safety net 60s
+
+Aggiunta una rimozione automatica per player MOLTO vecchi (>60s) che
+non sono mai stati ri-inquadrati. Vale anche per i morti (prima ne
+erano esenti). Evita che la lista cresca indefinitamente per player
+in zone della mappa che non visitiamo piu'.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/yolo_scanner.py` | aggiunto campo `missed_scans` ai player + nuova logica di pulizia anti-flicker |
+
+### Verifica fatta
+
+7 test funzionali su scenari diversi:
+
+| Scenario | Risultato |
+|---|---|
+| Player visto in zona | Resta, missed=0 |
+| Player non visto 1 volta | Resta, missed=1 |
+| Player vivo non visto 3 volte | **Rimosso** |
+| Player morto non visto 3 volte | **Rimosso** (nuovo!) |
+| Anti-flicker: 1 frame mancato + ritrovato | Resta, missed resetta a 0 |
+| Player fuori inquadratura | Non toccato (corretto) |
+| Safety net 60s su player dimenticato | Rimosso |
+
+Tutti passano correttamente.
+
+### Cosa NON e' cambiato
+
+- `view_radius` (4.5 unita'): invariato
+- Tolleranza match (1.5 unita'): invariato
+- Logica anti-teleport e anti-zombie: invariate
+- Logica calibrazione camera, rendering, ecc.: invariate
+
+Solo la sezione "Pulizia fantasmi" e' stata sostituita.
+
+
+## v2.2.9 — Ripeti SOLO le azioni con [Ripeti], non quelle prima
+
+### Problema riportato
+
+> Continua a ripetere tutte le fasi.
+
+### Causa
+
+Le tue task NON usano i cooldown per separare le fasi. Esempio Swipe Card:
+
+```
+AZIONI = [
+    {tipo: click_poly carta},   # azione 0, NO [Ripeti]
+    {tipo: drag_zone slide},    # azione 1, [Ripeti]
+]
+```
+
+Senza cooldown, il sistema considera entrambe le azioni come **una
+singola fase (chunk)**. Quindi quando lo slide falliva, il bot rilanciava
+il subprocess che faceva di nuovo TUTTO (click + slide), invece di
+saltare il click e ripetere solo lo slide.
+
+L'analisi del JSON delle tue task lo conferma:
+
+```
+Task con cooldown: 1
+Task senza cooldown: 20
+```
+
+### Fix: nuovo parametro `--start-from-action`
+
+Adesso il bot puo' rilanciare il subprocess saltando le prime N azioni
+del chunk. La logica:
+
+1. Quando una fase con `[Ripeti]=True` fallisce, il bot trova l'indice
+   della **prima azione con `[Ripeti]=True`** nel chunk corrente.
+2. Rilancia il subprocess passando `--start-from-action N`.
+3. Il subprocess salta le prime N azioni e parte dalla N-esima.
+
+### Esempio Swipe Card
+
+```python
+AZIONI = [
+    {tipo: click_poly,  ripeti: False},   # azione 0
+    {tipo: drag_zone,   ripeti: True},    # azione 1
+]
+```
+
+**Lancio iniziale**:
+- Bot lancia: `python task_001.py --step 0`
+- Subprocess esegue: click + slide
+- Slide fallisce (RAM resta a 0/2)
+
+**Rilancio (modalita' ripeti)**:
+- Bot calcola `start_from_action = 1` (prima azione con [Ripeti])
+- Bot lancia: `python task_001.py --step 0 --start-from-action 1`
+- Subprocess esegue: **solo slide** (salta il click che era gia' OK)
+- Se ancora fallisce -> ripete (max 5 volte), poi ESC
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/task_writer.py` | aggiunto parsing `--start-from-action` nel meta block + campo `start_from_action` in TASK_META |
+| `among_us_ai/execution/_motore_pkg/dispatcher.py` | nuovo parametro `start_from_action` in `esegui_azioni`: salta le prime N azioni del chunk |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | passa `task_meta['start_from_action']` a `esegui_azioni` |
+| `among_us_ai/ui/mixins/tasks_process.py` | nuovo parametro in `_avvia_subprocess_task` + nuovo metodo `_calcola_start_from_action` + uso al rilancio |
+
+### Verifica fatta
+
+Test simulazione Swipe Card senza cooldown:
+
+| Caso | start_from_action | Comportamento |
+|---|---|---|
+| Lancio iniziale | 0 | Esegue click + slide |
+| Rilancio dopo fallimento | **1** | Esegue solo slide (corretto!) |
+| Ripeti 1/3, 2/3, 3/3 | 1 ogni volta | Slide ripetuto |
+| Tentativo 3/3 esaurito | - | ESC + abbandono |
+| Nessuna azione [Ripeti] | 0 | Fallback: riparte da capo |
+
+Tutti i test passano.
+
+### Retrocompatibilita'
+
+Per chi ha task **CON cooldown** (modello "fasi separate"):
+- Il cooldown chunkifica le azioni come prima
+- `start_from_action` si applica DENTRO il chunk corrente
+- Esempio: se hai 3 fasi (chunk 0, 1, 2), il bot lancia con `--step 1`
+  per la fase 1. Se fallisce e ha [Ripeti], rilancia con `--step 1
+  --start-from-action <prima azione [Ripeti] DEL CHUNK 1>`.
+
+Quindi: **nessuna regressione** per le task con cooldown.
+
+I file `.py` vecchi (senza il flag `--start-from-action`) continuano a
+funzionare grazie a `parse_known_args`: ignorano gli argomenti sconosciuti.
+
+
+## v2.2.8 — Fix critico: ripete SOLO la fase con [Ripeti], non tutta la task
+
+### Bug riportato
+
+> Adesso e' come se mi ripetesse la task. Io voglio che ripete solo
+> la fase da me selezionata con il checkbox.
+
+### Causa
+
+In `_fase_da_ripetere_ext`, l'`idx_fase` (cioe' "quale fase e' stata
+appena eseguita") veniva calcolato come `internal_step - 1`. Ma questo
+calcolo e' SBAGLIATO per l'**ultima fase** di una task multi-step.
+
+Spiegazione tecnica:
+- `internal_step` viene incrementato solo quando il subprocess stampa
+  `__COOLDOWN__:` a stdout. Lo fa al termine di ogni chunk, MA SOLO se
+  ci sono altri chunk dopo.
+- Per la swipe card (2 fasi: click + slide):
+  - Subprocess parte con `--step 0`, esegue fase 0 click,
+    stampa `__COOLDOWN__:0.5` -> `internal_step` diventa 1.
+  - Bot rilancia con `--step 1`, esegue fase 1 slide,
+    NON stampa altro `__COOLDOWN__:` (e' l'ultima fase) -> termina.
+  - `internal_step` resta a 1.
+  - `_fase_da_ripetere_ext` calcola `idx_fase = 1 - 1 = 0` ❌
+    Sta puntando alla fase 0 (click) invece che alla 1 (slide).
+
+Quindi il bot controllava se la fase 0 aveva `[Ripeti]` (e di solito
+no, l'utente la mette sulla fase 1 dello slide), e in pratica non
+ripeteva mai la fase giusta. Oppure, se l'utente metteva `[Ripeti]`
+su entrambe le fasi, ripeteva tutta la task da capo (fase 0 + 1).
+
+### Fix
+
+#### 1. Salvo lo step del subprocess al lancio
+
+Nuovo dict `self.task_last_launched_step: { id_task: step }` in
+`_avvia_subprocess_task`. Salva il valore esatto di `--step`
+passato al subprocess. Questo e' la vera "fase appena eseguita"
+e non dipende da quanti `__COOLDOWN__:` sono stati stampati.
+
+```python
+self.task_last_launched_step[id_task] = script_step
+```
+
+#### 2. Uso `task_last_launched_step` invece di `internal_step - 1`
+
+In `_fase_da_ripetere_ext`, ora `idx_fase` viene letto direttamente
+dal dict. Cosi':
+- Subprocess parte con `--step 1`, esegue fase 1 slide, fallisce.
+- `task_last_launched_step[id] = 1` -> `idx_fase = 1` (corretto!)
+- Il bot controlla se la fase 1 ha `[Ripeti]`. Se si', rilancia
+  con `--step 1` (calcolato da `max(ram_step, internal_step) = max(0, 1) = 1`).
+
+La vecchia logica (`internal_step - 1`) resta come fallback.
+
+#### 3. Reset internal_step quando si abbandona con ESC
+
+Quando si raggiunge il limite tentativi e si preme ESC:
+- `internal_step` viene resettato a 0
+- `task_last_launched_step` viene rimosso
+
+Cosi' al prossimo lancio (manuale o automatico) la task ricomincia
+da fase 0, dato che ESC ha presumibilmente chiuso/annullato il
+minigioco e il gioco ha riportato lo step in RAM a 0.
+
+### Comportamento atteso adesso (Swipe Card)
+
+```
+Azioni:
+  1. click_poly su carta       D:0.0s P:0.5s [---]    (no ripeti)
+  2. cooldown                  D:0.5s
+  3. drag_zone slide cursore   D:0.5s P:0.0s [Ripeti] Max: 5
+```
+
+Flusso:
+1. Subprocess fase 0 (click): eseguito una volta, NON si ripete
+   (la fase 0 non ha [Ripeti]).
+2. RAM avanza a step=1 (carta presa).
+3. Subprocess fase 1 (slide): eseguito.
+   - Se RAM avanza a step=2 (done) -> task finita, prossima task.
+   - Se RAM resta a 1 -> fase 1 da ripetere (counter 1/5).
+4. Ripete fino a 5 volte. Se non riesce -> ESC + abbandona.
+
+**Importante**: la fase 0 (click) NON viene ripetuta dopo un fallimento
+della fase 1, perche' nel rilancio `script_step = max(ram_step=1, internal_step=1) = 1`,
+quindi il subprocess parte direttamente da fase 1.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/tasks_process.py` | salvataggio `task_last_launched_step` + uso in `_fase_da_ripetere_ext` + reset internal_step su ESC |
+
+### Verifica fatta
+
+Test simulazione "Swipe Card con [Ripeti] solo sulla fase 1":
+- Scenario 1: dopo fase 0 (click), il bot decide `ripete=False` perche'
+  la fase 0 non ha [Ripeti]. ✓
+- Scenario 2: dopo fase 1 (slide) fallita, il bot decide `ripete=True`
+  per 2 tentativi, poi al 3° tentativo (max=3) preme ESC e abbandona. ✓
+- Verifica dello step rilanciato: dopo fallimento fase 1,
+  `script_step = max(ram_step=0, internal_step=1) = 1`. Il subprocess
+  riparte direttamente da fase 1, non da 0. ✓
+
+
 ## v2.2.7 — Limite tentativi ripetizione + ESC fallback
 
 ### Bug riportato

@@ -126,7 +126,8 @@ class TaskDettagliManager:
 
     def aggiorna(self, id_task, nome, x, y,
                  vitale=None, due_giocatori=None,
-                 cooldown=None, lunghezza=None):
+                 cooldown=None, lunghezza=None,
+                 delay_avvio=None):
         """Aggiorna."""
         for t in self.task_list:
             if t['id'] == id_task:
@@ -141,6 +142,11 @@ class TaskDettagliManager:
                     t['cooldown'] = float(cooldown)
                 if lunghezza is not None:
                     t['lunghezza'] = str(lunghezza)
+                if delay_avvio is not None:
+                    # Pausa iniziale (sec) prima di iniziare le azioni:
+                    # 0 = parte subito, >0 = aspetta dopo apertura pannello.
+                    # Utile per minigiochi con animazione di apertura lunga.
+                    t['delay_avvio'] = max(0.0, float(delay_avvio))
                 break
         self.salva()
 
