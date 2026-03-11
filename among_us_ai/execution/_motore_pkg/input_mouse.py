@@ -35,6 +35,11 @@ def _drag_umano(sx, sy, ex, ey, durata):
     # punto di controllo offset random, per simulare il movimento naturale
     # della mano. Il timing usa easeInOutSine per accelerare/decelerare.
     #
+    # Reattivita' a STOP: se il bot principale richiede stop durante il
+    # drag (es. RAM segnala fase completata), interrompiamo subito,
+    # rilasciamo il mouse pulito ed usciamo.
+    from . import stop_flag as _stop_flag
+    #
     # 1) Move to start con tween easeOutQuad
     _pag.moveTo(sx, sy, duration=_random.uniform(0.15, 0.25),
                 tween=_pag.easeOutQuad)
@@ -53,20 +58,27 @@ def _drag_umano(sx, sy, ex, ey, durata):
         # 6) Loop di interpolazione: t in [0,1], te e' la versione con
         #    easing (easeInOutSine) per accelerare/decelerare
         for i in range(1, steps + 1):
+            # Interruzione richiesta dal main? Esci dalla curva.
+            if _stop_flag.is_stop_requested():
+                break
             t = i / steps; te = -(_math.cos(_math.pi * t) - 1) / 2
             # Equazione Bezier quadratica: B(t) = (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
             _pag.moveTo(int((1-te)**2*sx + 2*(1-te)*te*mx + te**2*ex),
                         int((1-te)**2*sy + 2*(1-te)*te*my + te**2*ey))
             _time.sleep(st)
         # 7) Snap finale al punto target esatto (la curva potrebbe
-        #    arrotondare a 1 px di distanza)
-        _pag.moveTo(ex, ey)
+        #    arrotondare a 1 px di distanza). Skip se stop richiesto:
+        #    il punto attuale va bene, non vogliamo "completare" il drag
+        #    ad un target che il gioco ha gia' considerato risolto.
+        if not _stop_flag.is_stop_requested():
+            _pag.moveTo(ex, ey)
     else:
         # Drag istantaneo: niente Bezier, vai dritto al target
         _pag.moveTo(ex, ey)
     # 8) Micro-pausa pre-rilascio per simulare reazione umana
     _time.sleep(_random.uniform(0.05, 0.15))
-    # 9) Release del tasto sinistro
+    # 9) Release del tasto sinistro (sempre, anche se stop: serve per
+    #    non lasciare il mouse con il tasto premuto -> bug del gioco)
     _pag.mouseUp(button='left')
 
 
@@ -75,6 +87,7 @@ def _drag_multi(punti_abs, durata_totale):
     # Usato per minigiochi tipo "drag in poligono" dove il giocatore
     # deve seguire un percorso prestabilito (es. wiring complesso).
     # Ogni segmento riceve un tempo proporzionale alla sua lunghezza.
+    from . import stop_flag as _stop_flag
     if len(punti_abs) < 2:
         # Non si puo' fare drag con < 2 punti
         return
@@ -93,6 +106,9 @@ def _drag_multi(punti_abs, durata_totale):
         _pag.mouseUp(button='left'); return
     # 3) Per ogni segmento, traccia una Bezier quadratica (come _drag_umano)
     for i in range(len(punti_abs)-1):
+        # Stop richiesto fra segmenti? Esci pulito.
+        if _stop_flag.is_stop_requested():
+            break
         ax, ay = punti_abs[i]; bx, by = punti_abs[i+1]
         seg = _math.hypot(bx-ax, by-ay)
         # Tempo proporzionale alla lunghezza del segmento sul totale
@@ -104,13 +120,16 @@ def _drag_multi(punti_abs, durata_totale):
         off = _random.randint(-3, 3)
         mx = (ax+bx)/2+off; my = (ay+by)/2+off
         for k in range(1, steps+1):
+            if _stop_flag.is_stop_requested():
+                break
             t = k/steps; te = -(_math.cos(_math.pi*t)-1)/2
             _pag.moveTo(int((1-te)**2*ax + 2*(1-te)*te*mx + te**2*bx),
                         int((1-te)**2*ay + 2*(1-te)*te*my + te**2*by))
             _time.sleep(st)
-        # Snap a fine segmento
-        _pag.moveTo(bx, by)
-    # 4) Micro-pausa + release
+        # Snap a fine segmento (skip se stop)
+        if not _stop_flag.is_stop_requested():
+            _pag.moveTo(bx, by)
+    # 4) Micro-pausa + release (sempre)
     _time.sleep(_random.uniform(0.05, 0.15))
     _pag.mouseUp(button='left')
 
@@ -120,6 +139,7 @@ def _drag_seq_tappe(punti_abs, durata_segmento):
     # tween di pyautogui (easeInOutQuad) invece della Bezier.
     # Piu' rigido di `_drag_multi` ma piu' preciso per minigiochi che
     # richiedono di passare ESATTAMENTE per i punti (es. wiring sequenziale).
+    from . import stop_flag as _stop_flag
     if len(punti_abs) < 2:
         return
     # Move to start + press
@@ -131,6 +151,8 @@ def _drag_seq_tappe(punti_abs, durata_segmento):
     # Durata per segmento (minimo 250ms per dare tempo al gioco di reagire)
     dur_seg = max(0.25, durata_segmento)
     for i in range(1, len(punti_abs)):
+        if _stop_flag.is_stop_requested():
+            break
         bx, by = punti_abs[i]
         # Tween di pyautogui per movimento smooth fra le tappe
         _pag.moveTo(bx, by, duration=dur_seg, tween=_pag.easeInOutQuad)

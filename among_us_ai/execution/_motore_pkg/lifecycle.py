@@ -49,36 +49,71 @@ def run_task(task_meta, azioni, ctx=None):
     if not _OK:
         return False
 
-    # 0) PRE-WARMING: se attivo, aspetta una riga "GO" su stdin.
+    # === STDIN READER THREAD ===
+    # Il bot principale comunica col subprocess via stdin pipe.
+    # Messaggi supportati (uno per riga, terminati da \n):
+    #   "GO"   -> sblocca il pre-warming (attesa iniziale)
+    #   "STOP" -> richiedi interruzione dell'esecuzione (RAM avanzata,
+    #             fase considerata completata, no piu' azioni inutili)
+    #   altro  -> ignorato (forward compatibility)
+    #
+    # Il thread reader gira in background per tutta la vita del
+    # subprocess. Termina quando stdin viene chiusa dal bot principale
+    # o all'EOF naturale.
+    from . import stop_flag as _stop_flag
+    # Reset della stop flag (sicurezza: se il subprocess fosse riusato,
+    # la flag NON deve persistere fra task diverse)
+    _stop_flag.reset_stop()
+
+    # Evento che segnala "GO ricevuto" per il pre-warming
+    import threading as _threading
+    _go_event = _threading.Event()
+
+    def _stdin_reader():
+        """Thread reader di stdin: gestisce GO e STOP."""
+        import sys as _sys
+        try:
+            while True:
+                line = _sys.stdin.readline()
+                if not line:
+                    # stdin chiuso: il bot principale e' morto o ha
+                    # finito di comunicare. Esci dal thread.
+                    # Sblocca anche il pre-warming, cosi' non resta
+                    # bloccato a vita.
+                    _go_event.set()
+                    return
+                msg = line.strip().upper()
+                if msg == "GO":
+                    _go_event.set()
+                elif msg == "STOP":
+                    nome_t = task_meta.get('nome', '?')
+                    print(f"[{nome_t}] STOP richiesto: interrompo esecuzione",
+                          flush=True)
+                    _stop_flag.request_stop()
+                    # Continua a leggere (potrebbero arrivare altri
+                    # messaggi futuri, anche se ora non ne abbiamo).
+        except Exception:
+            # Lettura fallita (pipe rotta, ecc.): esci silenziosamente
+            _go_event.set()
+            return
+
+    _reader_thread = _threading.Thread(target=_stdin_reader, daemon=True)
+    _reader_thread.start()
+
+    # 0) PRE-WARMING: se attivo, aspetta che il reader thread riceva "GO".
     #    Il bot principale avvia il subprocess in anticipo (durante
     #    l'arrivo al target del giocatore) con --wait-trigger. Il
     #    subprocess fa setup (import, mss, ecc.) poi aspetta qui.
     #    Quando il bot preme SPAZIO per aprire il pannello, manda
     #    "GO\n" sullo stdin del subprocess, che riprende immediatamente.
-    #
-    #    Cosi' tutto il startup di Python (~300-500ms) e' gia' avvenuto
-    #    PRIMA del trigger, e l'analisi parte istantanea.
     if task_meta.get('wait_trigger', False):
-        import sys as _sys
         nome_t = task_meta.get('nome', '?')
         print(f"[{nome_t}] Pronto, aspetto trigger...", flush=True)
-        try:
-            # Lettura bloccante di una riga da stdin. Il bot principale
-            # invia "GO\n" quando vuole far partire l'analisi.
-            # Eventuali altre righe sono ignorate (compatibilita').
-            while True:
-                line = _sys.stdin.readline()
-                if not line:
-                    # stdin chiuso prematuramente: procediamo comunque
-                    # (sicuro: meglio eseguire che bloccare per sempre).
-                    print(f"[{nome_t}] Trigger stdin chiuso, parto comunque", flush=True)
-                    break
-                if line.strip().upper() == "GO":
-                    print(f"[{nome_t}] Trigger ricevuto, parto!", flush=True)
-                    break
-        except Exception as _trigger_err:
-            print(f"[{nome_t}] Errore lettura trigger: {_trigger_err} - parto comunque",
-                  flush=True)
+        # Aspetta che il reader thread setti _go_event (per "GO" o EOF).
+        # Timeout di sicurezza 60s: se nessuno manda GO in 60s, parti
+        # comunque per non bloccare a vita.
+        _go_event.wait(timeout=60.0)
+        print(f"[{nome_t}] Trigger ricevuto, parto!", flush=True)
 
     # 1) Risolvi l'hwnd: dal ctx, oppure cerca per nome
     hwnd = ctx.get('hwnd')
