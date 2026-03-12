@@ -113,6 +113,15 @@ class TasksProcessMixin:
             self.task_last_launched_step = {}
         self.task_last_launched_step[id_task] = script_step
 
+        # Memorizza lo step in RAM al momento del lancio. Serve al
+        # "STOP watcher" per rilevare avanzamento durante l'esecuzione:
+        # se ad un certo punto il polling RAM trova step > script_step,
+        # la fase e' stata risolta dal gioco -> manda STOP al subprocess
+        # che interrompe le azioni residue (es. drag inutili).
+        if not hasattr(self, 'task_ram_step_at_launch'):
+            self.task_ram_step_at_launch = {}
+        self.task_ram_step_at_launch[id_task] = ram_step
+
         try:
             # In thread mode il file potrebbe essere None se la generazione
             # e' fallita; fallback a stringa descrittiva per i log.
@@ -160,7 +169,11 @@ class TasksProcessMixin:
                 # Se in modalita' pre-warming, apriamo stdin come PIPE
                 # cosi' poi possiamo inviare "GO\n" per triggerare il
                 # subprocess. Senza wait_trigger, stdin e' chiuso.
-                popen_stdin = subprocess.PIPE if wait_trigger else subprocess.DEVNULL
+                # stdin=PIPE sempre attivo: il bot principale puo' inviare:
+                # - "GO\n" per sbloccare il pre-warming (--wait-trigger)
+                # - "STOP\n" per richiedere interruzione quando la fase
+                #   e' stata risolta in RAM (anche senza pre-warming)
+                popen_stdin = subprocess.PIPE
                 self._task_process = subprocess.Popen(
                     cmd,
                     cwd=os.getcwd(),
@@ -225,6 +238,11 @@ class TasksProcessMixin:
         minigioco. Il subprocess, gia' avviato in anticipo con
         --wait-trigger, era in stand-by. Ricevuto "GO" parte subito.
 
+        IMPORTANTE: NON chiudere stdin dopo l'invio. Il bot principale
+        puo' ancora inviare "STOP" durante l'esecuzione (es. quando la
+        fase e' risolta in RAM e vogliamo interrompere azioni residue).
+        Stdin viene chiuso automaticamente al termine del subprocess.
+
         Idempotente: se il subprocess non e' attivo, in modalita' thread,
         o gia' triggerato, non fa nulla.
         """
@@ -239,10 +257,7 @@ class TasksProcessMixin:
             # in lifecycle.py:run_task e riprende l'esecuzione.
             proc_stdin.write(b"GO\n")
             proc_stdin.flush()
-            # Chiudo stdin: cosi' eventuali altre readline() ritornano
-            # subito stringa vuota e non bloccano (ma non dovrebbero
-            # capitare).
-            proc_stdin.close()
+            # NON chiudere stdin: serve ancora per inviare "STOP" piu' avanti.
             print(f"[Trigger] Inviato GO al subprocess", flush=True)
         except (BrokenPipeError, ValueError, OSError) as e:
             # Il subprocess potrebbe essere gia' terminato o stdin gia'
@@ -389,6 +404,9 @@ class TasksProcessMixin:
                       f"Rilancio subprocess saltando {start_from} azioni iniziali.")
                 self._task_process         = None
                 self._task_process_task_id = None
+                # Cleanup state per riavvio pulito (STOP watcher, retry counts)
+                if hasattr(self, "task_stop_sent"):
+                    self.task_stop_sent.discard(id_task)
                 # Pausa breve prima del rilancio (anti-loop frenetico)
                 time.sleep(0.3)
                 self._avvia_subprocess_task(id_task, start_from_action=start_from)
@@ -434,6 +452,9 @@ class TasksProcessMixin:
 
         self._task_process         = None
         self._task_process_task_id = None
+        # Cleanup state per riavvio pulito (STOP watcher, retry counts)
+        if hasattr(self, "task_stop_sent"):
+            self.task_stop_sent.discard(id_task)
 
     def _ferma_processo_task(self, success=False):
         """Termina il processo attivo (se presente) e aggiorna lo stato a idle."""
@@ -476,6 +497,9 @@ class TasksProcessMixin:
                 print(f"[Exec] '{nome}' terminata forzatamente")
         self._task_process         = None
         self._task_process_task_id = None
+        # Cleanup state per riavvio pulito (STOP watcher, retry counts)
+        if hasattr(self, "task_stop_sent"):
+            self.task_stop_sent.discard(id_task)
 
     def _fase_corrente_e_ripeti(self, task):
         """

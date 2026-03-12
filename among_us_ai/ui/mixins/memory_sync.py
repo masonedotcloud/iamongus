@@ -56,10 +56,109 @@ class MemorySyncMixin:
                         if reg and reg['id'] in getattr(self, 'task_retry_counts', {}):
                             self.task_retry_counts.pop(reg['id'], None)
 
-            # --- 4) Sleep tra letture ---
+            # --- 5) STOP WATCHER: la fase e' avanzata in RAM? ---
+            # Se c'e' un subprocess attivo per una task e lo step di
+            # quella task in RAM e' avanzato OLTRE quello al lancio,
+            # significa che la fase e' stata completata dal gioco.
+            # Mandiamo "STOP\n" sullo stdin del subprocess cosi' che
+            # interrompa eventuali azioni residue (utile per task tipo
+            # Divert Power dove si fa drag su 8 interruttori e solo
+            # uno e' quello giusto).
+            self._stop_watcher_check(tasks)
+
+            # --- 6) Sleep tra letture ---
             # 50 ms = 20 letture al secondo. Sufficiente per una camera
             # smooth senza sovraccaricare la CPU con accessi RAM.
             time.sleep(0.05)
+
+    def _stop_watcher_check(self, ram_tasks):
+        """
+        Se la fase corrente del subprocess attivo e' stata risolta
+        in RAM, invia "STOP" allo stdin del subprocess.
+
+        Idempotente: una volta inviato lo STOP per una task, non lo
+        rinvia (`task_stop_sent` e' un set di id_task gia' notificati).
+        Si pulisce automaticamente quando il subprocess termina (in
+        `_controlla_processo_task`).
+        """
+        # Se non c'e' subprocess attivo, niente da fare
+        proc = getattr(self, '_task_process', None)
+        proc_id = getattr(self, '_task_process_task_id', None)
+        if proc is None or proc_id is None:
+            return
+        # Se non abbiamo lo step iniziale (fallback safety), niente da fare
+        ram_step_launch_dict = getattr(self, 'task_ram_step_at_launch', {})
+        if proc_id not in ram_step_launch_dict:
+            return
+        ram_step_launch = ram_step_launch_dict[proc_id]
+
+        # Set degli id_task gia' notificati con STOP (per non spammare)
+        if not hasattr(self, 'task_stop_sent'):
+            self.task_stop_sent = set()
+        if proc_id in self.task_stop_sent:
+            return  # gia' notificato
+
+        # Trovo la task registrata
+        try:
+            reg = self.task_mgr.get_by_id(proc_id)
+        except Exception:
+            return
+        if reg is None:
+            return
+        tipo_t = reg.get('tipo')
+        id_stanza_t = reg.get('id_stanza')
+
+        # Trovo la task in RAM con lo stesso (tipo, id_stanza)
+        ram_match = None
+        for mt in (ram_tasks or []):
+            if mt.get('tipo') == tipo_t and mt.get('id_stanza') == id_stanza_t:
+                ram_match = mt
+                break
+
+        # Se la task e' done in RAM o lo step e' avanzato oltre quello
+        # iniziale del lancio, la fase e' stata risolta -> manda STOP.
+        should_stop = False
+        if ram_match is None:
+            # Task scomparsa dalla RAM (es. completata e rimossa) -> stop
+            should_stop = True
+        elif ram_match.get('done', False):
+            should_stop = True
+        else:
+            # Confronto step corrente vs step al lancio.
+            # ram_match['prog'] di solito e' "N/M" stringa.
+            try:
+                prog = ram_match.get('prog', '0/0')
+                curr_step = int(str(prog).split('/')[0])
+                if curr_step > ram_step_launch:
+                    should_stop = True
+            except (ValueError, AttributeError):
+                pass
+
+        if should_stop:
+            self._invia_stop_subprocess(proc_id)
+            self.task_stop_sent.add(proc_id)
+
+    def _invia_stop_subprocess(self, id_task):
+        """
+        Invia 'STOP\\n' sullo stdin del subprocess attivo.
+
+        Idempotente: se stdin non e' disponibile (subprocess gia' morto,
+        thread mode, ecc.), non fa nulla e non logga errore.
+        """
+        proc = getattr(self, '_task_process', None)
+        if proc is None:
+            return
+        proc_stdin = getattr(proc, 'stdin', None)
+        if proc_stdin is None:
+            return
+        try:
+            proc_stdin.write(b"STOP\n")
+            proc_stdin.flush()
+            print(f"[StopWatcher] Inviato STOP a task {id_task} "
+                  f"(RAM avanzata)", flush=True)
+        except (BrokenPipeError, ValueError, OSError):
+            # subprocess gia' chiuso o stdin non scrivibile: niente da fare
+            pass
 
     def _sync_nomi_task_da_ram(self, ram_tasks):
         """
