@@ -82,6 +82,65 @@ def _drag_umano(sx, sy, ex, ey, durata):
     _pag.mouseUp(button='left')
 
 
+def _drag_snap(sx, sy, ex, ey, durata):
+    """
+    Drag "SNAP" istantaneo, ottimizzato per afferrare oggetti animati.
+
+    Differenze rispetto a `_drag_umano`:
+      1. NESSUN tween nel move-to-start: snap IMMEDIATO su (sx, sy).
+         Cosi' la foglia/oggetto NON ha tempo di muoversi per le sue
+         animazioni prima che il bot la afferri.
+      2. Pausa post-mouseDown piu' generosa (180ms): il gioco ha tempo
+         di registrare "afferra".
+      3. Movimento in linea retta (no Bezier curva ampia): il gioco
+         non perde l'oggetto.
+      4. Snap finale al target.
+      5. Pausa pre-mouseUp piu' lunga (150ms): "rilascia qui".
+
+    Da usare per:
+      - yolo_drag_all (foglie O2 Filter)
+      - tutte le task dove l'oggetto e' animato/mobile
+
+    NON usare per drag con curva naturale (es. wiring): usare _drag_umano
+    o _drag_multi.
+    """
+    from . import stop_flag as _stop_flag
+
+    # 1) SNAP immediato sulla posizione (no tween)
+    _pag.moveTo(sx, sy)
+    # 2) Pausa minima per assicurare che il move sia "registrato"
+    _time.sleep(0.02)
+    # 3) Press del tasto sinistro
+    _pag.mouseDown(button='left')
+    # 4) Pausa GENEROSA post-press: il gioco capisce "afferro l'oggetto"
+    #    e lo "incolla" al cursore. Senza questo, il drag successivo
+    #    afferra solo "aria".
+    _time.sleep(_random.uniform(0.15, 0.20))
+
+    if durata > 0:
+        # 5) Linea retta dal punto iniziale al target con N step
+        steps = max(8, int(durata * 50))
+        st = durata / steps
+        for i in range(1, steps + 1):
+            if _stop_flag.is_stop_requested():
+                break
+            t = i / steps
+            mx = int(sx + (ex - sx) * t)
+            my = int(sy + (ey - sy) * t)
+            _pag.moveTo(mx, my)
+            _time.sleep(st)
+        # 6) Snap finale al target esatto
+        if not _stop_flag.is_stop_requested():
+            _pag.moveTo(ex, ey)
+    else:
+        _pag.moveTo(ex, ey)
+
+    # 7) Pausa GENEROSA pre-release: "rilascia qui"
+    _time.sleep(_random.uniform(0.15, 0.20))
+    # 8) Release
+    _pag.mouseUp(button='left')
+
+
 def _drag_multi(punti_abs, durata_totale):
     # Drag che passa per N punti in sequenza, in tempo `durata_totale`.
     # Usato per minigiochi tipo "drag in poligono" dove il giocatore

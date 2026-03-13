@@ -258,40 +258,23 @@ class AutoMoveMixin:
                 # === FINAL NUDGE: ultimi centimetri per arrivare nel raggio
                 # di attivazione del pulsante Use del gioco ===
                 #
+                # === MICRO-NUDGE ITERATIVO + CHECK PULSANTE USE ===
+                #
                 # Il pathfinding lascia un piccolo margine (advance_th =
                 # AUTO_ARRIVAL_THRESHOLD) per evitare di "incollarsi" al
                 # target. Pero' a volte questo margine e' troppo grande e
                 # il bot non entra nel raggio di interazione del gioco
                 # (il pulsante Use non si illumina).
                 #
-                # Per rifinire l'arrivo, premiamo i tasti direzionali
-                # verso il target per ulteriori AUTO_FINAL_NUDGE_SEC.
-                # Lo facciamo qui in modo bloccante (con time.sleep) perche'
-                # il movimento e' molto breve e non serve interruzione.
-                nudge_sec = getattr(GPSConfig, 'AUTO_FINAL_NUDGE_SEC', 0.0)
-                if nudge_sec > 0 and self.auto_final_target:
-                    fx, fy = self.auto_final_target
-                    fdx, fdy = fx - cx, fy - cy
-                    fdist = math.hypot(fdx, fdy)
-                    if fdist > 0.05:  # solo se vale la pena
-                        # Direzione di nudge (tasti binari, niente PWM:
-                        # la finestra e' troppo breve per fare modulazione).
-                        # Coerente con il mapping principale:
-                        #   dx > 0 -> 'D' (destra), dx < 0 -> 'A' (sinistra)
-                        #   dy > 0 -> 'W' (su),     dy < 0 -> 'S' (giu')
-                        nudge_keys = set()
-                        if   fdx >  0.05: nudge_keys.add('D')
-                        elif fdx < -0.05: nudge_keys.add('A')
-                        if   fdy >  0.05: nudge_keys.add('W')
-                        elif fdy < -0.05: nudge_keys.add('S')
-
-                        if nudge_keys:
-                            # Rilascia tasti gia' premuti (probabili)
-                            self.key_ctrl.release_all()
-                            for k in nudge_keys:
-                                self.key_ctrl.press(k)
-                            time.sleep(nudge_sec)
-                            self.key_ctrl.release_all()
+                # Strategia (v2.2.23+):
+                #   1) Se la calibrazione del pulsante Use e' presente,
+                #      controlla se gia' acceso. Se SI -> lancia subito.
+                #   2) Altrimenti fai un micro-nudge WASD verso il target
+                #      e ricontrolla. Ripeti fino a USE_BUTTON_MAX_NUDGES.
+                #   3) Se la calibrazione manca o ancora spento dopo N
+                #      tentativi -> fai il nudge fisso classico
+                #      (AUTO_FINAL_NUDGE_SEC) e lancia la task comunque.
+                self._do_arrival_nudge(cx, cy)
 
                 # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Arrivato OK"
@@ -413,3 +396,131 @@ class AutoMoveMixin:
         # Messaggio di stato mostrato all'utente nel pannello
         self.auto_status_msg = (f"wp {self.auto_path_index+1}/{total_wp}  "
                                 f"d={dist:.2f}")
+
+    def _do_arrival_nudge(self, cx, cy):
+        """
+        Esegue il "nudge finale" per arrivare nel raggio di attivazione
+        del pulsante Use del gioco.
+
+        Strategia:
+          1) Se la calibrazione del pulsante Use e' presente e
+             USE_BUTTON_CHECK_ENABLED=True:
+             - Controlla periodicamente il pulsante Use
+             - Se acceso -> esci (massima precisione raggiunta)
+             - Se spento -> fa un micro-nudge WASD verso il target
+                            (MICRO_NUDGE_DURATION_SEC) e ricontrolla
+             - Ripete fino a USE_BUTTON_MAX_NUDGES
+          2) Altrimenti (o calibrazione mancante o ancora spento dopo
+             N tentativi): fa il nudge fisso classico
+             (AUTO_FINAL_NUDGE_SEC) come fallback.
+
+        Parametri
+        ---------
+        cx, cy : float
+            Posizione attuale del giocatore (mondo, non schermo). Usata
+            per calcolare la direzione del nudge verso `auto_final_target`.
+        """
+        target = getattr(self, 'auto_final_target', None)
+        if not target:
+            return
+
+        # Direzione corrente verso il target (in coordinate mondo)
+        def _calc_nudge_keys(_cx, _cy):
+            tx, ty = target
+            dx, dy = tx - _cx, ty - _cy
+            keys = set()
+            if   dx >  0.05: keys.add('D')
+            elif dx < -0.05: keys.add('A')
+            if   dy >  0.05: keys.add('W')
+            elif dy < -0.05: keys.add('S')
+            return keys
+
+        # Helper per cattura del client rect del gioco (in coordinate
+        # schermo). Necessaria per il check del pulsante Use.
+        def _client_rect():
+            try:
+                hwnd = win32gui.FindWindow(None, "Among Us")
+                if not hwnd:
+                    return None
+                rect = win32gui.GetClientRect(hwnd)
+                pt = win32gui.ClientToScreen(hwnd, (rect[0], rect[1]))
+                cx_s, cy_s = pt
+                cw_s, ch_s = rect[2], rect[3]
+                return (cx_s, cy_s, cw_s, ch_s)
+            except Exception:
+                return None
+
+        # === FASE 1: tentativi iterativi con check pulsante Use ===
+        check_enabled = getattr(GPSConfig, 'USE_BUTTON_CHECK_ENABLED', False)
+        max_nudges = int(getattr(GPSConfig, 'USE_BUTTON_MAX_NUDGES', 10))
+        nudge_dur = float(getattr(GPSConfig, 'MICRO_NUDGE_DURATION_SEC', 0.05))
+
+        if check_enabled:
+            try:
+                from ...execution.use_button import is_lit, carica_calibrazione
+                calib = carica_calibrazione()
+            except Exception:
+                calib = None
+
+            if calib is not None and calib.get('calibrated', False):
+                # Per ridurre overhead apriamo mss una sola volta in tutti
+                # i check (cattura ROI veloce).
+                import mss as _mss
+                with _mss.mss() as sct:
+                    # Check iniziale: forse siamo gia' nel raggio
+                    rect = _client_rect()
+                    if rect:
+                        lit = is_lit(rect, calib, sct_optional=sct)
+                        if lit:
+                            print("[Arrival] Pulsante Use gia' acceso "
+                                  "all'arrivo, no nudge necessario.")
+                            return
+
+                    # Loop di micro-nudge
+                    for attempt in range(1, max_nudges + 1):
+                        # Posizione corrente (puo' essere cambiata dai
+                        # nudge precedenti)
+                        pos = self.pos_target if self.pos_target else (cx, cy)
+                        keys = _calc_nudge_keys(pos[0], pos[1])
+                        if not keys:
+                            # Esattamente sul target - non servono altri
+                            # nudge, usciamo.
+                            break
+
+                        # Esegui micro-nudge
+                        self.key_ctrl.release_all()
+                        for k in keys:
+                            self.key_ctrl.press(k)
+                        time.sleep(nudge_dur)
+                        self.key_ctrl.release_all()
+
+                        # Ricontrolla pulsante
+                        rect = _client_rect()
+                        if rect:
+                            lit = is_lit(rect, calib, sct_optional=sct)
+                            if lit:
+                                print(f"[Arrival] Pulsante Use acceso "
+                                      f"dopo {attempt} micro-nudge.")
+                                return
+
+                    # Esauriti i tentativi senza accendere il pulsante.
+                    # Non blocchiamo: lanciamo la task comunque (best-effort).
+                    print(f"[Arrival] Esauriti {max_nudges} micro-nudge, "
+                          f"pulsante Use ancora spento. Lancio comunque.")
+                    return
+
+        # === FASE 2: fallback nudge fisso (calibrazione mancante o
+        # disabilitata) - comportamento v2.2.11 ===
+        nudge_sec = getattr(GPSConfig, 'AUTO_FINAL_NUDGE_SEC', 0.0)
+        if nudge_sec > 0:
+            tx, ty = target
+            fdx, fdy = tx - cx, ty - cy
+            fdist = math.hypot(fdx, fdy)
+            if fdist > 0.05:
+                keys = _calc_nudge_keys(cx, cy)
+                if keys:
+                    self.key_ctrl.release_all()
+                    for k in keys:
+                        self.key_ctrl.press(k)
+                    time.sleep(nudge_sec)
+                    self.key_ctrl.release_all()

@@ -115,26 +115,34 @@ class MemorySyncMixin:
                 ram_match = mt
                 break
 
-        # Se la task e' done in RAM o lo step e' avanzato oltre quello
-        # iniziale del lancio, la fase e' stata risolta -> manda STOP.
+        # Se la fase ha avanzato lo step in RAM, manda STOP.
+        # IMPORTANTE: NON mandiamo STOP se la task semplicemente non e'
+        # presente in RAM. La RAM puo' essere "vuota" o non riportare
+        # certe task per molti motivi (timing del polling, task non
+        # vitali, animazioni in corso, ecc.). Mandare STOP per assenza
+        # in RAM causa interruzione prematura per task come Clean O2
+        # Filter che hanno azioni lunghe e non sono sempre in RAM.
         should_stop = False
-        if ram_match is None:
-            # Task scomparsa dalla RAM (es. completata e rimossa) -> stop
-            should_stop = True
-        elif ram_match.get('done', False):
-            should_stop = True
-        else:
-            # Confronto step corrente vs step al lancio.
-            # ram_match['prog'] di solito e' "N/M" stringa.
-            try:
-                prog = ram_match.get('prog', '0/0')
-                curr_step = int(str(prog).split('/')[0])
-                if curr_step > ram_step_launch:
-                    should_stop = True
-            except (ValueError, AttributeError):
-                pass
+        stop_reason = ""
+        if ram_match is not None:
+            if ram_match.get('done', False):
+                should_stop = True
+                stop_reason = "task done in RAM"
+            else:
+                # Confronto step corrente vs step al lancio.
+                # ram_match['prog'] di solito e' "N/M" stringa.
+                try:
+                    prog = ram_match.get('prog', '0/0')
+                    curr_step = int(str(prog).split('/')[0])
+                    if curr_step > ram_step_launch:
+                        should_stop = True
+                        stop_reason = f"step avanzato {ram_step_launch}->{curr_step}"
+                except (ValueError, AttributeError):
+                    pass
 
         if should_stop:
+            print(f"[StopWatcher] Task {proc_id} ({reg.get('nome','?')}): "
+                  f"{stop_reason}, invio STOP", flush=True)
             self._invia_stop_subprocess(proc_id)
             self.task_stop_sent.add(proc_id)
 
