@@ -115,13 +115,31 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False, start_from_action
               f"(modalita' ripeti azione).", flush=True)
         azioni_da_eseguire = azioni_da_eseguire[start_from_action:]
 
+    # Importo qui dentro, non a top-level, per non rompere chi importa
+    # esegui_azioni come funzione standalone.
+    from . import stop_flag as _stop_flag
+
     # --- 2) LOOP PRINCIPALE: dispatch per ogni azione ---
     for az in azioni_da_eseguire:
+        # 2a-stop) Se il bot principale ha richiesto STOP (RAM avanzata,
+        # fase considerata completata), interrompi qui prima di iniziare
+        # una nuova azione. Cosi' non facciamo click "fuori dal pannello"
+        # quando la task e' gia' stata risolta dal gioco.
+        if _stop_flag.is_stop_requested():
+            print(f"[esegui_azioni] STOP rilevato fra azioni, interrompo",
+                  flush=True)
+            break
+
         # 2a) Aspetta che il gioco sia in primo piano
         if _win32gui and hwnd and _win32gui.GetForegroundWindow() != hwnd:
             print("[Task] Gioco non in primo piano, in pausa...", flush=True)
             while _win32gui.GetForegroundWindow() != hwnd:
                 _time.sleep(0.5)
+                # Anche durante l'attesa di foreground, controlla stop
+                if _stop_flag.is_stop_requested():
+                    print(f"[esegui_azioni] STOP durante attesa foreground, esco",
+                          flush=True)
+                    return True
             _time.sleep(0.3)
 
         # 2b) Leggi il rect del client del gioco
@@ -148,13 +166,27 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False, start_from_action
             continue
         handler(az, cx, cy, cw, ch, hwnd, durata, attesa)
 
+        # 2c-bis) Check stop dopo l'azione: se il bot principale ha
+        # rilevato che lo step in RAM e' avanzato, esci subito senza
+        # aspettare (`attesa` post-azione) e senza fare le azioni
+        # successive del chunk.
+        if _stop_flag.is_stop_requested():
+            print(f"[esegui_azioni] STOP dopo azione '{tipo}', interrompo",
+                  flush=True)
+            break
+
         # 2d) Pausa post-azione (campo "attesa" del JSON).
         # Questo sleep e' GENERALE: si applica a tutti i tipi di azione.
         # Alcuni handler (wiring, yolo, ocr, ecc.) hanno gia' un loro
         # _time.sleep(attesa) interno per timing piu' precisi del minigioco;
         # in quei casi il timing totale fra azioni risulta circa 2*attesa,
         # comportamento volutamente preservato dal monolite originale.
-        _time.sleep(attesa)
+        # Spezziamo l'attesa in pezzi da 0.05s per restare reattivi a STOP.
+        _t_start = _time.time()
+        while _time.time() - _t_start < attesa:
+            if _stop_flag.is_stop_requested():
+                break
+            _time.sleep(min(0.05, max(0.0, attesa - (_time.time() - _t_start))))
 
     # --- 3) STAMPA COOLDOWN POST-CHUNK ---
     # Dopo ogni chunk eseguito (in modalita' non-test), stampa la durata

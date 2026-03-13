@@ -1,5 +1,144 @@
 # Changelog
 
+## v2.2.22 — STOP watcher: interrompe l'esecuzione quando la fase e' risolta in RAM
+
+### Problema riportato
+
+> Il Divert Power, dove trascino un punto fino a un altro punto in N
+> zone, vorrei che appena viene risolta la fase si fermi l'esecuzione.
+> Se la fase cambia e/o finisce, e' inutile che continui a fare altro.
+
+### Causa
+
+Task come Divert Power hanno N azioni `drag` (una per ogni interruttore)
+ma SOLO UNO degli interruttori e' quello giusto da accendere - gli altri
+sono distrattori. Il bot eseguiva sempre tutti i drag, anche dopo aver
+gia' risolto la fase. Le azioni inutili potevano:
+- Cliccare fuori dal pannello (gia' chiuso)
+- Disturbare il gioco con click random sulla mappa
+- Essere visivamente "non umane" (drag senza scopo)
+
+### Fix: STOP via stdin pipe
+
+Riusiamo l'infrastruttura del pre-warming (v2.2.20) per aggiungere
+un meccanismo di "STOP request":
+
+#### 1. Nuovo modulo `stop_flag.py`
+
+Una flag globale del subprocess (`_stop_requested`) che:
+- Si setta tramite `request_stop()` quando arriva "STOP" su stdin
+- Si controlla tramite `is_stop_requested()` negli handler
+- Si resetta a inizio `run_task` per pulizia stato fra task diverse
+
+#### 2. Stdin reader thread in `lifecycle.py`
+
+Il thread reader di stdin del subprocess gestisce 2 messaggi:
+- `GO\\n` -> sblocca pre-warming (logica gia' esistente)
+- `STOP\\n` -> chiama `stop_flag.request_stop()`
+
+Il thread gira per tutta la vita del subprocess in background.
+
+#### 3. Check STOP nel dispatcher
+
+`esegui_azioni` controlla `is_stop_requested()` in 3 punti:
+- Prima di ogni nuova azione (esci dal loop senza fare quella azione)
+- Dopo ogni azione (esci senza aspettare `attesa` post-azione)
+- Durante la pausa post-azione (spezzata in pezzi di 50ms reattivi)
+
+#### 4. Check STOP DENTRO i drag
+
+Le 3 funzioni di drag (`_drag_umano`, `_drag_multi`, `_drag_seq_tappe`)
+controllano `is_stop_requested()` dentro il loop di interpolazione
+Bezier. Se viene richiesto STOP durante il drag:
+- Esci dalla curva subito (no snap finale al target)
+- mouseUp() viene comunque chiamato (rilascio pulito, evita bug)
+
+Reattivita' totale: anche un drag di 0.2s viene interrotto al
+prossimo step (~3-15ms).
+
+#### 5. STOP watcher in `memory_sync.py`
+
+Il loop di lettura RAM del bot principale (gia' attivo a 50ms) ora
+fa anche:
+- Memorizza `task_ram_step_at_launch[id_task]` quando il subprocess
+  parte (in `_avvia_subprocess_task`)
+- Confronta lo step in RAM corrente con quello al lancio
+- Se step avanzato (o task scomparsa, o `done=True`): manda
+  `STOP\\n` sullo stdin del subprocess
+- Set `task_stop_sent` per non spammare lo STOP piu' volte
+
+#### 6. stdin sempre aperta
+
+Prima `stdin=PIPE` era attivato solo con `--wait-trigger`. Ora e'
+sempre attivo cosi' il bot principale puo' inviare STOP in qualsiasi
+momento. Non chiudiamo piu' stdin dopo "GO" (era una pulizia che
+ora e' dannosa).
+
+### Esempio Divert Power
+
+Prima:
+```
+[Drag] interruttore 1   (~0.7s)
+[Drag] interruttore 2   (~0.7s)
+[Drag] interruttore 3   (~0.7s)  <- gioco rileva fase risolta!
+[Drag] interruttore 4   (~0.7s)  <- inutile, gia' fatto
+[Drag] interruttore 5   (~0.7s)  <- inutile
+... fino a 8           (totale ~5.6s)
+```
+
+Dopo:
+```
+[Drag] interruttore 1   (~0.7s)
+[Drag] interruttore 2   (~0.7s)
+[Drag] interruttore 3   (~0.7s)  <- gioco rileva fase risolta!
+[StopWatcher] Inviato STOP a task 5 (RAM avanzata)
+[esegui_azioni] STOP dopo azione 'drag', interrompo
+                                 (totale ~2.1s)
+```
+
+Se lo STOP arriva DURANTE un drag in corso, il drag viene
+interrotto subito al prossimo step della Bezier (~5ms reattivita').
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/stop_flag.py` | NUOVO modulo: flag condivisa per il motore |
+| `among_us_ai/execution/_motore_pkg/lifecycle.py` | stdin reader thread che gestisce GO + STOP |
+| `among_us_ai/execution/_motore_pkg/dispatcher.py` | check STOP fra azioni e durante attesa post-azione |
+| `among_us_ai/execution/_motore_pkg/input_mouse.py` | check STOP dentro `_drag_umano`, `_drag_multi`, `_drag_seq_tappe` |
+| `among_us_ai/ui/mixins/memory_sync.py` | STOP watcher: rileva avanzamento RAM e manda STOP via stdin |
+| `among_us_ai/ui/mixins/tasks_process.py` | salva `task_ram_step_at_launch` + `stdin=PIPE` sempre + non chiude stdin dopo GO + cleanup `task_stop_sent` |
+
+### Verifica fatta
+
+Test logico simulando 8 drag con STOP arrivato dopo il 3°:
+- Azioni eseguite: [1, 2, 3] ✓
+- Drag #4-#8 saltati ✓
+
+Test stop_flag: request_stop()/is_stop_requested()/reset_stop() ✓
+Test import del package: OK
+Syntax OK su tutti i file modificati
+
+### Compatibilita'
+
+- File `.py` esistenti: rigenerazione automatica (il check obsoleto
+  trova WAIT_TRIGGER, gia' attivo da v2.2.20)
+- Thread mode (`EXEC_MODE = 'thread'`, sperimentale): non supportato
+  per STOP (TaskThreadProcess non ha stdin). Usa subprocess mode
+  (default) per beneficiare di questo fix.
+- Lancio standalone del file `.py` da shell: il subprocess gira
+  fino al termine naturale, niente STOP esterno (corretto).
+
+### Cosa NON e' cambiato
+
+- API del motore: invariata (`esegui_azioni`, `esegui_lifecycle`)
+- Logica di Ripeti, ESC fallback, start_from_action: invariate
+- Logica multi-fase con cooldown: invariata
+- Pre-warming (`--wait-trigger`): continua a funzionare
+- Tutto il resto del bot: invariato
+
+
 ## v2.2.21 — Simon Says: fix multi-round con ricattura base
 
 ### Problema riportato
