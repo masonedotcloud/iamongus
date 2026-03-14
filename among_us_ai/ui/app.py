@@ -85,6 +85,7 @@ from .mixins.poi import PoiMixin
 from .mixins.rendering_world import RenderingWorldMixin
 from .mixins.rendering_entities import RenderingEntitiesMixin
 from .mixins.misc import MiscMixin
+from .mixins.use_button_calib import UseButtonCalibMixin
 
 
 class GPSVisualizerPro(
@@ -111,6 +112,7 @@ class GPSVisualizerPro(
     RenderingWorldMixin,
     RenderingEntitiesMixin,
     MiscMixin,
+    UseButtonCalibMixin,
 ):
     """Classe principale dell'applicazione: orchestra rendering, pathfinding, lettura RAM, scanner YOLO, esecuzione task."""
     def __init__(self):

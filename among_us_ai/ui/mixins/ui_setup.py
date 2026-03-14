@@ -58,6 +58,9 @@ class UISetupMixin:
                         callback=lambda *a: self._clear_trail())
                     dpg.add_menu_item(label="Reset statistiche",
                         callback=lambda *a: self._reset_distance())
+                    dpg.add_separator()
+                    dpg.add_menu_item(label="Calibra pulsante 'Use'...",
+                        callback=lambda *a: self._apri_popup_calibra_use_button())
                 # Menu
                 with dpg.menu(label="?"):
                     dpg.add_menu_item(label="Info e scorciatoie",
