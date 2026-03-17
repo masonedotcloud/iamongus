@@ -1,5 +1,148 @@
 # Changelog
 
+## v2.2.23 — Micro-nudge iterativo + rilevamento pulsante "Use"
+
+### Richieste utente
+
+> Migliorare l'arrivo alla posizione della task, cercando di essere
+> il piu' vicino possibile. Se troppo lontano, prova a usare WASD
+> in maniera piccola piccola con micro aggiustamenti.
+>
+> Per capire se puoi interagire per avviare la task c'e' il pulsante
+> Use in basso a destra che si illumina: prova a vedere se si illumina.
+
+### Strategia implementata
+
+#### 1. Modulo `among_us_ai/execution/use_button.py` (NUOVO)
+
+Helper di rilevamento del pulsante "Use" di Among Us:
+
+- `cattura_roi_luminosita(client_rect, calib)`: cattura la ROI del
+  pulsante e ritorna la luminosita' media (RGB mean)
+- `is_lit(client_rect, calib) -> True/False/None`: confronta la
+  luminosita' corrente con i 2 riferimenti calibrati (acceso/spento)
+- `carica_calibrazione() / salva_calibrazione()`: lettura/scrittura
+  del file `use_button_calibration.json`
+
+**Fallback graceful**: se la calibrazione manca (`calibrated=False`),
+`is_lit()` ritorna `None` e il bot procede comunque (best-effort).
+
+#### 2. Popup di calibrazione (NUOVO)
+
+Nuova voce in **Strumenti -> Calibra pulsante 'Use'...** che apre un
+popup 480x480 con:
+
+- 4 input numerici per la ROI rect (rx, ry, rw, rh) - default
+  angolo basso-destra (0.92, 0.85, 0.07, 0.12)
+- Bottone "Cattura SPENTO": l'utente posiziona l'avatar lontano da
+  task, preme. La luminosita' viene salvata come riferimento SPENTO.
+- Bottone "Cattura ACCESO": l'utente si avvicina a una task (pulsante
+  illuminato), preme. La luminosita' viene salvata come riferimento
+  ACCESO.
+- Validazione: ACCESO deve essere significativamente piu' luminoso
+  di SPENTO (delta > 5)
+- Bottone "Reset" per cancellare la calibrazione
+
+#### 3. Logica micro-nudge iterativo in `auto_move.py`
+
+Nuovo metodo `_do_arrival_nudge(cx, cy)`:
+
+```
+Se calibrazione presente e USE_BUTTON_CHECK_ENABLED=True:
+  Check immediato del pulsante:
+    Se gia' acceso -> esci (massima precisione)
+    Altrimenti:
+      Per attempt in 1..USE_BUTTON_MAX_NUDGES (=10):
+        Calcola direzione WASD verso target
+        Press tasti per MICRO_NUDGE_DURATION_SEC (=0.05s)
+        Release
+        Check pulsante Use:
+          Se acceso -> esci con successo
+      (Se esauriti tutti i tentativi -> esci comunque, best-effort)
+Altrimenti (calibrazione mancante):
+  Fallback al nudge fisso classico (AUTO_FINAL_NUDGE_SEC = 0.20s)
+  - comportamento v2.2.11
+```
+
+Riusa `mss.mss()` come context manager per ridurre l'overhead di
+cattura ROI (~1ms per check vs ~10ms se ricreato ogni volta).
+
+#### 4. Configurazione
+
+Nuovi parametri in `core/config.py`:
+
+```python
+USE_BUTTON_CHECK_ENABLED = True   # master toggle
+USE_BUTTON_MAX_NUDGES    = 10     # ~500ms aggiuntivi max
+MICRO_NUDGE_DURATION_SEC = 0.05   # durata di un singolo press WASD
+```
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/use_button.py` | NUOVO modulo helper |
+| `among_us_ai/ui/mixins/use_button_calib.py` | NUOVO mixin per popup calibrazione |
+| `among_us_ai/ui/mixins/__init__.py` | export `UseButtonCalibMixin` |
+| `among_us_ai/ui/app.py` | import + ereditarieta' `UseButtonCalibMixin` |
+| `among_us_ai/ui/mixins/ui_setup.py` | nuova voce menu "Strumenti -> Calibra pulsante 'Use'..." |
+| `among_us_ai/ui/mixins/auto_move.py` | nuovo `_do_arrival_nudge` che sostituisce il blocco nudge fisso |
+| `among_us_ai/core/config.py` | 3 nuove costanti per il micro-nudge |
+
+### Verifica fatta
+
+Test funzionale completo del modulo `use_button.py`:
+
+| Test | Esito |
+|---|---|
+| 1. Calibrazione vuota -> `is_lit` ritorna None | ✓ |
+| 2. Cattura stato SPENTO | brightness=80 ✓ |
+| 3. Cattura stato ACCESO | brightness=220 ✓ |
+| 4. Salvataggio + rilettura JSON | ✓ |
+| 5. `is_lit` con stato ACCESO | True ✓ |
+| 6. `is_lit` con stato SPENTO | False ✓ |
+
+Test import del package: OK
+Syntax OK su tutti i 7 file modificati/creati
+
+### Come usarlo
+
+#### Prima volta:
+
+1. Apri il bot e collega Among Us
+2. Apri "Strumenti -> Calibra pulsante 'Use'..."
+3. Posiziona l'avatar **lontano da ogni task** (assicurati che il
+   pulsante Use sia GRIGIO/spento), poi clicca "Cattura SPENTO"
+4. Posiziona l'avatar **vicino a una task** (assicurati che il
+   pulsante Use sia BIANCO/luminoso), poi clicca "Cattura ACCESO"
+5. Clicca "Salva"
+
+Da questo momento, ad ogni arrivo a una task il bot:
+- Controlla il pulsante Use al primo frame
+- Se acceso: lancia la task subito
+- Se spento: micro-nudge WASD + ricontrolla, fino a 10 volte
+- Tempo aggiuntivo max: ~500ms (10 * 50ms)
+
+#### Disabilitare temporaneamente:
+
+Modifica `among_us_ai/core/config.py`:
+
+```python
+USE_BUTTON_CHECK_ENABLED = False
+```
+
+Il bot torna al comportamento v2.2.11 (nudge fisso 200ms una sola
+volta).
+
+### Cosa NON e' cambiato
+
+- API motore: invariata
+- Logica di Ripeti, ESC fallback, multi-fase: invariate
+- Pre-warming subprocess (v2.2.20): invariato
+- STOP watcher (v2.2.22): invariato
+- Tutto il resto del bot: invariato
+
+
 ## v2.2.22 — STOP watcher: interrompe l'esecuzione quando la fase e' risolta in RAM
 
 ### Problema riportato
