@@ -1,5 +1,145 @@
 # Changelog
 
+## v2.2.25 — Calibrazione ROI: fix popup vuoto + diagnostica
+
+### Problema riportato
+
+> Il popup di selezione ROI si apre vuoto o da' errore.
+
+### Cause possibili
+
+Nella v2.2.24 c'erano 3 fragilita':
+
+1. **`item_clicked_handler` su drawlist non sempre funziona**.
+   `drawlist` in DPG non riceve sempre gli eventi di click come
+   altri widget; bisogna usare `add_mouse_click_handler` globale
+   e filtrare manualmente con `is_item_hovered`.
+
+2. **`get_drawing_mouse_pos()` puo' fallire silenziosamente** in
+   certi contesti (es. se il drawlist non e' "focused"). Serve un
+   fallback con `get_mouse_pos(local=False) - get_item_rect_min()`.
+
+3. **Errori silenziati**: i `try/except` mostravano solo
+   `auto_status_msg` che a volte e' coperto dal popup. Senza log
+   nella console e' difficile capire cosa va male.
+
+### Fix
+
+#### 1. Diagnostica esplicita ovunque
+
+Ogni step del popup ora stampa `[ROI-Sel] ...` nella console:
+- Verifica imports
+- Verifica HWND
+- Cattura screenshot
+- Conversione/resize immagine
+- Creazione texture
+- Costruzione popup
+- Handler mouse
+- Ogni click rilevato
+
+Cosi' se qualcosa va male, vedi esattamente DOVE.
+
+#### 2. Mouse handler GLOBALE invece di item_handler
+
+Cambiato da:
+```python
+with dpg.item_handler_registry(tag=...):
+    dpg.add_item_clicked_handler(button=0, callback=...)
+dpg.bind_item_handler_registry(canvas_tag, ...)
+```
+
+a:
+```python
+with dpg.handler_registry(tag=...):
+    dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Left,
+                                callback=...)
+```
+
+Il callback fa `dpg.is_item_hovered(canvas_tag)` per filtrare i
+click fuori dal drawlist.
+
+Questo approccio funziona in modo affidabile su DPG perche'
+non dipende da come il widget gestisce gli eventi.
+
+#### 3. Coordinate mouse con fallback
+
+```python
+try:
+    mx, my = dpg.get_drawing_mouse_pos()
+except Exception:
+    mx = my = None
+
+if mx is None:
+    # Fallback manuale
+    gx, gy = dpg.get_mouse_pos(local=False)
+    rmin = dpg.get_item_rect_min(canvas_tag)
+    mx = gx - rmin[0]
+    my = gy - rmin[1]
+```
+
+#### 4. Adattamento dimensione popup alla viewport
+
+Prima `max_w=1100, max_h=720` fissi. Ora dipendono dalla
+viewport corrente:
+```python
+max_w = max(400, vp_w - 80)
+max_h = max(300, vp_h - 220)
+```
+
+Cosi' il popup si adatta a bot con viewport piccolo.
+
+#### 5. Cleanup handler globale
+
+Quando si chiude il popup (Conferma/Annulla/X), viene rimosso
+anche `popup_seleziona_roi_mouse_handler` per non lasciare
+handler globali zombi che processano click ovunque.
+
+Nuovo metodo `_chiudi_popup_roi_visuale()` chiamato sia da
+"Annulla" che dalla X di chiusura del popup.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/use_button_calib.py` | riscrittura `_apri_popup_seleziona_roi_visuale` + nuovo `_roi_visuale_global_click` (sostituisce `_roi_visuale_canvas_click`) + nuovo `_chiudi_popup_roi_visuale` per cleanup handler |
+
+### Verifica fatta
+
+- Syntax check su `use_button_calib.py`: OK
+- Test import package `GPSVisualizerPro`: OK
+- Tutti i 5 metodi accessibili come metodi della classe:
+  - `_apri_popup_seleziona_roi_visuale`
+  - `_chiudi_popup_roi_visuale`
+  - `_conferma_roi_visuale`
+  - `_reset_roi_visuale`
+  - `_roi_visuale_global_click`
+
+### Cosa fare se ancora non va
+
+Apri la console di output del bot e clicca il bottone "Seleziona
+dal vivo con il mouse". Dovresti vedere righe tipo:
+
+```
+[ROI-Sel] Apro popup selezione visuale...
+[ROI-Sel] HWND Among Us = 1234567
+[ROI-Sel] Client rect: pos=(0,30) size=(1920x1050)
+[ROI-Sel] Screenshot OK: (1050, 1920, 4)
+[ROI-Sel] Preview: 1100x602 (scale=0.573)
+[ROI-Sel] Texture creata: popup_seleziona_roi_tex
+[ROI-Sel] Popup creato OK
+[ROI-Sel] Mouse handler globale OK
+```
+
+Se si ferma prima del "Popup creato OK", mandami le righe
+[ROI-Sel] che hai - cosi' so esattamente dove fallisce.
+
+### Cosa NON e' cambiato
+
+- I 4 input rx/ry/rw/rh nel popup principale: invariati
+- Logica `_do_arrival_nudge` per micro-nudge: invariata
+- Tutto il resto del bot: invariato
+
+
 ## v2.2.24 — Calibrazione pulsante "Use" con selezione visuale
 
 ### Richiesta utente
