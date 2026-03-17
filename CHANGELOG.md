@@ -1,5 +1,126 @@
 # Changelog
 
+## v2.2.24 — Calibrazione pulsante "Use" con selezione visuale
+
+### Richiesta utente
+
+> Riesci a fare che la ROI per il pulsante "USE" me la fai mettere
+> con un'interfaccia invece che solo con delle coordinate?
+
+### Strategia
+
+Aggiunto un secondo popup di "selezione visuale" che permette di
+disegnare la ROI direttamente sullo screenshot della finestra del
+gioco con DUE CLICK del mouse.
+
+### Flusso utente
+
+1. Apri **Strumenti -> Calibra pulsante 'Use'...**
+2. Clicca il nuovo bottone **"[ Seleziona dal vivo con il mouse ]"**
+3. Si apre un popup con lo screenshot LIVE della finestra di Among Us
+4. Clicca **l'angolo in alto a sinistra** del pulsante Use
+   (appare un cerchio verde)
+5. Clicca **l'angolo in basso a destra** del pulsante Use
+   (appare il rettangolo verde con le coordinate calcolate)
+6. (Opzionale) Cliccca di nuovo per ridisegnare un nuovo rettangolo
+7. Clicca **"Conferma"**: le coordinate `rx, ry, rw, rh` vengono
+   propagate ai 4 input del popup principale di calibrazione
+
+### Dettagli tecnici
+
+#### Cattura screenshot
+
+Usa `mss.mss().grab()` per catturare la finestra del gioco in
+RGBA, poi `cv2.cvtColor(BGRA -> RGBA)` per il formato compatibile
+con DPG.
+
+#### Scaling per popup
+
+Se la finestra del gioco e' piu' grande di 1100x720, l'immagine
+viene ridotta proporzionalmente (`cv2.resize(INTER_AREA)`). Lo
+`scale` viene salvato e usato nell'inversione per riportare i
+click in coordinate del client reale.
+
+#### Caricamento texture
+
+Usa `dpg.add_dynamic_texture` in un texture registry condiviso
+(`ub_texture_registry`). Texture eliminata e ricreata ad ogni
+apertura per riflettere lo stato corrente del gioco.
+
+#### Gestione mouse
+
+`add_item_clicked_handler(button=0, callback=...)` legato al
+drawlist. Il callback usa `dpg.get_drawing_mouse_pos()` per le
+coordinate del mouse relative al drawlist (NON coordinate
+assolute dello schermo - cosi' lo scaling DPG-interno e' gia'
+gestito).
+
+State machine a 3 stati:
+- Nessun click -> registra primo punto (cerchio verde)
+- Un click -> registra secondo punto (rettangolo verde + info)
+- Due click -> reset al primo punto
+
+#### Conversione preview -> client -> ROI relativa
+
+```
+# Coord nel drawlist (preview ridimensionata)
+xa, ya = top-left selezione
+xb, yb = bottom-right selezione
+
+# Riporto in coord del client del gioco
+cw_xa = xa / scale
+cw_ya = ya / scale
+
+# Coord relative al client (in [0, 1])
+rx = cw_xa / client_w
+ry = cw_ya / client_h
+rw = (cw_xb - cw_xa) / client_w
+rh = (cw_yb - cw_ya) / client_h
+```
+
+#### Sanity check
+
+Selezione di larghezza/altezza < 5 px viene rifiutata
+("troppo piccola - riprova"). Evita di salvare ROI invalide.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/use_button_calib.py` | nuovo bottone "Seleziona dal vivo" + 4 nuovi metodi: `_apri_popup_seleziona_roi_visuale`, `_roi_visuale_canvas_click`, `_reset_roi_visuale`, `_conferma_roi_visuale` |
+
+### Verifica fatta
+
+Test matematica di conversione coord preview -> ROI relativa:
+
+```
+Client gioco: 1920x1080
+Preview ridotta: 1100x618 (scale=0.573)
+Utente clicca: (1020,520) - (1077,600)
+Risultato: rx=0.927 ry=0.840 rw=0.052 rh=0.129
+Ricostruito in pixel client: (1780,907) - dim 99x139
+-> Esattamente l'angolo basso-destra (corretto per pulsante Use)
+```
+
+Test import package: OK
+Tutti i metodi `_roi_visuale_*` accessibili da `GPSVisualizerPro`
+
+### Cosa NON e' cambiato
+
+- I 4 input numerici (rx, ry, rw, rh) restano disponibili come
+  modalita' "fine tuning" o fallback se preferisci precisione manuale
+- La logica di cattura SPENTO/ACCESO: invariata
+- Il file `use_button_calibration.json`: formato invariato
+- La logica `_do_arrival_nudge` con micro-nudge iterativi: invariata
+
+### Tip d'uso
+
+Se l'immagine del popup ti sembra troppo piccola da cliccare
+con precisione, ingrandisci la finestra del bot prima di aprire
+il popup: la preview si adatta alle dimensioni della finestra
+fino al limite di 1100x720.
+
+
 ## v2.2.23 — Micro-nudge iterativo + rilevamento pulsante "Use"
 
 ### Richieste utente
