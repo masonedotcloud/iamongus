@@ -1,5 +1,79 @@
 # Changelog
 
+## v2.2.26 — Calibrazione ROI: fix modal-sopra-modal
+
+### Problema riportato
+
+> Non mi compare il popup con lo screen per selezionare le coordinate/zona ROI.
+
+### Causa identificata
+
+DPG (DearPyGui) **non gestisce bene un popup `modal=True` aperto
+sopra un altro popup `modal=True`**: il secondo viene creato in memoria
+ma non viene mostrato a schermo (o viene mostrato e immediatamente
+nascosto dal primo modal).
+
+Il popup principale di calibrazione era `modal=True` (per centrare
+l'attenzione dell'utente), e quando l'utente cliccava "Seleziona
+dal vivo con il mouse" si tentava di aprire un secondo popup
+`modal=True` -> conflitto, popup invisibile.
+
+### Fix
+
+#### 1. Workaround "nascondi/riapri" per il popup principale
+
+Quando l'utente clicca "Seleziona dal vivo":
+- Nascondo temporaneamente il popup principale
+  (`dpg.configure_item("popup_calibra_use", show=False)`)
+- Apro il popup di selezione visuale come finestra NORMALE (non modal)
+- Alla chiusura del secondo (Conferma/Annulla/X), riapro il principale
+  (`dpg.configure_item("popup_calibra_use", show=True)`)
+
+Cosi' c'e' sempre un solo modal aperto alla volta -> niente conflitto.
+
+#### 2. `on_close` callback per gestire la X di chiusura
+
+Aggiunto `on_close=lambda *a: self._chiudi_popup_roi_visuale()`
+al popup di selezione. Cosi' anche se l'utente chiude col tasto X
+in alto a destra invece dei bottoni, il cleanup avviene
+(handler rimosso + popup principale riaperto).
+
+#### 3. Restore in caso di errore
+
+Se durante la costruzione del popup di selezione qualcosa fallisce,
+il popup principale viene ri-mostrato comunque (try/except con
+`show=True` nel cleanup di errore).
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/use_button_calib.py` | popup secondario ora `modal=False` + nascondi/riapri popup principale + `on_close` callback |
+
+### Verifica fatta
+
+- Syntax check: OK
+- Import package: OK
+
+### Cosa fare ora
+
+1. Estrai lo zip
+2. Avvia il bot
+3. Apri **Strumenti -> Calibra pulsante 'Use'...**
+4. Clicca **"Seleziona dal vivo con il mouse"**
+
+Adesso il popup principale dovrebbe **scomparire** temporaneamente
+e apparire la nuova finestra con lo screenshot di Among Us. Dopo
+aver cliccato "Conferma" o "Annulla", il popup principale torna a
+mostrarsi con i valori (eventualmente) aggiornati.
+
+Se il popup di selezione ancora non appare:
+- Guarda nella console le righe `[ROI-Sel] ...`
+- In particolare cerca `[ROI-Sel] Popup creato OK (modal=False)`:
+  se la vedi e non vedi nulla a schermo, il problema e' altrove
+  (es. il popup viene aperto fuori dalla viewport visibile)
+
+
 ## v2.2.25 — Calibrazione ROI: fix popup vuoto + diagnostica
 
 ### Problema riportato
