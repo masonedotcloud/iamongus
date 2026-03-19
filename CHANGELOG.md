@@ -1,5 +1,130 @@
 # Changelog
 
+## v2.2.27 — Fix Clean O2 Filter (yolo_drag_all) con diagnostica
+
+### Problema riportato
+
+> O2 dei filter quindi rileva con yolo e trascina verso un punto sembra non funzionare.
+
+### Analisi
+
+La task Clean O2 Filter usa il tipo di azione `yolo_drag_all`:
+- Cerca con YOLO (modello `foglie.pt`) tutti gli oggetti nella ROI
+- Trascina ognuno verso un punto target (`end_rx, end_ry`)
+- Loop finche' non rileva piu' oggetti (3 frame vuoti consecutivi)
+
+Il handler aveva 3 problemi che potevano causare fallimento silenzioso:
+
+1. **`conf=0.7`** (soglia confidenza YOLO troppo alta): se il modello
+   `foglie.pt` rileva foglie con confidenza < 0.7, le scarta tutte.
+   Risultato: nessuna box trovata, esce dopo 0.3s.
+
+2. **`distance > 60 px`** dal target (soglia troppo restrittiva): box
+   piu' vicine di 60px al "buco" venivano scartate per evitare drag
+   inutili su foglie gia' al loro posto. Ma se le foglie sono
+   distribuite vicine al buco, vengono scartate tutte.
+
+3. **`empty_frames >= 3`** (uscita troppo veloce): se la prima
+   inferenza YOLO e' lenta (caricamento modello, prima evaluation
+   CPU), il primo frame puo' essere vuoto. 3 vuoti = 0.3s = esce.
+
+4. **NESSUN LOG**: il handler non stampava nulla, quindi era
+   impossibile capire perche' falliva (foglie non trovate? drag
+   sbagliato? modello non caricato?).
+
+### Fix
+
+#### 1. Parametri configurabili (JSON dell'azione)
+
+Ora il handler legge dal JSON dell'azione (con default piu' permissivi):
+
+| Param JSON | Default v2.2.27 | Default precedente |
+|---|---|---|
+| `conf_threshold` | 0.5 | 0.7 (hardcoded) |
+| `min_distance_px` | 30 | 60 (hardcoded) |
+| `max_empty_frames` | 8 | 3 (hardcoded) |
+| `max_iterations` | 25 | infinito |
+
+Se default permissivi NON bastano, puoi sovrascriverli nel JSON.
+Esempio per O2 Filter con foglie difficili da rilevare:
+
+```json
+{
+  "tipo": "yolo_drag_all",
+  "yolo_model": "foglie.pt",
+  "conf_threshold": 0.35,
+  "min_distance_px": 20,
+  ...
+}
+```
+
+#### 2. Log diagnostici dettagliati
+
+Ora ad ogni iterazione il handler stampa:
+
+```
+[yolo_drag_all] Inizio: model=foglie.pt conf>=0.5 min_dist=30px target=(...)
+[yolo_drag_all] Carico modello: /path/to/foglie.pt
+[yolo_drag_all] Modello caricato OK
+[yolo_drag_all] ROI cattura: pos=(...) size=(...)
+[yolo_drag_all] Iter 1: totali=5 validi=3 (fuori_roi=1 troppo_vicini=1)
+[yolo_drag_all] Drag 1: (sx,sy) -> (ex,ey) conf=0.78
+[yolo_drag_all] Iter 2: totali=4 validi=2 (fuori_roi=0 troppo_vicini=2)
+[yolo_drag_all] Drag 2: ...
+...
+[yolo_drag_all] 8 frame vuoti consecutivi, esco. Drag fatti: 5
+```
+
+Cosi' nei log puoi vedere SUBITO se:
+- `totali=0` -> il modello non rileva nulla (conf troppo alta?
+  modello sbagliato? ROI sbagliata?)
+- `fuori_roi=N` alto -> ROI da rivedere
+- `troppo_vicini=N` alto -> abbassa `min_distance_px`
+- `Modello NON TROVATO` -> path del .pt sbagliato
+- `ULTRALYTICS NON INSTALLATO` -> pip install ultralytics
+
+#### 3. Safety net contro loop infiniti
+
+`max_iterations = 25` previene loop infiniti se YOLO continua a
+trovare le stesse foglie senza che il drag le rimuova davvero.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | riscrittura `_h_yolo_drag_all` con parametri configurabili + log diagnostici dettagliati + safety iterations |
+
+### Verifica fatta
+
+- Syntax check su `handlers_yolo.py`: OK
+- Import package GPSVisualizerPro: OK
+- Import `_h_yolo_drag_all`: OK
+
+### Cosa fare per testare
+
+1. Estrai lo zip
+2. Avvia il bot
+3. Lancia Clean O2 Filter
+4. Guarda la console: vedrai i log `[yolo_drag_all] ...`
+
+**Se la task non funziona ancora, leggi i log e dimmi cosa scrive:**
+
+- "Modello NON TROVATO" -> percorso `foglie.pt` sbagliato
+- "Iter 1: totali=0" -> YOLO non vede niente. Abbassa conf_threshold
+  a 0.3 nel JSON dell'azione, o ricalibra la ROI con l'editor task.
+- "totali=N validi=0 troppo_vicini=N" -> tutte le foglie sono
+  vicine al target, abbassa `min_distance_px` a 15-20
+- "Drag N: ... conf=0.X" ma non si muove nulla in gioco -> il drag
+  parte ma il gioco non lo accetta. Verifica coordinate target.
+
+### Cosa NON e' cambiato
+
+- `yolo_drag` (singolo-shot, usato da Align Engine Output): invariato
+- Altri handler YOLO (`yolo_click`, `yolo_click_all`): invariati
+- API motore: invariata
+- Tutto il resto del bot: invariato
+
+
 ## v2.2.26 — Calibrazione ROI: fix modal-sopra-modal
 
 ### Problema riportato
