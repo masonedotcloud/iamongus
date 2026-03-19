@@ -1,5 +1,106 @@
 # Changelog
 
+## v2.2.28 — Clean O2 Filter: nuova funzione _drag_snap per oggetti animati
+
+### Problema rilevato dai log
+
+```
+[yolo_drag_all] Iter 19: totali=4 validi=4
+[yolo_drag_all] Drag 19: (1582,426) -> (952,689) conf=0.94
+[yolo_drag_all] Iter 20: totali=4 validi=4
+[yolo_drag_all] Drag 20: (1383,1012) -> (952,689) conf=0.94
+... (continua per 25 iterazioni)
+[yolo_drag_all] Drag 24: (1592,426) <- stessa posizione di Drag 19
+[yolo_drag_all] Drag 25: (1258,936) <- stessa di Drag 22
+[yolo_drag_all] Raggiunto limite max_iterations=25. Drag fatti: 25
+```
+
+YOLO rileva sempre le stesse 4 foglie nelle stesse posizioni (con
+conf=0.95). Significa che il drag NON sta rimuovendo le foglie. Il
+bot "tira aria".
+
+### Causa
+
+`_drag_umano` ha un tween di 150-250ms nel `moveTo` iniziale PRIMA
+del `mouseDown`. Le foglie di Clean O2 Filter sono **animate**
+(fluttuano nel filtro), quindi:
+
+1. Bot: `moveTo(1582, 426)` con tween 200ms
+2. Nei 200ms, la foglia si muove (animazione del gioco)
+3. Bot: `mouseDown` ma il mouse e' su area vuota (foglia gia' altrove)
+4. Bot: trascina verso (952, 689) -> trascina ARIA
+5. Foglia ancora li' -> YOLO la rileva al frame successivo -> loop
+
+Inoltre `_drag_umano` usa una curva di Bezier con offset random
+fino a 40px, che puo' far "perdere" l'oggetto al gioco durante il
+trascinamento.
+
+### Fix: nuova funzione `_drag_snap`
+
+Aggiunta una versione di drag dedicata a oggetti animati o
+tempo-critici. Differenze rispetto a `_drag_umano`:
+
+| | `_drag_umano` | `_drag_snap` |
+|---|---|---|
+| Move iniziale | tween 150-250ms (easeOutQuad) | SNAP istantaneo (no tween) |
+| Pausa post-mouseDown | 50-100ms | **150-200ms** (gioco ha tempo di "afferrare") |
+| Movimento drag | Bezier con offset random 40px | Linea retta |
+| Pausa pre-mouseUp | 50-150ms | **150-200ms** ("rilascia qui") |
+
+Con `_drag_snap`:
+1. Snap immediato su (sx, sy) -> foglia non si muove tra "rilevamento"
+   e "afferramento"
+2. mouseDown + pausa 180ms -> gioco capisce "ho afferrato la foglia"
+3. Drag retto al target -> il gioco non perde l'oggetto
+4. Pausa pre-release -> "qui rilascio"
+
+### Modifica al `_h_yolo_drag_all`
+
+Cambiata la chiamata da `_drag_umano(sx, sy, ex, ey, durata)` a
+`_drag_snap(...)`. Aggiunta anche una pausa post-drag di 0.3s (era
+0.15s) per dare al gioco il tempo di "rimuovere visivamente" la
+foglia prima del prossimo rilevamento YOLO. Altrimenti il bot
+poteva rilevare di nuovo la STESSA foglia ancora visibile nel
+frame ma in via di rimozione.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/input_mouse.py` | nuova funzione `_drag_snap` (drag senza tween + pause generose) |
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | `_h_yolo_drag_all` ora usa `_drag_snap` + pausa post-drag aumentata a 0.3s |
+
+### Verifica fatta
+
+- Syntax check su `input_mouse.py` e `handlers_yolo.py`: OK
+- Import package: OK
+- Import sia `_drag_umano` che `_drag_snap`: OK
+
+### Considerazione
+
+`_drag_umano` resta usato come default per tutti gli altri tipi di
+drag (drag, drag_zone, drag_multi, drag_seq_tappe, yolo_drag
+singolo-shot). Solo `yolo_drag_all` passa al nuovo `_drag_snap`
+perche' e' l'unico caso noto di oggetti animati durante il
+rilevamento.
+
+Se altre task hanno lo stesso problema (oggetti animati che
+sfuggono), si puo' fare lo stesso pattern.
+
+### Cosa fare ora
+
+1. Estrai lo zip
+2. Lancia Clean O2 Filter
+3. Guarda i log: dovresti vedere SOLO i drag fatti effettivamente,
+   con `total_drags` che si ferma quando le foglie sono finite
+
+Se ancora "tira aria":
+- Le coordinate target `end_rx, end_ry` potrebbero non essere sopra
+  il "buco di aspirazione". Verifica nell'editor della task.
+- La `durata` del drag potrebbe essere troppo corta. Prova
+  `durata: 0.4` invece di 0.2 nel JSON dell'azione.
+
+
 ## v2.2.27 — Fix Clean O2 Filter (yolo_drag_all) con diagnostica
 
 ### Problema riportato
