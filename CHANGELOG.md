@@ -1,5 +1,116 @@
 # Changelog
 
+## v2.2.31 — yolo_drag_all: NUOVA logica drag a fasi (Among Us friendly)
+
+### Diagnosi confermata
+
+L'utente ha confermato:
+- Manualmente (mouse umano) il drag funziona
+- Il bot **TOCCA la foglia ma non la sposta**
+- Il modello YOLO e' preciso: una box = una foglia
+
+Quindi YOLO trova bene le foglie, il click parte sopra la foglia,
+ma Among Us **non registra l'afferramento** come "drag".
+
+### Causa tecnica
+
+Il `_drag_umano` classico usa pyautogui in questa sequenza:
+
+```python
+pag.moveTo(sx, sy, duration=0.2, tween=easeOutQuad)  # tween 200ms
+pag.mouseDown(button='left')                          # press
+time.sleep(0.05-0.10)                                 # delay corto
+# subito Bezier curve fino al target
+```
+
+Problemi:
+1. **Tween moveTo di 200ms**: in quei 200ms la foglia si muove
+   (animazione gioco) -> mouseDown su area vuota
+2. **Delay post-mouseDown troppo corto (50-100ms)**: Among Us non
+   ha il tempo di registrare "ho afferrato un oggetto" prima di
+   vedere il cursore lontano
+3. **Bezier con offset random 40px**: la curva ampia "confonde"
+   il gioco che perde l'oggetto durante il trascinamento
+
+### Fix: DRAG A FASI (7 step)
+
+Ho riscritto completamente la logica del drag per `yolo_drag_all`,
+con una sequenza specifica calibrata per Among Us:
+
+```
+FASE 1: SNAP istantaneo sulla posizione (no tween)
+        -> Il cursore arriva ESATTAMENTE sopra la foglia,
+           la foglia non ha tempo di scappare
+
+FASE 2: time.sleep(0.05)
+        -> Windows aggiorna posizione cursore prima del mouseDown
+
+FASE 3: mouseDown + time.sleep(0.25)   <-- KEY!
+        -> Among Us registra "ho afferrato l'oggetto"
+           Senza questa pausa lunga, il gioco interpreta
+           come "click" e basta
+
+FASE 4: micro-movimento di "engaging" (8 px in 80ms)
+        -> Segnala al gioco "ho iniziato il drag"
+           Movimento piccolo e lento per non perdere l'oggetto
+
+FASE 5: movimento principale verso target
+        -> Linea retta (no Bezier), 20 step in 200ms
+
+FASE 6: time.sleep(0.20) sopra il target
+        -> Among Us registra "cursore fermo qui, vuoi rilasciare"
+
+FASE 7: mouseUp
+        -> Rilascio finale, foglia dropped sul target
+```
+
+### Differenze chiave vs precedenti
+
+| Aspetto | `_drag_umano` (monolite) | `_drag_fasi` (v2.2.31) |
+|---|---|---|
+| Move iniziale | Tween 150-250ms | **Snap istantaneo** |
+| Pausa post-mouseDown | 50-100ms | **250ms** (3-5x piu' lungo) |
+| Movimento | Bezier offset 40px | **Linea retta** + micro-engage iniziale |
+| Pausa pre-release | 50-150ms | **200ms** |
+| Tempo totale | ~400ms | ~700ms |
+
+Il drag e' un po' piu' lento (~300ms in piu' per foglia) ma in
+cambio dovrebbe essere **affidabile**.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | `_h_yolo_drag_all` con nuova funzione interna `_drag_fasi` (7-step optimized for Among Us) |
+
+### Verifica fatta
+
+- Syntax check: OK
+- Import: OK
+- Resto del flusso (filtro ROI, distanza > 60, etc.): invariato
+- `_drag_umano` originale: invariato (resta usato da altri handler)
+
+### Logging
+
+Adesso i log mostrano:
+```
+[yolo_drag_all] Inizio: target=(952,689)
+[yolo_drag_all] Drag 1: (1582,426) -> (952,689) conf=0.94
+[yolo_drag_all] Drag 2: (1383,1012) -> (952,689) conf=0.93
+...
+[yolo_drag_all] Nessuna foglia in 3 frame. Drag completati: N
+```
+
+Se vedi `Drag N` ma le foglie NON spariscono dai log dei drag
+successivi, il problema e' fuori dal mio controllo (es. coordinate
+target sbagliate, foglie non droppabili nel buco).
+
+### Safety: max 30 iterazioni
+
+Se per qualche motivo le foglie non vengono mai rimosse, il loop
+si ferma dopo 30 iterazioni invece di andare all'infinito.
+
+
 ## v2.2.30 — Fix CRITICO: STOP watcher troppo aggressivo + rollback yolo_drag_all
 
 ### Problema riportato
