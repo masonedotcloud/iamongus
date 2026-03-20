@@ -1,5 +1,131 @@
 # Changelog
 
+## v2.2.29 — Clean O2 Filter: jitter su foglie ostinate + skip indistruttibili
+
+### Problema riportato
+
+> Niente, ne ha fatto solo un paio di foglie poi il problema si è
+> presentato nuovamente.
+
+### Analisi
+
+Il drag con `_drag_snap` (v2.2.28) e' migliorato: il bot riesce
+ad afferrare alcune foglie. Ma per certe foglie il drag continua
+a fallire e il bot resta in loop sullo stesso punto.
+
+Cause probabili (caso per caso):
+
+1. **Foglie sovrapposte**: YOLO le vede come una sola bounding box.
+   Il centro della box e' "tra" le 2 foglie, il click cade nel vuoto.
+
+2. **Foglie con bbox imprecisa**: la box di YOLO include parti
+   di altri elementi grafici (bordo del filtro, gambo dello strumento),
+   quindi il centro non e' sul corpo afferrabile della foglia.
+
+3. **Foglie ai bordi**: parzialmente nascoste, il centro della
+   bbox cade fuori dalla foglia visibile.
+
+In tutti questi casi: bot clicca, drag, ma il gioco non registra
+"afferro la foglia" -> al frame successivo YOLO la rivede nello
+stesso posto -> loop.
+
+### Fix: tracking + jitter + skip permanente
+
+Aggiunta una **logica adattiva** che reagisce ai fallimenti:
+
+#### 1. Tracking delle posizioni cliccate
+
+Una lista `stuck_positions = [(sx, sy, count), ...]` traccia le
+foglie gia' tentate. Ogni nuovo drag verifica se la foglia rilevata
+e' vicina (< 40px) a una posizione gia' nella lista:
+- Se SI: incrementa `count`
+- Se NO: aggiunge nuova entry con `count=1`
+
+#### 2. JITTER dopo 2 fallimenti
+
+Quando una foglia viene cliccata per la 3a volta (count >= 2),
+applichiamo un **offset random** sul centro:
+
+```python
+max_offset = min(20, bbox_dimension / 3)
+jitter_x = random(-max_offset, +max_offset)
+jitter_y = random(-max_offset, +max_offset)
+click_position = (centro_x + jitter_x, centro_y + jitter_y)
+```
+
+L'offset e' proporzionato alla dimensione della bounding box (max
+20px o 1/3 del lato della box). Cosi' proviamo punti diversi del
+corpo della foglia.
+
+#### 3. SKIP definitivo dopo 4 fallimenti
+
+Se una foglia e' stata cliccata 4 volte senza essere rimossa,
+la skippiamo per sempre. Probabilmente:
+- E' un falso positivo del modello YOLO
+- Le coordinate del target (end_rx, end_ry) sono sbagliate
+- Una foglia "indistruttibile" per bug del gioco
+
+Cosi' il bot non resta in loop infinito e completa le altre
+foglie raggiungibili.
+
+#### 4. Log diagnostici aggiornati
+
+Ora i log mostrano:
+
+```
+[yolo_drag_all] Iter 5: totali=4 validi=2 (fuori_roi=0 troppo_vicini=0 skip_stuck=2)
+[yolo_drag_all] Drag 5: (1582,420) -> (952,689) conf=0.94 [JITTER +(-12,8) tentativo 3]
+```
+
+`skip_stuck=2` significa che 2 foglie sono state ignorate perche'
+gia' fallite 4 volte.
+
+Alla fine:
+```
+[yolo_drag_all] Posizioni saltate per indistruttibilita': 2
+```
+
+### Parametri (hardcoded)
+
+```python
+JITTER_THRESHOLD = 2   # dopo 2 click sulla stessa zona, attiva jitter
+SKIP_THRESHOLD = 4     # dopo 4 click fallimentari, skippa definitivamente
+STUCK_DISTANCE = 40    # px: due click "vicini" = stessa foglia
+```
+
+Se vuoi tunare, edita `_h_yolo_drag_all` in
+`among_us_ai/execution/_motore_pkg/handlers_yolo.py`.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | tracking `stuck_positions` + jitter dopo N fallimenti + skip dopo N+2 fallimenti |
+
+### Verifica fatta
+
+- Syntax check: OK
+- Import package: OK
+
+### Cosa NON e' cambiato
+
+- `_drag_snap` (v2.2.28): invariato
+- `yolo_drag` single-shot: invariato
+- Altri handler: invariati
+
+### Considerazione
+
+Se SEMPRE le stesse 2-3 foglie restano impossibili da rimuovere,
+significa che le coordinate target `(end_rx, end_ry)` non sono
+correttamente sopra il "buco di aspirazione" del filtro. In quel
+caso, andrebbe ricalibrato il target nell'editor delle task.
+
+In ogni caso, ora il bot:
+- Tenta tutte le foglie raggiungibili
+- Non resta in loop infinito sulle indistruttibili
+- Esce graziosamente quando finisce le foglie cliccabili
+
+
 ## v2.2.28 — Clean O2 Filter: nuova funzione _drag_snap per oggetti animati
 
 ### Problema rilevato dai log
