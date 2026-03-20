@@ -1,5 +1,143 @@
 # Changelog
 
+## v2.2.30 — Fix CRITICO: STOP watcher troppo aggressivo + rollback yolo_drag_all
+
+### Problema riportato
+
+> Continua a presentarsi la problematica. Ricontrolla le versioni
+> precedenti dove il codice funziona, controlla cosa hai modificato
+> per romperlo.
+
+### Analisi storica
+
+Ho confrontato il `_h_yolo_drag_all` modulare con quello del MONOLITE
+ORIGINALE (`bot_original/bot_src/main.py`). **Risultato**: nelle
+versioni v2.2.27-29 avevo aggiunto fix progressivi (conf_threshold,
+min_distance, max_empty_frames, max_iterations, _drag_snap, jitter,
+stuck tracking) che NON c'erano nel monolite originale.
+
+Le differenze fra monolite e modulare ora sono solo cosmetiche
+(virgolette ' vs ", parentesi tuple). La logica e' **byte-per-byte
+identica** al monolite che funzionava.
+
+### Causa vera del bug: STOP watcher troppo aggressivo
+
+Confrontando il monolite (`main.py`) con il modulare, ho scoperto
+una cosa NON presente nell'originale: lo **STOP watcher** della
+v2.2.22 (memory_sync.py).
+
+Il watcher controlla la RAM 20 volte al secondo. Se la task in
+esecuzione **non viene trovata in RAM** (`ram_match is None`),
+invia STOP al subprocess -> interruzione prematura.
+
+Ma la RAM puo' essere "vuota" per molti motivi:
+- Task non vitali non sempre listate
+- Animazioni in corso
+- Timing del polling
+- Task come Clean O2 Filter che hanno una sola azione lunga
+
+Risultato: il bot puliva qualche foglia, la RAM riportava
+momentaneamente "task non in RAM" -> STOP -> handler esce dal loop
+-> ma SUBITO dopo Clean O2 Filter ricompare in RAM -> il bot crede
+che la task sia ancora attiva -> rilancia il subprocess -> di nuovo
+STOP poco dopo -> loop apparente.
+
+### Fix
+
+#### 1. STOP solo se la task ha AVANZATO step in RAM
+
+```python
+# PRIMA (v2.2.22):
+if ram_match is None:
+    should_stop = True   # <-- BUG! la RAM puo' essere vuota
+elif ram_match.get('done', False):
+    should_stop = True
+elif curr_step > ram_step_launch:
+    should_stop = True
+
+# DOPO (v2.2.30):
+if ram_match is None:
+    pass  # task non in RAM = NON sappiamo, meglio non fermare
+elif ram_match.get('done', False):
+    should_stop = True
+elif curr_step > ram_step_launch:
+    should_stop = True
+```
+
+#### 2. Log diagnostico nello STOP
+
+Ora ogni STOP stampa:
+```
+[StopWatcher] Task 16 (Clean O2 Filter): step avanzato 0->1, invio STOP
+```
+
+oppure
+```
+[StopWatcher] Task 5 (Divert Power): task done in RAM, invio STOP
+```
+
+Cosi' se in futuro qualcosa non funziona, vediamo SUBITO se e perche'
+e' stato inviato STOP.
+
+#### 3. Rollback completo di `_h_yolo_drag_all`
+
+Ho rimosso TUTTE le mie aggiunte:
+- `conf_threshold` parametro -> torna a `conf=0.7` hardcoded
+- `min_distance_px` parametro -> torna a `> 60` hardcoded
+- `max_empty_frames` parametro -> torna a `>= 3` hardcoded
+- `max_iterations` safety -> rimosso, ritorna `while True`
+- `_drag_snap` -> torna a `_drag_umano`
+- jitter + stuck tracking -> rimosso completamente
+- log diagnostici -> ridotti a essenziali (`Errore iterazione`, `YOLO o modello non trovato`)
+
+Adesso il handler e' **identico al monolite originale** che
+funzionava sempre.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/memory_sync.py` | rimosso `ram_match is None` come trigger di STOP + log diagnostico |
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | `_h_yolo_drag_all` rollback completo a versione monolite |
+
+### Verifica fatta
+
+- `_h_yolo_drag_all` confrontato byte-per-byte con il monolite:
+  **identico** (differenze solo cosmetiche su virgolette/tuple)
+- Syntax check: OK
+- Import package: OK
+
+### STOP watcher: quando viene attivato adesso
+
+Solo in 2 casi:
+1. **`task.done == True` in RAM**: la task e' stata completata
+2. **`step` avanzato**: il numero di step della task in RAM e'
+   aumentato rispetto a quando il subprocess e' partito
+
+In TUTTI gli altri casi (task non in RAM, RAM vuota, errore lettura
+RAM), NESSUN STOP viene inviato. Il subprocess gira fino al termine
+naturale delle azioni.
+
+### Cosa fare ora
+
+1. Estrai lo zip
+2. Lancia Clean O2 Filter
+
+Adesso il bot dovrebbe pulire tutte le foglie (come nel monolite
+originale) senza essere interrotto prematuramente dal STOP watcher.
+
+Se ancora ci sono problemi, manda i log. Adesso ci saranno righe
+`[StopWatcher] Task X: ..., invio STOP` se viene attivato.
+
+### Cosa NON e' cambiato
+
+- Pre-warming subprocess (v2.2.20): invariato
+- Micro-nudge iterativo con pulsante Use (v2.2.23): invariato
+- `_drag_snap` e `_drag_umano`: invariati (ma `_h_yolo_drag_all`
+  torna a usare `_drag_umano` come nel monolite)
+- API del motore: invariata
+
+
 ## v2.2.29 — Clean O2 Filter: jitter su foglie ostinate + skip indistruttibili
 
 ### Problema riportato
