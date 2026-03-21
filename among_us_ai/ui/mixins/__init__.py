@@ -28,6 +28,7 @@ from .tasks_popups_register import TasksPopupsRegisterMixin
 from .tasks_popups_subitem import TasksPopupsSubitemMixin
 from .tasks_process import TasksProcessMixin
 from .ui_setup import UISetupMixin
+from .use_button_calib import UseButtonCalibMixin
 from .yolo_scanner import YoloScannerMixin
 from .zones import ZonesMixin
 
@@ -39,5 +40,6 @@ __all__ = [
     "TasksLaunchMixin", "TasksListMixin",
     "TasksPopupsEditMixin", "TasksPopupsRegisterMixin",
     "TasksPopupsSubitemMixin", "TasksProcessMixin",
-    "UISetupMixin", "YoloScannerMixin", "ZonesMixin",
+    "UISetupMixin", "UseButtonCalibMixin",
+    "YoloScannerMixin", "ZonesMixin",
 ]

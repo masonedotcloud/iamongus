@@ -1,5 +1,1084 @@
 # Changelog
 
+## v2.2.31 — yolo_drag_all: NUOVA logica drag a fasi (Among Us friendly)
+
+### Diagnosi confermata
+
+L'utente ha confermato:
+- Manualmente (mouse umano) il drag funziona
+- Il bot **TOCCA la foglia ma non la sposta**
+- Il modello YOLO e' preciso: una box = una foglia
+
+Quindi YOLO trova bene le foglie, il click parte sopra la foglia,
+ma Among Us **non registra l'afferramento** come "drag".
+
+### Causa tecnica
+
+Il `_drag_umano` classico usa pyautogui in questa sequenza:
+
+```python
+pag.moveTo(sx, sy, duration=0.2, tween=easeOutQuad)  # tween 200ms
+pag.mouseDown(button='left')                          # press
+time.sleep(0.05-0.10)                                 # delay corto
+# subito Bezier curve fino al target
+```
+
+Problemi:
+1. **Tween moveTo di 200ms**: in quei 200ms la foglia si muove
+   (animazione gioco) -> mouseDown su area vuota
+2. **Delay post-mouseDown troppo corto (50-100ms)**: Among Us non
+   ha il tempo di registrare "ho afferrato un oggetto" prima di
+   vedere il cursore lontano
+3. **Bezier con offset random 40px**: la curva ampia "confonde"
+   il gioco che perde l'oggetto durante il trascinamento
+
+### Fix: DRAG A FASI (7 step)
+
+Ho riscritto completamente la logica del drag per `yolo_drag_all`,
+con una sequenza specifica calibrata per Among Us:
+
+```
+FASE 1: SNAP istantaneo sulla posizione (no tween)
+        -> Il cursore arriva ESATTAMENTE sopra la foglia,
+           la foglia non ha tempo di scappare
+
+FASE 2: time.sleep(0.05)
+        -> Windows aggiorna posizione cursore prima del mouseDown
+
+FASE 3: mouseDown + time.sleep(0.25)   <-- KEY!
+        -> Among Us registra "ho afferrato l'oggetto"
+           Senza questa pausa lunga, il gioco interpreta
+           come "click" e basta
+
+FASE 4: micro-movimento di "engaging" (8 px in 80ms)
+        -> Segnala al gioco "ho iniziato il drag"
+           Movimento piccolo e lento per non perdere l'oggetto
+
+FASE 5: movimento principale verso target
+        -> Linea retta (no Bezier), 20 step in 200ms
+
+FASE 6: time.sleep(0.20) sopra il target
+        -> Among Us registra "cursore fermo qui, vuoi rilasciare"
+
+FASE 7: mouseUp
+        -> Rilascio finale, foglia dropped sul target
+```
+
+### Differenze chiave vs precedenti
+
+| Aspetto | `_drag_umano` (monolite) | `_drag_fasi` (v2.2.31) |
+|---|---|---|
+| Move iniziale | Tween 150-250ms | **Snap istantaneo** |
+| Pausa post-mouseDown | 50-100ms | **250ms** (3-5x piu' lungo) |
+| Movimento | Bezier offset 40px | **Linea retta** + micro-engage iniziale |
+| Pausa pre-release | 50-150ms | **200ms** |
+| Tempo totale | ~400ms | ~700ms |
+
+Il drag e' un po' piu' lento (~300ms in piu' per foglia) ma in
+cambio dovrebbe essere **affidabile**.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | `_h_yolo_drag_all` con nuova funzione interna `_drag_fasi` (7-step optimized for Among Us) |
+
+### Verifica fatta
+
+- Syntax check: OK
+- Import: OK
+- Resto del flusso (filtro ROI, distanza > 60, etc.): invariato
+- `_drag_umano` originale: invariato (resta usato da altri handler)
+
+### Logging
+
+Adesso i log mostrano:
+```
+[yolo_drag_all] Inizio: target=(952,689)
+[yolo_drag_all] Drag 1: (1582,426) -> (952,689) conf=0.94
+[yolo_drag_all] Drag 2: (1383,1012) -> (952,689) conf=0.93
+...
+[yolo_drag_all] Nessuna foglia in 3 frame. Drag completati: N
+```
+
+Se vedi `Drag N` ma le foglie NON spariscono dai log dei drag
+successivi, il problema e' fuori dal mio controllo (es. coordinate
+target sbagliate, foglie non droppabili nel buco).
+
+### Safety: max 30 iterazioni
+
+Se per qualche motivo le foglie non vengono mai rimosse, il loop
+si ferma dopo 30 iterazioni invece di andare all'infinito.
+
+
+## v2.2.30 — Fix CRITICO: STOP watcher troppo aggressivo + rollback yolo_drag_all
+
+### Problema riportato
+
+> Continua a presentarsi la problematica. Ricontrolla le versioni
+> precedenti dove il codice funziona, controlla cosa hai modificato
+> per romperlo.
+
+### Analisi storica
+
+Ho confrontato il `_h_yolo_drag_all` modulare con quello del MONOLITE
+ORIGINALE (`bot_original/bot_src/main.py`). **Risultato**: nelle
+versioni v2.2.27-29 avevo aggiunto fix progressivi (conf_threshold,
+min_distance, max_empty_frames, max_iterations, _drag_snap, jitter,
+stuck tracking) che NON c'erano nel monolite originale.
+
+Le differenze fra monolite e modulare ora sono solo cosmetiche
+(virgolette ' vs ", parentesi tuple). La logica e' **byte-per-byte
+identica** al monolite che funzionava.
+
+### Causa vera del bug: STOP watcher troppo aggressivo
+
+Confrontando il monolite (`main.py`) con il modulare, ho scoperto
+una cosa NON presente nell'originale: lo **STOP watcher** della
+v2.2.22 (memory_sync.py).
+
+Il watcher controlla la RAM 20 volte al secondo. Se la task in
+esecuzione **non viene trovata in RAM** (`ram_match is None`),
+invia STOP al subprocess -> interruzione prematura.
+
+Ma la RAM puo' essere "vuota" per molti motivi:
+- Task non vitali non sempre listate
+- Animazioni in corso
+- Timing del polling
+- Task come Clean O2 Filter che hanno una sola azione lunga
+
+Risultato: il bot puliva qualche foglia, la RAM riportava
+momentaneamente "task non in RAM" -> STOP -> handler esce dal loop
+-> ma SUBITO dopo Clean O2 Filter ricompare in RAM -> il bot crede
+che la task sia ancora attiva -> rilancia il subprocess -> di nuovo
+STOP poco dopo -> loop apparente.
+
+### Fix
+
+#### 1. STOP solo se la task ha AVANZATO step in RAM
+
+```python
+# PRIMA (v2.2.22):
+if ram_match is None:
+    should_stop = True   # <-- BUG! la RAM puo' essere vuota
+elif ram_match.get('done', False):
+    should_stop = True
+elif curr_step > ram_step_launch:
+    should_stop = True
+
+# DOPO (v2.2.30):
+if ram_match is None:
+    pass  # task non in RAM = NON sappiamo, meglio non fermare
+elif ram_match.get('done', False):
+    should_stop = True
+elif curr_step > ram_step_launch:
+    should_stop = True
+```
+
+#### 2. Log diagnostico nello STOP
+
+Ora ogni STOP stampa:
+```
+[StopWatcher] Task 16 (Clean O2 Filter): step avanzato 0->1, invio STOP
+```
+
+oppure
+```
+[StopWatcher] Task 5 (Divert Power): task done in RAM, invio STOP
+```
+
+Cosi' se in futuro qualcosa non funziona, vediamo SUBITO se e perche'
+e' stato inviato STOP.
+
+#### 3. Rollback completo di `_h_yolo_drag_all`
+
+Ho rimosso TUTTE le mie aggiunte:
+- `conf_threshold` parametro -> torna a `conf=0.7` hardcoded
+- `min_distance_px` parametro -> torna a `> 60` hardcoded
+- `max_empty_frames` parametro -> torna a `>= 3` hardcoded
+- `max_iterations` safety -> rimosso, ritorna `while True`
+- `_drag_snap` -> torna a `_drag_umano`
+- jitter + stuck tracking -> rimosso completamente
+- log diagnostici -> ridotti a essenziali (`Errore iterazione`, `YOLO o modello non trovato`)
+
+Adesso il handler e' **identico al monolite originale** che
+funzionava sempre.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/memory_sync.py` | rimosso `ram_match is None` come trigger di STOP + log diagnostico |
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | `_h_yolo_drag_all` rollback completo a versione monolite |
+
+### Verifica fatta
+
+- `_h_yolo_drag_all` confrontato byte-per-byte con il monolite:
+  **identico** (differenze solo cosmetiche su virgolette/tuple)
+- Syntax check: OK
+- Import package: OK
+
+### STOP watcher: quando viene attivato adesso
+
+Solo in 2 casi:
+1. **`task.done == True` in RAM**: la task e' stata completata
+2. **`step` avanzato**: il numero di step della task in RAM e'
+   aumentato rispetto a quando il subprocess e' partito
+
+In TUTTI gli altri casi (task non in RAM, RAM vuota, errore lettura
+RAM), NESSUN STOP viene inviato. Il subprocess gira fino al termine
+naturale delle azioni.
+
+### Cosa fare ora
+
+1. Estrai lo zip
+2. Lancia Clean O2 Filter
+
+Adesso il bot dovrebbe pulire tutte le foglie (come nel monolite
+originale) senza essere interrotto prematuramente dal STOP watcher.
+
+Se ancora ci sono problemi, manda i log. Adesso ci saranno righe
+`[StopWatcher] Task X: ..., invio STOP` se viene attivato.
+
+### Cosa NON e' cambiato
+
+- Pre-warming subprocess (v2.2.20): invariato
+- Micro-nudge iterativo con pulsante Use (v2.2.23): invariato
+- `_drag_snap` e `_drag_umano`: invariati (ma `_h_yolo_drag_all`
+  torna a usare `_drag_umano` come nel monolite)
+- API del motore: invariata
+
+
+## v2.2.29 — Clean O2 Filter: jitter su foglie ostinate + skip indistruttibili
+
+### Problema riportato
+
+> Niente, ne ha fatto solo un paio di foglie poi il problema si è
+> presentato nuovamente.
+
+### Analisi
+
+Il drag con `_drag_snap` (v2.2.28) e' migliorato: il bot riesce
+ad afferrare alcune foglie. Ma per certe foglie il drag continua
+a fallire e il bot resta in loop sullo stesso punto.
+
+Cause probabili (caso per caso):
+
+1. **Foglie sovrapposte**: YOLO le vede come una sola bounding box.
+   Il centro della box e' "tra" le 2 foglie, il click cade nel vuoto.
+
+2. **Foglie con bbox imprecisa**: la box di YOLO include parti
+   di altri elementi grafici (bordo del filtro, gambo dello strumento),
+   quindi il centro non e' sul corpo afferrabile della foglia.
+
+3. **Foglie ai bordi**: parzialmente nascoste, il centro della
+   bbox cade fuori dalla foglia visibile.
+
+In tutti questi casi: bot clicca, drag, ma il gioco non registra
+"afferro la foglia" -> al frame successivo YOLO la rivede nello
+stesso posto -> loop.
+
+### Fix: tracking + jitter + skip permanente
+
+Aggiunta una **logica adattiva** che reagisce ai fallimenti:
+
+#### 1. Tracking delle posizioni cliccate
+
+Una lista `stuck_positions = [(sx, sy, count), ...]` traccia le
+foglie gia' tentate. Ogni nuovo drag verifica se la foglia rilevata
+e' vicina (< 40px) a una posizione gia' nella lista:
+- Se SI: incrementa `count`
+- Se NO: aggiunge nuova entry con `count=1`
+
+#### 2. JITTER dopo 2 fallimenti
+
+Quando una foglia viene cliccata per la 3a volta (count >= 2),
+applichiamo un **offset random** sul centro:
+
+```python
+max_offset = min(20, bbox_dimension / 3)
+jitter_x = random(-max_offset, +max_offset)
+jitter_y = random(-max_offset, +max_offset)
+click_position = (centro_x + jitter_x, centro_y + jitter_y)
+```
+
+L'offset e' proporzionato alla dimensione della bounding box (max
+20px o 1/3 del lato della box). Cosi' proviamo punti diversi del
+corpo della foglia.
+
+#### 3. SKIP definitivo dopo 4 fallimenti
+
+Se una foglia e' stata cliccata 4 volte senza essere rimossa,
+la skippiamo per sempre. Probabilmente:
+- E' un falso positivo del modello YOLO
+- Le coordinate del target (end_rx, end_ry) sono sbagliate
+- Una foglia "indistruttibile" per bug del gioco
+
+Cosi' il bot non resta in loop infinito e completa le altre
+foglie raggiungibili.
+
+#### 4. Log diagnostici aggiornati
+
+Ora i log mostrano:
+
+```
+[yolo_drag_all] Iter 5: totali=4 validi=2 (fuori_roi=0 troppo_vicini=0 skip_stuck=2)
+[yolo_drag_all] Drag 5: (1582,420) -> (952,689) conf=0.94 [JITTER +(-12,8) tentativo 3]
+```
+
+`skip_stuck=2` significa che 2 foglie sono state ignorate perche'
+gia' fallite 4 volte.
+
+Alla fine:
+```
+[yolo_drag_all] Posizioni saltate per indistruttibilita': 2
+```
+
+### Parametri (hardcoded)
+
+```python
+JITTER_THRESHOLD = 2   # dopo 2 click sulla stessa zona, attiva jitter
+SKIP_THRESHOLD = 4     # dopo 4 click fallimentari, skippa definitivamente
+STUCK_DISTANCE = 40    # px: due click "vicini" = stessa foglia
+```
+
+Se vuoi tunare, edita `_h_yolo_drag_all` in
+`among_us_ai/execution/_motore_pkg/handlers_yolo.py`.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | tracking `stuck_positions` + jitter dopo N fallimenti + skip dopo N+2 fallimenti |
+
+### Verifica fatta
+
+- Syntax check: OK
+- Import package: OK
+
+### Cosa NON e' cambiato
+
+- `_drag_snap` (v2.2.28): invariato
+- `yolo_drag` single-shot: invariato
+- Altri handler: invariati
+
+### Considerazione
+
+Se SEMPRE le stesse 2-3 foglie restano impossibili da rimuovere,
+significa che le coordinate target `(end_rx, end_ry)` non sono
+correttamente sopra il "buco di aspirazione" del filtro. In quel
+caso, andrebbe ricalibrato il target nell'editor delle task.
+
+In ogni caso, ora il bot:
+- Tenta tutte le foglie raggiungibili
+- Non resta in loop infinito sulle indistruttibili
+- Esce graziosamente quando finisce le foglie cliccabili
+
+
+## v2.2.28 — Clean O2 Filter: nuova funzione _drag_snap per oggetti animati
+
+### Problema rilevato dai log
+
+```
+[yolo_drag_all] Iter 19: totali=4 validi=4
+[yolo_drag_all] Drag 19: (1582,426) -> (952,689) conf=0.94
+[yolo_drag_all] Iter 20: totali=4 validi=4
+[yolo_drag_all] Drag 20: (1383,1012) -> (952,689) conf=0.94
+... (continua per 25 iterazioni)
+[yolo_drag_all] Drag 24: (1592,426) <- stessa posizione di Drag 19
+[yolo_drag_all] Drag 25: (1258,936) <- stessa di Drag 22
+[yolo_drag_all] Raggiunto limite max_iterations=25. Drag fatti: 25
+```
+
+YOLO rileva sempre le stesse 4 foglie nelle stesse posizioni (con
+conf=0.95). Significa che il drag NON sta rimuovendo le foglie. Il
+bot "tira aria".
+
+### Causa
+
+`_drag_umano` ha un tween di 150-250ms nel `moveTo` iniziale PRIMA
+del `mouseDown`. Le foglie di Clean O2 Filter sono **animate**
+(fluttuano nel filtro), quindi:
+
+1. Bot: `moveTo(1582, 426)` con tween 200ms
+2. Nei 200ms, la foglia si muove (animazione del gioco)
+3. Bot: `mouseDown` ma il mouse e' su area vuota (foglia gia' altrove)
+4. Bot: trascina verso (952, 689) -> trascina ARIA
+5. Foglia ancora li' -> YOLO la rileva al frame successivo -> loop
+
+Inoltre `_drag_umano` usa una curva di Bezier con offset random
+fino a 40px, che puo' far "perdere" l'oggetto al gioco durante il
+trascinamento.
+
+### Fix: nuova funzione `_drag_snap`
+
+Aggiunta una versione di drag dedicata a oggetti animati o
+tempo-critici. Differenze rispetto a `_drag_umano`:
+
+| | `_drag_umano` | `_drag_snap` |
+|---|---|---|
+| Move iniziale | tween 150-250ms (easeOutQuad) | SNAP istantaneo (no tween) |
+| Pausa post-mouseDown | 50-100ms | **150-200ms** (gioco ha tempo di "afferrare") |
+| Movimento drag | Bezier con offset random 40px | Linea retta |
+| Pausa pre-mouseUp | 50-150ms | **150-200ms** ("rilascia qui") |
+
+Con `_drag_snap`:
+1. Snap immediato su (sx, sy) -> foglia non si muove tra "rilevamento"
+   e "afferramento"
+2. mouseDown + pausa 180ms -> gioco capisce "ho afferrato la foglia"
+3. Drag retto al target -> il gioco non perde l'oggetto
+4. Pausa pre-release -> "qui rilascio"
+
+### Modifica al `_h_yolo_drag_all`
+
+Cambiata la chiamata da `_drag_umano(sx, sy, ex, ey, durata)` a
+`_drag_snap(...)`. Aggiunta anche una pausa post-drag di 0.3s (era
+0.15s) per dare al gioco il tempo di "rimuovere visivamente" la
+foglia prima del prossimo rilevamento YOLO. Altrimenti il bot
+poteva rilevare di nuovo la STESSA foglia ancora visibile nel
+frame ma in via di rimozione.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/input_mouse.py` | nuova funzione `_drag_snap` (drag senza tween + pause generose) |
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | `_h_yolo_drag_all` ora usa `_drag_snap` + pausa post-drag aumentata a 0.3s |
+
+### Verifica fatta
+
+- Syntax check su `input_mouse.py` e `handlers_yolo.py`: OK
+- Import package: OK
+- Import sia `_drag_umano` che `_drag_snap`: OK
+
+### Considerazione
+
+`_drag_umano` resta usato come default per tutti gli altri tipi di
+drag (drag, drag_zone, drag_multi, drag_seq_tappe, yolo_drag
+singolo-shot). Solo `yolo_drag_all` passa al nuovo `_drag_snap`
+perche' e' l'unico caso noto di oggetti animati durante il
+rilevamento.
+
+Se altre task hanno lo stesso problema (oggetti animati che
+sfuggono), si puo' fare lo stesso pattern.
+
+### Cosa fare ora
+
+1. Estrai lo zip
+2. Lancia Clean O2 Filter
+3. Guarda i log: dovresti vedere SOLO i drag fatti effettivamente,
+   con `total_drags` che si ferma quando le foglie sono finite
+
+Se ancora "tira aria":
+- Le coordinate target `end_rx, end_ry` potrebbero non essere sopra
+  il "buco di aspirazione". Verifica nell'editor della task.
+- La `durata` del drag potrebbe essere troppo corta. Prova
+  `durata: 0.4` invece di 0.2 nel JSON dell'azione.
+
+
+## v2.2.27 — Fix Clean O2 Filter (yolo_drag_all) con diagnostica
+
+### Problema riportato
+
+> O2 dei filter quindi rileva con yolo e trascina verso un punto sembra non funzionare.
+
+### Analisi
+
+La task Clean O2 Filter usa il tipo di azione `yolo_drag_all`:
+- Cerca con YOLO (modello `foglie.pt`) tutti gli oggetti nella ROI
+- Trascina ognuno verso un punto target (`end_rx, end_ry`)
+- Loop finche' non rileva piu' oggetti (3 frame vuoti consecutivi)
+
+Il handler aveva 3 problemi che potevano causare fallimento silenzioso:
+
+1. **`conf=0.7`** (soglia confidenza YOLO troppo alta): se il modello
+   `foglie.pt` rileva foglie con confidenza < 0.7, le scarta tutte.
+   Risultato: nessuna box trovata, esce dopo 0.3s.
+
+2. **`distance > 60 px`** dal target (soglia troppo restrittiva): box
+   piu' vicine di 60px al "buco" venivano scartate per evitare drag
+   inutili su foglie gia' al loro posto. Ma se le foglie sono
+   distribuite vicine al buco, vengono scartate tutte.
+
+3. **`empty_frames >= 3`** (uscita troppo veloce): se la prima
+   inferenza YOLO e' lenta (caricamento modello, prima evaluation
+   CPU), il primo frame puo' essere vuoto. 3 vuoti = 0.3s = esce.
+
+4. **NESSUN LOG**: il handler non stampava nulla, quindi era
+   impossibile capire perche' falliva (foglie non trovate? drag
+   sbagliato? modello non caricato?).
+
+### Fix
+
+#### 1. Parametri configurabili (JSON dell'azione)
+
+Ora il handler legge dal JSON dell'azione (con default piu' permissivi):
+
+| Param JSON | Default v2.2.27 | Default precedente |
+|---|---|---|
+| `conf_threshold` | 0.5 | 0.7 (hardcoded) |
+| `min_distance_px` | 30 | 60 (hardcoded) |
+| `max_empty_frames` | 8 | 3 (hardcoded) |
+| `max_iterations` | 25 | infinito |
+
+Se default permissivi NON bastano, puoi sovrascriverli nel JSON.
+Esempio per O2 Filter con foglie difficili da rilevare:
+
+```json
+{
+  "tipo": "yolo_drag_all",
+  "yolo_model": "foglie.pt",
+  "conf_threshold": 0.35,
+  "min_distance_px": 20,
+  ...
+}
+```
+
+#### 2. Log diagnostici dettagliati
+
+Ora ad ogni iterazione il handler stampa:
+
+```
+[yolo_drag_all] Inizio: model=foglie.pt conf>=0.5 min_dist=30px target=(...)
+[yolo_drag_all] Carico modello: /path/to/foglie.pt
+[yolo_drag_all] Modello caricato OK
+[yolo_drag_all] ROI cattura: pos=(...) size=(...)
+[yolo_drag_all] Iter 1: totali=5 validi=3 (fuori_roi=1 troppo_vicini=1)
+[yolo_drag_all] Drag 1: (sx,sy) -> (ex,ey) conf=0.78
+[yolo_drag_all] Iter 2: totali=4 validi=2 (fuori_roi=0 troppo_vicini=2)
+[yolo_drag_all] Drag 2: ...
+...
+[yolo_drag_all] 8 frame vuoti consecutivi, esco. Drag fatti: 5
+```
+
+Cosi' nei log puoi vedere SUBITO se:
+- `totali=0` -> il modello non rileva nulla (conf troppo alta?
+  modello sbagliato? ROI sbagliata?)
+- `fuori_roi=N` alto -> ROI da rivedere
+- `troppo_vicini=N` alto -> abbassa `min_distance_px`
+- `Modello NON TROVATO` -> path del .pt sbagliato
+- `ULTRALYTICS NON INSTALLATO` -> pip install ultralytics
+
+#### 3. Safety net contro loop infiniti
+
+`max_iterations = 25` previene loop infiniti se YOLO continua a
+trovare le stesse foglie senza che il drag le rimuova davvero.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_yolo.py` | riscrittura `_h_yolo_drag_all` con parametri configurabili + log diagnostici dettagliati + safety iterations |
+
+### Verifica fatta
+
+- Syntax check su `handlers_yolo.py`: OK
+- Import package GPSVisualizerPro: OK
+- Import `_h_yolo_drag_all`: OK
+
+### Cosa fare per testare
+
+1. Estrai lo zip
+2. Avvia il bot
+3. Lancia Clean O2 Filter
+4. Guarda la console: vedrai i log `[yolo_drag_all] ...`
+
+**Se la task non funziona ancora, leggi i log e dimmi cosa scrive:**
+
+- "Modello NON TROVATO" -> percorso `foglie.pt` sbagliato
+- "Iter 1: totali=0" -> YOLO non vede niente. Abbassa conf_threshold
+  a 0.3 nel JSON dell'azione, o ricalibra la ROI con l'editor task.
+- "totali=N validi=0 troppo_vicini=N" -> tutte le foglie sono
+  vicine al target, abbassa `min_distance_px` a 15-20
+- "Drag N: ... conf=0.X" ma non si muove nulla in gioco -> il drag
+  parte ma il gioco non lo accetta. Verifica coordinate target.
+
+### Cosa NON e' cambiato
+
+- `yolo_drag` (singolo-shot, usato da Align Engine Output): invariato
+- Altri handler YOLO (`yolo_click`, `yolo_click_all`): invariati
+- API motore: invariata
+- Tutto il resto del bot: invariato
+
+
+## v2.2.26 — Calibrazione ROI: fix modal-sopra-modal
+
+### Problema riportato
+
+> Non mi compare il popup con lo screen per selezionare le coordinate/zona ROI.
+
+### Causa identificata
+
+DPG (DearPyGui) **non gestisce bene un popup `modal=True` aperto
+sopra un altro popup `modal=True`**: il secondo viene creato in memoria
+ma non viene mostrato a schermo (o viene mostrato e immediatamente
+nascosto dal primo modal).
+
+Il popup principale di calibrazione era `modal=True` (per centrare
+l'attenzione dell'utente), e quando l'utente cliccava "Seleziona
+dal vivo con il mouse" si tentava di aprire un secondo popup
+`modal=True` -> conflitto, popup invisibile.
+
+### Fix
+
+#### 1. Workaround "nascondi/riapri" per il popup principale
+
+Quando l'utente clicca "Seleziona dal vivo":
+- Nascondo temporaneamente il popup principale
+  (`dpg.configure_item("popup_calibra_use", show=False)`)
+- Apro il popup di selezione visuale come finestra NORMALE (non modal)
+- Alla chiusura del secondo (Conferma/Annulla/X), riapro il principale
+  (`dpg.configure_item("popup_calibra_use", show=True)`)
+
+Cosi' c'e' sempre un solo modal aperto alla volta -> niente conflitto.
+
+#### 2. `on_close` callback per gestire la X di chiusura
+
+Aggiunto `on_close=lambda *a: self._chiudi_popup_roi_visuale()`
+al popup di selezione. Cosi' anche se l'utente chiude col tasto X
+in alto a destra invece dei bottoni, il cleanup avviene
+(handler rimosso + popup principale riaperto).
+
+#### 3. Restore in caso di errore
+
+Se durante la costruzione del popup di selezione qualcosa fallisce,
+il popup principale viene ri-mostrato comunque (try/except con
+`show=True` nel cleanup di errore).
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/use_button_calib.py` | popup secondario ora `modal=False` + nascondi/riapri popup principale + `on_close` callback |
+
+### Verifica fatta
+
+- Syntax check: OK
+- Import package: OK
+
+### Cosa fare ora
+
+1. Estrai lo zip
+2. Avvia il bot
+3. Apri **Strumenti -> Calibra pulsante 'Use'...**
+4. Clicca **"Seleziona dal vivo con il mouse"**
+
+Adesso il popup principale dovrebbe **scomparire** temporaneamente
+e apparire la nuova finestra con lo screenshot di Among Us. Dopo
+aver cliccato "Conferma" o "Annulla", il popup principale torna a
+mostrarsi con i valori (eventualmente) aggiornati.
+
+Se il popup di selezione ancora non appare:
+- Guarda nella console le righe `[ROI-Sel] ...`
+- In particolare cerca `[ROI-Sel] Popup creato OK (modal=False)`:
+  se la vedi e non vedi nulla a schermo, il problema e' altrove
+  (es. il popup viene aperto fuori dalla viewport visibile)
+
+
+## v2.2.25 — Calibrazione ROI: fix popup vuoto + diagnostica
+
+### Problema riportato
+
+> Il popup di selezione ROI si apre vuoto o da' errore.
+
+### Cause possibili
+
+Nella v2.2.24 c'erano 3 fragilita':
+
+1. **`item_clicked_handler` su drawlist non sempre funziona**.
+   `drawlist` in DPG non riceve sempre gli eventi di click come
+   altri widget; bisogna usare `add_mouse_click_handler` globale
+   e filtrare manualmente con `is_item_hovered`.
+
+2. **`get_drawing_mouse_pos()` puo' fallire silenziosamente** in
+   certi contesti (es. se il drawlist non e' "focused"). Serve un
+   fallback con `get_mouse_pos(local=False) - get_item_rect_min()`.
+
+3. **Errori silenziati**: i `try/except` mostravano solo
+   `auto_status_msg` che a volte e' coperto dal popup. Senza log
+   nella console e' difficile capire cosa va male.
+
+### Fix
+
+#### 1. Diagnostica esplicita ovunque
+
+Ogni step del popup ora stampa `[ROI-Sel] ...` nella console:
+- Verifica imports
+- Verifica HWND
+- Cattura screenshot
+- Conversione/resize immagine
+- Creazione texture
+- Costruzione popup
+- Handler mouse
+- Ogni click rilevato
+
+Cosi' se qualcosa va male, vedi esattamente DOVE.
+
+#### 2. Mouse handler GLOBALE invece di item_handler
+
+Cambiato da:
+```python
+with dpg.item_handler_registry(tag=...):
+    dpg.add_item_clicked_handler(button=0, callback=...)
+dpg.bind_item_handler_registry(canvas_tag, ...)
+```
+
+a:
+```python
+with dpg.handler_registry(tag=...):
+    dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Left,
+                                callback=...)
+```
+
+Il callback fa `dpg.is_item_hovered(canvas_tag)` per filtrare i
+click fuori dal drawlist.
+
+Questo approccio funziona in modo affidabile su DPG perche'
+non dipende da come il widget gestisce gli eventi.
+
+#### 3. Coordinate mouse con fallback
+
+```python
+try:
+    mx, my = dpg.get_drawing_mouse_pos()
+except Exception:
+    mx = my = None
+
+if mx is None:
+    # Fallback manuale
+    gx, gy = dpg.get_mouse_pos(local=False)
+    rmin = dpg.get_item_rect_min(canvas_tag)
+    mx = gx - rmin[0]
+    my = gy - rmin[1]
+```
+
+#### 4. Adattamento dimensione popup alla viewport
+
+Prima `max_w=1100, max_h=720` fissi. Ora dipendono dalla
+viewport corrente:
+```python
+max_w = max(400, vp_w - 80)
+max_h = max(300, vp_h - 220)
+```
+
+Cosi' il popup si adatta a bot con viewport piccolo.
+
+#### 5. Cleanup handler globale
+
+Quando si chiude il popup (Conferma/Annulla/X), viene rimosso
+anche `popup_seleziona_roi_mouse_handler` per non lasciare
+handler globali zombi che processano click ovunque.
+
+Nuovo metodo `_chiudi_popup_roi_visuale()` chiamato sia da
+"Annulla" che dalla X di chiusura del popup.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/use_button_calib.py` | riscrittura `_apri_popup_seleziona_roi_visuale` + nuovo `_roi_visuale_global_click` (sostituisce `_roi_visuale_canvas_click`) + nuovo `_chiudi_popup_roi_visuale` per cleanup handler |
+
+### Verifica fatta
+
+- Syntax check su `use_button_calib.py`: OK
+- Test import package `GPSVisualizerPro`: OK
+- Tutti i 5 metodi accessibili come metodi della classe:
+  - `_apri_popup_seleziona_roi_visuale`
+  - `_chiudi_popup_roi_visuale`
+  - `_conferma_roi_visuale`
+  - `_reset_roi_visuale`
+  - `_roi_visuale_global_click`
+
+### Cosa fare se ancora non va
+
+Apri la console di output del bot e clicca il bottone "Seleziona
+dal vivo con il mouse". Dovresti vedere righe tipo:
+
+```
+[ROI-Sel] Apro popup selezione visuale...
+[ROI-Sel] HWND Among Us = 1234567
+[ROI-Sel] Client rect: pos=(0,30) size=(1920x1050)
+[ROI-Sel] Screenshot OK: (1050, 1920, 4)
+[ROI-Sel] Preview: 1100x602 (scale=0.573)
+[ROI-Sel] Texture creata: popup_seleziona_roi_tex
+[ROI-Sel] Popup creato OK
+[ROI-Sel] Mouse handler globale OK
+```
+
+Se si ferma prima del "Popup creato OK", mandami le righe
+[ROI-Sel] che hai - cosi' so esattamente dove fallisce.
+
+### Cosa NON e' cambiato
+
+- I 4 input rx/ry/rw/rh nel popup principale: invariati
+- Logica `_do_arrival_nudge` per micro-nudge: invariata
+- Tutto il resto del bot: invariato
+
+
+## v2.2.24 — Calibrazione pulsante "Use" con selezione visuale
+
+### Richiesta utente
+
+> Riesci a fare che la ROI per il pulsante "USE" me la fai mettere
+> con un'interfaccia invece che solo con delle coordinate?
+
+### Strategia
+
+Aggiunto un secondo popup di "selezione visuale" che permette di
+disegnare la ROI direttamente sullo screenshot della finestra del
+gioco con DUE CLICK del mouse.
+
+### Flusso utente
+
+1. Apri **Strumenti -> Calibra pulsante 'Use'...**
+2. Clicca il nuovo bottone **"[ Seleziona dal vivo con il mouse ]"**
+3. Si apre un popup con lo screenshot LIVE della finestra di Among Us
+4. Clicca **l'angolo in alto a sinistra** del pulsante Use
+   (appare un cerchio verde)
+5. Clicca **l'angolo in basso a destra** del pulsante Use
+   (appare il rettangolo verde con le coordinate calcolate)
+6. (Opzionale) Cliccca di nuovo per ridisegnare un nuovo rettangolo
+7. Clicca **"Conferma"**: le coordinate `rx, ry, rw, rh` vengono
+   propagate ai 4 input del popup principale di calibrazione
+
+### Dettagli tecnici
+
+#### Cattura screenshot
+
+Usa `mss.mss().grab()` per catturare la finestra del gioco in
+RGBA, poi `cv2.cvtColor(BGRA -> RGBA)` per il formato compatibile
+con DPG.
+
+#### Scaling per popup
+
+Se la finestra del gioco e' piu' grande di 1100x720, l'immagine
+viene ridotta proporzionalmente (`cv2.resize(INTER_AREA)`). Lo
+`scale` viene salvato e usato nell'inversione per riportare i
+click in coordinate del client reale.
+
+#### Caricamento texture
+
+Usa `dpg.add_dynamic_texture` in un texture registry condiviso
+(`ub_texture_registry`). Texture eliminata e ricreata ad ogni
+apertura per riflettere lo stato corrente del gioco.
+
+#### Gestione mouse
+
+`add_item_clicked_handler(button=0, callback=...)` legato al
+drawlist. Il callback usa `dpg.get_drawing_mouse_pos()` per le
+coordinate del mouse relative al drawlist (NON coordinate
+assolute dello schermo - cosi' lo scaling DPG-interno e' gia'
+gestito).
+
+State machine a 3 stati:
+- Nessun click -> registra primo punto (cerchio verde)
+- Un click -> registra secondo punto (rettangolo verde + info)
+- Due click -> reset al primo punto
+
+#### Conversione preview -> client -> ROI relativa
+
+```
+# Coord nel drawlist (preview ridimensionata)
+xa, ya = top-left selezione
+xb, yb = bottom-right selezione
+
+# Riporto in coord del client del gioco
+cw_xa = xa / scale
+cw_ya = ya / scale
+
+# Coord relative al client (in [0, 1])
+rx = cw_xa / client_w
+ry = cw_ya / client_h
+rw = (cw_xb - cw_xa) / client_w
+rh = (cw_yb - cw_ya) / client_h
+```
+
+#### Sanity check
+
+Selezione di larghezza/altezza < 5 px viene rifiutata
+("troppo piccola - riprova"). Evita di salvare ROI invalide.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/use_button_calib.py` | nuovo bottone "Seleziona dal vivo" + 4 nuovi metodi: `_apri_popup_seleziona_roi_visuale`, `_roi_visuale_canvas_click`, `_reset_roi_visuale`, `_conferma_roi_visuale` |
+
+### Verifica fatta
+
+Test matematica di conversione coord preview -> ROI relativa:
+
+```
+Client gioco: 1920x1080
+Preview ridotta: 1100x618 (scale=0.573)
+Utente clicca: (1020,520) - (1077,600)
+Risultato: rx=0.927 ry=0.840 rw=0.052 rh=0.129
+Ricostruito in pixel client: (1780,907) - dim 99x139
+-> Esattamente l'angolo basso-destra (corretto per pulsante Use)
+```
+
+Test import package: OK
+Tutti i metodi `_roi_visuale_*` accessibili da `GPSVisualizerPro`
+
+### Cosa NON e' cambiato
+
+- I 4 input numerici (rx, ry, rw, rh) restano disponibili come
+  modalita' "fine tuning" o fallback se preferisci precisione manuale
+- La logica di cattura SPENTO/ACCESO: invariata
+- Il file `use_button_calibration.json`: formato invariato
+- La logica `_do_arrival_nudge` con micro-nudge iterativi: invariata
+
+### Tip d'uso
+
+Se l'immagine del popup ti sembra troppo piccola da cliccare
+con precisione, ingrandisci la finestra del bot prima di aprire
+il popup: la preview si adatta alle dimensioni della finestra
+fino al limite di 1100x720.
+
+
+## v2.2.23 — Micro-nudge iterativo + rilevamento pulsante "Use"
+
+### Richieste utente
+
+> Migliorare l'arrivo alla posizione della task, cercando di essere
+> il piu' vicino possibile. Se troppo lontano, prova a usare WASD
+> in maniera piccola piccola con micro aggiustamenti.
+>
+> Per capire se puoi interagire per avviare la task c'e' il pulsante
+> Use in basso a destra che si illumina: prova a vedere se si illumina.
+
+### Strategia implementata
+
+#### 1. Modulo `among_us_ai/execution/use_button.py` (NUOVO)
+
+Helper di rilevamento del pulsante "Use" di Among Us:
+
+- `cattura_roi_luminosita(client_rect, calib)`: cattura la ROI del
+  pulsante e ritorna la luminosita' media (RGB mean)
+- `is_lit(client_rect, calib) -> True/False/None`: confronta la
+  luminosita' corrente con i 2 riferimenti calibrati (acceso/spento)
+- `carica_calibrazione() / salva_calibrazione()`: lettura/scrittura
+  del file `use_button_calibration.json`
+
+**Fallback graceful**: se la calibrazione manca (`calibrated=False`),
+`is_lit()` ritorna `None` e il bot procede comunque (best-effort).
+
+#### 2. Popup di calibrazione (NUOVO)
+
+Nuova voce in **Strumenti -> Calibra pulsante 'Use'...** che apre un
+popup 480x480 con:
+
+- 4 input numerici per la ROI rect (rx, ry, rw, rh) - default
+  angolo basso-destra (0.92, 0.85, 0.07, 0.12)
+- Bottone "Cattura SPENTO": l'utente posiziona l'avatar lontano da
+  task, preme. La luminosita' viene salvata come riferimento SPENTO.
+- Bottone "Cattura ACCESO": l'utente si avvicina a una task (pulsante
+  illuminato), preme. La luminosita' viene salvata come riferimento
+  ACCESO.
+- Validazione: ACCESO deve essere significativamente piu' luminoso
+  di SPENTO (delta > 5)
+- Bottone "Reset" per cancellare la calibrazione
+
+#### 3. Logica micro-nudge iterativo in `auto_move.py`
+
+Nuovo metodo `_do_arrival_nudge(cx, cy)`:
+
+```
+Se calibrazione presente e USE_BUTTON_CHECK_ENABLED=True:
+  Check immediato del pulsante:
+    Se gia' acceso -> esci (massima precisione)
+    Altrimenti:
+      Per attempt in 1..USE_BUTTON_MAX_NUDGES (=10):
+        Calcola direzione WASD verso target
+        Press tasti per MICRO_NUDGE_DURATION_SEC (=0.05s)
+        Release
+        Check pulsante Use:
+          Se acceso -> esci con successo
+      (Se esauriti tutti i tentativi -> esci comunque, best-effort)
+Altrimenti (calibrazione mancante):
+  Fallback al nudge fisso classico (AUTO_FINAL_NUDGE_SEC = 0.20s)
+  - comportamento v2.2.11
+```
+
+Riusa `mss.mss()` come context manager per ridurre l'overhead di
+cattura ROI (~1ms per check vs ~10ms se ricreato ogni volta).
+
+#### 4. Configurazione
+
+Nuovi parametri in `core/config.py`:
+
+```python
+USE_BUTTON_CHECK_ENABLED = True   # master toggle
+USE_BUTTON_MAX_NUDGES    = 10     # ~500ms aggiuntivi max
+MICRO_NUDGE_DURATION_SEC = 0.05   # durata di un singolo press WASD
+```
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/use_button.py` | NUOVO modulo helper |
+| `among_us_ai/ui/mixins/use_button_calib.py` | NUOVO mixin per popup calibrazione |
+| `among_us_ai/ui/mixins/__init__.py` | export `UseButtonCalibMixin` |
+| `among_us_ai/ui/app.py` | import + ereditarieta' `UseButtonCalibMixin` |
+| `among_us_ai/ui/mixins/ui_setup.py` | nuova voce menu "Strumenti -> Calibra pulsante 'Use'..." |
+| `among_us_ai/ui/mixins/auto_move.py` | nuovo `_do_arrival_nudge` che sostituisce il blocco nudge fisso |
+| `among_us_ai/core/config.py` | 3 nuove costanti per il micro-nudge |
+
+### Verifica fatta
+
+Test funzionale completo del modulo `use_button.py`:
+
+| Test | Esito |
+|---|---|
+| 1. Calibrazione vuota -> `is_lit` ritorna None | ✓ |
+| 2. Cattura stato SPENTO | brightness=80 ✓ |
+| 3. Cattura stato ACCESO | brightness=220 ✓ |
+| 4. Salvataggio + rilettura JSON | ✓ |
+| 5. `is_lit` con stato ACCESO | True ✓ |
+| 6. `is_lit` con stato SPENTO | False ✓ |
+
+Test import del package: OK
+Syntax OK su tutti i 7 file modificati/creati
+
+### Come usarlo
+
+#### Prima volta:
+
+1. Apri il bot e collega Among Us
+2. Apri "Strumenti -> Calibra pulsante 'Use'..."
+3. Posiziona l'avatar **lontano da ogni task** (assicurati che il
+   pulsante Use sia GRIGIO/spento), poi clicca "Cattura SPENTO"
+4. Posiziona l'avatar **vicino a una task** (assicurati che il
+   pulsante Use sia BIANCO/luminoso), poi clicca "Cattura ACCESO"
+5. Clicca "Salva"
+
+Da questo momento, ad ogni arrivo a una task il bot:
+- Controlla il pulsante Use al primo frame
+- Se acceso: lancia la task subito
+- Se spento: micro-nudge WASD + ricontrolla, fino a 10 volte
+- Tempo aggiuntivo max: ~500ms (10 * 50ms)
+
+#### Disabilitare temporaneamente:
+
+Modifica `among_us_ai/core/config.py`:
+
+```python
+USE_BUTTON_CHECK_ENABLED = False
+```
+
+Il bot torna al comportamento v2.2.11 (nudge fisso 200ms una sola
+volta).
+
+### Cosa NON e' cambiato
+
+- API motore: invariata
+- Logica di Ripeti, ESC fallback, multi-fase: invariate
+- Pre-warming subprocess (v2.2.20): invariato
+- STOP watcher (v2.2.22): invariato
+- Tutto il resto del bot: invariato
+
+
 ## v2.2.22 — STOP watcher: interrompe l'esecuzione quando la fase e' risolta in RAM
 
 ### Problema riportato

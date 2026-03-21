@@ -41,6 +41,20 @@ class GPSConfig:
     # 0 = disabilitato.
     AUTO_FINAL_NUDGE_SEC   = 0.20
 
+    # MICRO-NUDGE iterativo basato sul rilevamento del pulsante "Use".
+    # Quando attivato (USE_BUTTON_CHECK_ENABLED=True e calibrazione
+    # presente), dopo l'arrivo al target il bot:
+    #   1) Controlla se il pulsante Use e' illuminato
+    #   2) Se SI -> lancia subito la task (massima precisione raggiunta)
+    #   3) Se NO -> fa un micro-nudge WASD di MICRO_NUDGE_DURATION_SEC
+    #              verso il target, poi ricontrolla il pulsante Use
+    #   4) Ripete fino a USE_BUTTON_MAX_NUDGES tentativi
+    #   5) Se dopo N tentativi ancora spento -> lancia la task comunque
+    #      (best-effort, niente blocchi)
+    USE_BUTTON_CHECK_ENABLED = True
+    USE_BUTTON_MAX_NUDGES    = 10
+    MICRO_NUDGE_DURATION_SEC = 0.05
+
     # EXEC_MODE: modalita' di esecuzione delle task (v2.2.17+).
     #   - 'subprocess' : esegue il file .py come processo Python separato
     #                    via subprocess.Popen. Modalita' originale, robusta
