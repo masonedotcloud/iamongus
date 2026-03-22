@@ -54,6 +54,7 @@ SCAN_CODES = {
     'S': 0x1F,
     'D': 0x20,
     'SPACE': 0x39,
+    'ESC': 0x01,
 }
 
 

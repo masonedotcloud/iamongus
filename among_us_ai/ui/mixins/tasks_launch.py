@@ -168,9 +168,15 @@ class TasksLaunchMixin:
         Gestisce l'animazione del popup nelle due fasi attive:
         - Fase 3 (arrivo): anima gli step di lancio e poi avvia il subprocess.
         (La fase 1 popola il popup in modo statico, nessuna animazione.)
+
+        Se GPSConfig.LAUNCH_ANIMATION_ENABLED == False, skippa l'animazione
+        e va subito al lancio (risparmia ~2.6s di attesa cosmetica).
         """
         if not getattr(self, '_task_launch_arrivo', False):
             return
+
+        # Se l'animazione e' disabilitata, skippa subito al close
+        anim_enabled = getattr(GPSConfig, 'LAUNCH_ANIMATION_ENABLED', False)
 
         self._task_launch_timer_arr += dt
         steps    = self._task_launch_steps
@@ -183,8 +189,12 @@ class TasksLaunchMixin:
             # Aggiorna il valore di un widget DPG
             dpg.set_value("task_launch_popup_text", log_text)
 
-        # Dopo aver mostrato tutti gli step + 1s di pausa: avvia subprocess e chiudi
-        close_at = len(steps) * interval + 1.0
+        # Dopo aver mostrato tutti gli step + 1s di pausa: avvia subprocess e chiudi.
+        # Se animazione DISABILITATA: close_at = 0 (parte subito).
+        if anim_enabled:
+            close_at = len(steps) * interval + 1.0
+        else:
+            close_at = 0.0
         if self._task_launch_timer_arr >= close_at:
             self._task_launch_arrivo = False
             # Se il widget esiste gia', lo rimuovo prima di ricrearlo
