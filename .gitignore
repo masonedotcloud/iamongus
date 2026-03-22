@@ -22,3 +22,6 @@ tasks_exec/
 
 # Backup automatici (es. task_registrate.json.bak dalla migrazione al formato v2.1)
 *.bak
+
+# Cache del linter Ruff
+.ruff_cache/
