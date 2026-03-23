@@ -324,7 +324,7 @@ def handle_yolo_click(az, cx, cy, cw, ch, hwnd, is_test):
                                 j_v = i_v
                                 
                         if inside:
-                            _click_hold(sx, sy, durata)
+                            esegui_click_hold(sx, sy, durata)
                             found = True
                             break
                 except Exception:
@@ -433,7 +433,7 @@ def handle_yolo_click_all(az, cx, cy, cw, ch, hwnd, is_test):
                     
                     for box_info in valid_boxes:
                         sx, sy = box_info[0], box_info[1]
-                        _click_hold(sx, sy, durata)
+                        esegui_click_hold(sx, sy, durata)
                         _time.sleep(0.05) 
                     
                     _time.sleep(0.15) 

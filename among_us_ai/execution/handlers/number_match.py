@@ -26,6 +26,11 @@ from .._drag_utils import (
     trascinamento_e_tieni,
     trascinamento_seq_tappe,
 )
+# _extract_pure_shape estrae la forma binarizzata 40x40 da una ROI di
+# immagine. Usato per matching numerico (Stabilize Steering): si crea
+# un "template" del numero da cercare e si confronta con ogni
+# candidato cliccabile.
+from .._motore_pkg.input_mouse import _extract_pure_shape
 from ...core.geometry import (
     random_point_in_rect,
     random_point_in_poly,
