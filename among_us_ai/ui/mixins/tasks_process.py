@@ -427,6 +427,13 @@ class TasksProcessMixin:
             # per evitare che Auto-All la rilanci subito in ciclo. Succede
             # quando il bot non arriva esatto sul punto, oppure il minigioco
             # non si apre per qualunque motivo.
+            #
+            # PRIMA del cooldown finale, tentiamo fino a LOOP_GUARD_MAX_RETRIES
+            # volte:
+            #   1) Premere N ESC veloci (chiude eventuali pannelli aperti)
+            #   2) Rilanciare la stessa task SENZA ri-navigare (il bot e' gia'
+            #      sul posto, basta riprovare ad aprire il pannello con SPAZIO
+            #      e rieseguire le azioni).
             if task:
                 task_done_in_ram = False
                 tipo_t   = task.get('tipo')
@@ -437,12 +444,60 @@ class TasksProcessMixin:
                             and mt.get('done', False)):
                         task_done_in_ram = True
                         break
-                if not task_done_in_ram:
-                    existing_cd = self.task_cooldowns.get(id_task, 0)
-                    safety_cd = time.time() + 8.0   # 8 s di tregua
-                    if safety_cd > existing_cd:
-                        self.task_cooldowns[id_task] = safety_cd
-                        print(f"[Loop guard] Task non completata in RAM - cooldown di sicurezza 8s")
+
+                if task_done_in_ram:
+                    # Task riuscita: reset del contatore retry
+                    if hasattr(self, 'task_loop_guard_retries'):
+                        self.task_loop_guard_retries.pop(id_task, None)
+                else:
+                    # Task NON done in RAM: tenta retry con ESC se possibile
+                    if not hasattr(self, 'task_loop_guard_retries'):
+                        self.task_loop_guard_retries = {}
+                    retry_count = self.task_loop_guard_retries.get(id_task, 0)
+                    max_retries = int(getattr(GPSConfig,
+                                              'LOOP_GUARD_MAX_RETRIES', 3))
+
+                    if retry_count < max_retries:
+                        # Incrementa contatore retry
+                        self.task_loop_guard_retries[id_task] = retry_count + 1
+                        nome_r = task.get('nome', f'#{id_task}')
+                        print(f"[Loop guard] Task '{nome_r}' non completata "
+                              f"in RAM - tentativo retry "
+                              f"{retry_count+1}/{max_retries}")
+                        # Premi ESC veloci per chiudere eventuali pannelli
+                        # rimasti aperti (popup minigioco, dialog di errore,
+                        # menu, ecc.)
+                        self._premi_esc_loop_guard()
+                        # Rilancia la task SENZA ri-navigare. Il bot e' gia'
+                        # nel posto giusto: basta riavviare il subprocess +
+                        # premere SPAZIO per riaprire il pannello.
+                        # Cleanup stato corrente prima del rilancio
+                        self._task_process         = None
+                        self._task_process_task_id = None
+                        if hasattr(self, "task_stop_sent"):
+                            self.task_stop_sent.discard(id_task)
+                        # Pausa breve dopo gli ESC per dare al gioco
+                        # il tempo di chiudere i pannelli
+                        time.sleep(0.3)
+                        # Rilancio con pre-warming (wait_trigger=True) cosi'
+                        # il subprocess viene preparato e parte solo quando
+                        # premiamo SPAZIO subito dopo.
+                        self._rilancia_task_loop_guard(id_task)
+                        return  # esci dal _controlla_processo_task,
+                                # il nuovo subprocess prendera' il suo posto
+                    else:
+                        # Esaurite le retry: applica cooldown e reset contatore
+                        self.task_loop_guard_retries.pop(id_task, None)
+                        existing_cd = self.task_cooldowns.get(id_task, 0)
+                        cd_sec = float(getattr(GPSConfig,
+                                               'LOOP_GUARD_SAFETY_CD_SEC',
+                                               8.0))
+                        safety_cd = time.time() + cd_sec
+                        if safety_cd > existing_cd:
+                            self.task_cooldowns[id_task] = safety_cd
+                            print(f"[Loop guard] Task non completata in RAM "
+                                  f"dopo {max_retries} retry - "
+                                  f"cooldown di sicurezza {cd_sec}s")
 
             nome = task['nome'] if task else f"#{id_task}"
             icona = "OK" if ret == 0 else "X"
@@ -1027,3 +1082,77 @@ class TasksProcessMixin:
                     glow_active = True
                     
         return use_active or glow_active
+
+    # ============================================================
+    # LOOP GUARD: helper di retry con ESC + rilancio
+    # ============================================================
+
+    def _premi_esc_loop_guard(self):
+        """
+        Preme ESC piu' volte consecutive (default 3) per chiudere
+        eventuali pannelli/popup di Among Us rimasti aperti dopo
+        un tentativo fallito di task.
+
+        Es: il pannello del minigioco si era aperto ma il bot non
+        ha completato la sequenza in tempo -> il pannello resta
+        aperto. Senza ESC, il rilancio successivo non avrebbe
+        effetto (SPAZIO non riapre un pannello gia' aperto).
+
+        Default: 3 ESC veloci uno dopo l'altro (no pausa fra uno
+        e l'altro, solo i 50ms di press->release dello scan code).
+        Configurabile via GPSConfig.LOOP_GUARD_ESC_COUNT.
+        """
+        if not _WIN_OK:
+            return
+        n_esc = int(getattr(GPSConfig, 'LOOP_GUARD_ESC_COUNT', 3))
+        try:
+            for i in range(n_esc):
+                _send_scan(SCAN_CODES['ESC'], keyup=False)
+                time.sleep(0.05)
+                _send_scan(SCAN_CODES['ESC'], keyup=True)
+                # No pausa fra ESC consecutivi: "3 ESC veloci"
+            print(f"[Loop guard] Premuti {n_esc} ESC per cleanup pannelli")
+        except Exception as e:
+            print(f"[Loop guard] Errore invio ESC: {e}")
+
+    def _rilancia_task_loop_guard(self, id_task):
+        """
+        Rilancia la stessa task SENZA ri-navigare: il bot e' gia'
+        nel posto giusto, basta riavviare il subprocess e premere
+        SPAZIO per riaprire il pannello del minigioco.
+
+        Pipeline:
+          1) Avvia il subprocess in modalita' pre-warming (--wait-trigger)
+          2) Pausa breve (200ms) per consentire al subprocess di
+             completare il setup (import, mss, ecc.)
+          3) Premi SPAZIO per (ri)aprire il pannello
+          4) Invia "GO" al subprocess via stdin per farlo partire
+
+        Questo replica esattamente il flusso che fa `_avvia_task_selezionata`
+        nella fase 3 (arrivo + esecuzione), tranne la navigazione che
+        e' gia' completata.
+        """
+        task = self.task_mgr.get_by_id(id_task)
+        if task is None:
+            print(f"[Loop guard] Rilancio fallito: task {id_task} non trovata")
+            return
+        nome = task.get('nome', f'#{id_task}')
+        print(f"[Loop guard] Rilancio task '{nome}' (no re-navigazione)")
+
+        # 1) Avvia subprocess pre-warmed
+        self._avvia_subprocess_task(id_task, wait_trigger=True)
+
+        # 2) Piccola pausa per setup subprocess
+        time.sleep(0.2)
+
+        # 3) Premi SPAZIO per aprire/riaprire il pannello del minigioco
+        if _WIN_OK:
+            try:
+                _send_scan(SCAN_CODES['SPACE'], keyup=False)
+                time.sleep(0.05)
+                _send_scan(SCAN_CODES['SPACE'], keyup=True)
+            except Exception as e:
+                print(f"[Loop guard] Errore SPAZIO durante rilancio: {e}")
+
+        # 4) Trigger GO al subprocess
+        self._invia_trigger_subprocess()
