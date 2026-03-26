@@ -1,5 +1,130 @@
 # Changelog
 
+## v2.2.34 — Loop guard con retry: ESC + rilancio invece di cooldown
+
+### Richiesta utente
+
+> Quando `[Loop guard] Task non completata in RAM - cooldown di
+> sicurezza 8s` compare, invece di terminarla:
+> - Premi 3 volte ESC
+> - Riprova (rifai logica di "avvia task")
+> - Continua con le task
+
+### Comportamento precedente (v2.2.33)
+
+Quando il subprocess terminava ma la task NON risultava `done` in RAM
+(es. il bot non e' arrivato perfetto, il pannello non si e' aperto,
+il minigioco non si e' completato), veniva applicato subito un
+**cooldown di 8 secondi** e la task veniva "saltata" fino al prossimo
+ciclo. Risultato: spesso la task non veniva mai completata in una
+singola sessione di Auto-All.
+
+### Nuovo comportamento (v2.2.34)
+
+Quando la task fallisce in RAM check, il bot:
+
+1. **Tenta il retry**: incrementa un contatore per quella task
+2. **Premi 3 ESC veloci** uno dopo l'altro (chiudono pannelli/popup
+   eventualmente aperti)
+3. **Rilancia la stessa task SENZA ri-navigare** (il bot e' gia' sul
+   posto giusto). Pipeline:
+   - Avvia subprocess in pre-warming
+   - Pausa 200ms
+   - Premi SPAZIO (apre/riapre pannello minigioco)
+   - Invia "GO" al subprocess
+4. **Massimo 3 retry**. Al 4° fallimento consecutivo: applica
+   finalmente il cooldown di 8s (come prima)
+5. **Reset automatico**: se la task viene completata `done` in RAM,
+   il contatore si azzera
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/io_input/key_controller.py` | aggiunto `'ESC': 0x01` ai `SCAN_CODES` |
+| `among_us_ai/core/config.py` | 3 nuove config: `LOOP_GUARD_MAX_RETRIES=3`, `LOOP_GUARD_ESC_COUNT=3`, `LOOP_GUARD_SAFETY_CD_SEC=8.0` |
+| `among_us_ai/ui/mixins/tasks_process.py` | nuovo branch retry nel Loop guard + 2 helper: `_premi_esc_loop_guard`, `_rilancia_task_loop_guard` |
+
+### Dettagli implementazione
+
+#### Tracking per task
+
+`self.task_loop_guard_retries = {id_task: count}` - dict che traccia
+quante retry consecutive sono state fatte per ogni task. Reset
+automatico quando la task viene completata. Task diverse hanno
+contatori indipendenti.
+
+#### `_premi_esc_loop_guard()`
+
+Preme N ESC consecutivi (default 3) senza pausa intermedia (solo
+i 50ms di press->release dello scan code). N configurabile tramite
+`GPSConfig.LOOP_GUARD_ESC_COUNT`.
+
+#### `_rilancia_task_loop_guard(id_task)`
+
+Replica la fase 3 di `_avvia_task_selezionata` (arrivo + esecuzione)
+ma SENZA la navigazione A*:
+
+```python
+# 1) Avvia subprocess pre-warmed
+self._avvia_subprocess_task(id_task, wait_trigger=True)
+# 2) Pausa setup
+time.sleep(0.2)
+# 3) SPAZIO per (ri)aprire il pannello
+_send_scan(SCAN_CODES['SPACE'], keyup=False)
+time.sleep(0.05)
+_send_scan(SCAN_CODES['SPACE'], keyup=True)
+# 4) GO al subprocess
+self._invia_trigger_subprocess()
+```
+
+### Verifica fatta
+
+Test logici simulati (in Python):
+
+| Scenario | Risultato atteso | Risultato ottenuto |
+|---|---|---|
+| 4 fallimenti consecutivi | 3 retry + 1 cooldown | ✓ |
+| 2 fallimenti + 1 successo | 2 retry + reset | ✓ |
+| 2 task diverse | Contatori indipendenti | ✓ |
+
+Test import package: OK
+SCAN_CODES include ESC (0x01): OK
+Config GPSConfig presenti: OK
+
+### Output console adesso
+
+#### Caso 1: la task riesce al 1° retry
+
+```
+[Loop guard] Task 'Clean O2 Filter' non completata in RAM - tentativo retry 1/3
+[Loop guard] Premuti 3 ESC per cleanup pannelli
+[Loop guard] Rilancio task 'Clean O2 Filter' (no re-navigazione)
+[Exec] 'Clean O2 Filter' terminata - exit code 0
+```
+
+#### Caso 2: la task fallisce tutti i retry
+
+```
+[Loop guard] Task 'X' non completata in RAM - tentativo retry 1/3
+[Loop guard] Premuti 3 ESC per cleanup pannelli
+[Loop guard] Rilancio task 'X' (no re-navigazione)
+[Loop guard] Task 'X' non completata in RAM - tentativo retry 2/3
+... (idem)
+[Loop guard] Task 'X' non completata in RAM - tentativo retry 3/3
+... (idem)
+[Loop guard] Task non completata in RAM dopo 3 retry - cooldown di sicurezza 8.0s
+```
+
+### Cosa NON e' cambiato
+
+- Pipeline normale di avvio task (`_avvia_task_selezionata`): invariata
+- Sistema Ripeti (per fasi marcate `ripeti=True`): invariato
+- Cooldown manuale delle task (campo `cooldown`): invariato
+- API motore: invariata
+- Tutto il resto del bot: invariato
+
+
 ## v2.2.33 — Fix import mancanti: _extract_pure_shape e _click_hold
 
 ### Problema riportato
