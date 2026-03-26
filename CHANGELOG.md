@@ -1,5 +1,119 @@
 # Changelog
 
+## v2.2.33 — Fix import mancanti: _extract_pure_shape e _click_hold
+
+### Problema riportato
+
+> `_extract_pure_shape` dice che manca.
+
+### Analisi
+
+Scan automatico AST del package ha rivelato **3 problemi reali**
+di import mancanti, piu' alcuni falsi positivi (gestiti tramite
+`from ._imports import *`).
+
+#### Problema 1: `number_match.py` (handler vecchio)
+
+`among_us_ai/execution/handlers/number_match.py` usava
+`_extract_pure_shape(roi)` alla riga 75 ma NON la importava in
+testa al file. Causava `NameError` quando il bot lanciava la task
+**Stabilize Steering** (tipo `number_match`).
+
+**Fix**: aggiunto
+
+```python
+from .._motore_pkg.input_mouse import _extract_pure_shape
+```
+
+Questo importa la versione di **image processing** della funzione
+(40x40 binarizzata) - quella corretta per il matching numerico.
+
+#### Problema 2: `yolo_actions.py` (handler vecchio)
+
+`among_us_ai/execution/handlers/yolo_actions.py` usava `_click_hold(...)`
+alle righe 327 e 436, ma il file importava solo `esegui_click_hold`
+(rinominato nella versione italiana). Stesso risultato: `NameError`
+quando il bot lanciava task con click YOLO.
+
+**Fix**: rinominate le 2 occorrenze di `_click_hold(` in
+`esegui_click_hold(`.
+
+#### Problema 3: `_extract_pure_shape` con firma SBAGLIATA
+
+`among_us_ai/ui/editor_mixins/_imports.py` importava
+`_extract_pure_shape` da `runtime.py`:
+
+```python
+from ...execution.runtime import esegui_azioni, _extract_pure_shape
+```
+
+Ma la versione di `runtime.py` prende un **dict azione** e ritorna
+una shape per l'editor. Mentre `canvas_input.py` (riga 321) la
+chiama con un'**immagine**:
+
+```python
+shape_blurred = _extract_pure_shape(img)
+```
+
+= **mismatch di firma**: la funzione veniva chiamata sbagliata,
+risultando in errori runtime quando l'utente cercava di registrare
+un template numerico per Stabilize Steering nell'editor.
+
+Esistono DUE funzioni omonime:
+- `runtime.py::_extract_pure_shape(az)` -> dict (per editor)
+- `_motore_pkg/input_mouse.py::_extract_pure_shape(img)` -> ndarray (image proc)
+
+**Fix**: cambiato l'import in `_imports.py` per puntare alla
+versione di `input_mouse.py` (image processing). La versione di
+`runtime.py` resta intatta - non viene piu' importata da editor,
+ma e' ancora utilizzabile da chi ne ha bisogno.
+
+### Falsi positivi verificati
+
+Lo scan AST ha segnalato 5 "potenziali" import mancanti che in
+realta' sono importati tramite `from ._imports import *`:
+
+| File | Simbolo | Importato da |
+|---|---|---|
+| `ui/mixins/rendering_world.py` | `_hex_to_rgba` | `_imports.py` |
+| `ui/mixins/tasks_launch.py` | `_send_scan` | `_imports.py` |
+| `ui/mixins/zones.py` | `_hex_to_rgba` | `_imports.py` |
+| `ui/mixins/dialogs.py` | `_hex_to_rgba` | `_imports.py` |
+| `ui/editor_mixins/canvas_input.py` | `_extract_pure_shape` | `_imports.py` (ora corretto) |
+
+OK in tutti i casi: lo scanner non vedeva l'import via wildcard
+ma le funzioni sono ben accessibili a runtime.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/handlers/number_match.py` | aggiunto `from .._motore_pkg.input_mouse import _extract_pure_shape` |
+| `among_us_ai/execution/handlers/yolo_actions.py` | `_click_hold(...)` -> `esegui_click_hold(...)` (2 occorrenze) |
+| `among_us_ai/ui/editor_mixins/_imports.py` | `_extract_pure_shape` importato da `_motore_pkg/input_mouse.py` invece che da `runtime.py` (firma corretta per uso in canvas_input.py) |
+
+### Verifica fatta
+
+- Scan AST completo di tutti gli 84 file `.py` del package:
+  **0 import mancanti**
+- Syntax check su tutti i file modificati: **OK**
+- Test import del package: **OK**
+- Test handler:
+  - `handle_number_match`: importabile **OK**
+  - `handle_yolo_click`, `handle_yolo_click_all`, `handle_yolo_drag`,
+    `handle_yolo_drag_all`: importabili **OK**
+- Test funzioni `_extract_pure_shape` in editor_mixins e _motore_pkg:
+  ora **identiche** (same object id)
+
+### Cosa NON e' cambiato
+
+- Tutti gli altri handler: invariati
+- Logica `_drag_fasi` per yolo_drag_all (v2.2.31): invariata
+- API del motore: invariata
+- File JSON delle task: invariati
+- Configurazioni: invariate
+
+
 ## v2.2.32 — Reintroduzione LAUNCH_ANIMATION_ENABLED + controllo completo
 
 ### Richiesta utente
