@@ -41,6 +41,14 @@ class GPSConfig:
     # 0 = disabilitato.
     AUTO_FINAL_NUDGE_SEC   = 0.20
 
+    # LAUNCH_ANIMATION_ENABLED: animazione cosmetica del popup di lancio
+    # task (mostra "Collegamento al task node...", "Handshake OK", ecc.
+    # uno step alla volta). Quando True, il bot aspetta ~2.6s di
+    # animazione prima di iniziare ad eseguire la task. Quando False,
+    # il subprocess viene triggerato subito dopo l'arrivo (no attesa
+    # cosmetica). Default: False (avvio rapido).
+    LAUNCH_ANIMATION_ENABLED = False
+
     # MICRO-NUDGE iterativo basato sul rilevamento del pulsante "Use".
     # Quando attivato (USE_BUTTON_CHECK_ENABLED=True e calibrazione
     # presente), dopo l'arrivo al target il bot:
@@ -54,6 +62,19 @@ class GPSConfig:
     USE_BUTTON_CHECK_ENABLED = True
     USE_BUTTON_MAX_NUDGES    = 10
     MICRO_NUDGE_DURATION_SEC = 0.05
+
+    # LOOP GUARD RETRY: quando il subprocess termina ma la task NON
+    # risulta done in RAM (= il minigioco non si e' chiuso / non si e'
+    # aperto / il bot non e' arrivato perfettamente), invece di
+    # applicare subito il cooldown di sicurezza, tentiamo:
+    #   1) Premere ESC piu' volte per chiudere eventuali pannelli aperti
+    #   2) Rilanciare la stessa task (senza ri-navigare: il bot e' gia'
+    #      in posizione, basta tentare di nuovo SPAZIO + esecuzione)
+    # Se dopo LOOP_GUARD_MAX_RETRIES tentativi la task non e' ancora
+    # done in RAM, applichiamo finalmente il cooldown di sicurezza.
+    LOOP_GUARD_MAX_RETRIES = 3
+    LOOP_GUARD_ESC_COUNT   = 3   # n. ESC premuti prima del retry
+    LOOP_GUARD_SAFETY_CD_SEC = 8.0  # cooldown finale (era hardcoded a 8s)
 
     # EXEC_MODE: modalita' di esecuzione delle task (v2.2.17+).
     #   - 'subprocess' : esegue il file .py come processo Python separato

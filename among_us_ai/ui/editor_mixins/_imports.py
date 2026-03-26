@@ -27,7 +27,14 @@ from ...core.win_deps import (
     win32con,
     win32gui,
 )
-from ...execution.runtime import esegui_azioni, _extract_pure_shape
+from ...execution.runtime import esegui_azioni
+# IMPORTANTE: `_extract_pure_shape` esiste in DUE posti con stessa firma
+# nominale ma scopo diverso:
+#   - runtime.py::_extract_pure_shape(az)         -> shape per editor (input: dict azione)
+#   - _motore_pkg/input_mouse.py::_extract_pure_shape(roi)  -> binarizzazione 40x40 (input: immagine)
+# Qui serve quella di image processing (canvas_input.py la usa per
+# costruire i template di matching numerico in Stabilize Steering).
+from ...execution._motore_pkg.input_mouse import _extract_pure_shape
 
 
 __all__ = [

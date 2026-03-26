@@ -1,5 +1,327 @@
 # Changelog
 
+## v2.2.34 — Loop guard con retry: ESC + rilancio invece di cooldown
+
+### Richiesta utente
+
+> Quando `[Loop guard] Task non completata in RAM - cooldown di
+> sicurezza 8s` compare, invece di terminarla:
+> - Premi 3 volte ESC
+> - Riprova (rifai logica di "avvia task")
+> - Continua con le task
+
+### Comportamento precedente (v2.2.33)
+
+Quando il subprocess terminava ma la task NON risultava `done` in RAM
+(es. il bot non e' arrivato perfetto, il pannello non si e' aperto,
+il minigioco non si e' completato), veniva applicato subito un
+**cooldown di 8 secondi** e la task veniva "saltata" fino al prossimo
+ciclo. Risultato: spesso la task non veniva mai completata in una
+singola sessione di Auto-All.
+
+### Nuovo comportamento (v2.2.34)
+
+Quando la task fallisce in RAM check, il bot:
+
+1. **Tenta il retry**: incrementa un contatore per quella task
+2. **Premi 3 ESC veloci** uno dopo l'altro (chiudono pannelli/popup
+   eventualmente aperti)
+3. **Rilancia la stessa task SENZA ri-navigare** (il bot e' gia' sul
+   posto giusto). Pipeline:
+   - Avvia subprocess in pre-warming
+   - Pausa 200ms
+   - Premi SPAZIO (apre/riapre pannello minigioco)
+   - Invia "GO" al subprocess
+4. **Massimo 3 retry**. Al 4° fallimento consecutivo: applica
+   finalmente il cooldown di 8s (come prima)
+5. **Reset automatico**: se la task viene completata `done` in RAM,
+   il contatore si azzera
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/io_input/key_controller.py` | aggiunto `'ESC': 0x01` ai `SCAN_CODES` |
+| `among_us_ai/core/config.py` | 3 nuove config: `LOOP_GUARD_MAX_RETRIES=3`, `LOOP_GUARD_ESC_COUNT=3`, `LOOP_GUARD_SAFETY_CD_SEC=8.0` |
+| `among_us_ai/ui/mixins/tasks_process.py` | nuovo branch retry nel Loop guard + 2 helper: `_premi_esc_loop_guard`, `_rilancia_task_loop_guard` |
+
+### Dettagli implementazione
+
+#### Tracking per task
+
+`self.task_loop_guard_retries = {id_task: count}` - dict che traccia
+quante retry consecutive sono state fatte per ogni task. Reset
+automatico quando la task viene completata. Task diverse hanno
+contatori indipendenti.
+
+#### `_premi_esc_loop_guard()`
+
+Preme N ESC consecutivi (default 3) senza pausa intermedia (solo
+i 50ms di press->release dello scan code). N configurabile tramite
+`GPSConfig.LOOP_GUARD_ESC_COUNT`.
+
+#### `_rilancia_task_loop_guard(id_task)`
+
+Replica la fase 3 di `_avvia_task_selezionata` (arrivo + esecuzione)
+ma SENZA la navigazione A*:
+
+```python
+# 1) Avvia subprocess pre-warmed
+self._avvia_subprocess_task(id_task, wait_trigger=True)
+# 2) Pausa setup
+time.sleep(0.2)
+# 3) SPAZIO per (ri)aprire il pannello
+_send_scan(SCAN_CODES['SPACE'], keyup=False)
+time.sleep(0.05)
+_send_scan(SCAN_CODES['SPACE'], keyup=True)
+# 4) GO al subprocess
+self._invia_trigger_subprocess()
+```
+
+### Verifica fatta
+
+Test logici simulati (in Python):
+
+| Scenario | Risultato atteso | Risultato ottenuto |
+|---|---|---|
+| 4 fallimenti consecutivi | 3 retry + 1 cooldown | ✓ |
+| 2 fallimenti + 1 successo | 2 retry + reset | ✓ |
+| 2 task diverse | Contatori indipendenti | ✓ |
+
+Test import package: OK
+SCAN_CODES include ESC (0x01): OK
+Config GPSConfig presenti: OK
+
+### Output console adesso
+
+#### Caso 1: la task riesce al 1° retry
+
+```
+[Loop guard] Task 'Clean O2 Filter' non completata in RAM - tentativo retry 1/3
+[Loop guard] Premuti 3 ESC per cleanup pannelli
+[Loop guard] Rilancio task 'Clean O2 Filter' (no re-navigazione)
+[Exec] 'Clean O2 Filter' terminata - exit code 0
+```
+
+#### Caso 2: la task fallisce tutti i retry
+
+```
+[Loop guard] Task 'X' non completata in RAM - tentativo retry 1/3
+[Loop guard] Premuti 3 ESC per cleanup pannelli
+[Loop guard] Rilancio task 'X' (no re-navigazione)
+[Loop guard] Task 'X' non completata in RAM - tentativo retry 2/3
+... (idem)
+[Loop guard] Task 'X' non completata in RAM - tentativo retry 3/3
+... (idem)
+[Loop guard] Task non completata in RAM dopo 3 retry - cooldown di sicurezza 8.0s
+```
+
+### Cosa NON e' cambiato
+
+- Pipeline normale di avvio task (`_avvia_task_selezionata`): invariata
+- Sistema Ripeti (per fasi marcate `ripeti=True`): invariato
+- Cooldown manuale delle task (campo `cooldown`): invariato
+- API motore: invariata
+- Tutto il resto del bot: invariato
+
+
+## v2.2.33 — Fix import mancanti: _extract_pure_shape e _click_hold
+
+### Problema riportato
+
+> `_extract_pure_shape` dice che manca.
+
+### Analisi
+
+Scan automatico AST del package ha rivelato **3 problemi reali**
+di import mancanti, piu' alcuni falsi positivi (gestiti tramite
+`from ._imports import *`).
+
+#### Problema 1: `number_match.py` (handler vecchio)
+
+`among_us_ai/execution/handlers/number_match.py` usava
+`_extract_pure_shape(roi)` alla riga 75 ma NON la importava in
+testa al file. Causava `NameError` quando il bot lanciava la task
+**Stabilize Steering** (tipo `number_match`).
+
+**Fix**: aggiunto
+
+```python
+from .._motore_pkg.input_mouse import _extract_pure_shape
+```
+
+Questo importa la versione di **image processing** della funzione
+(40x40 binarizzata) - quella corretta per il matching numerico.
+
+#### Problema 2: `yolo_actions.py` (handler vecchio)
+
+`among_us_ai/execution/handlers/yolo_actions.py` usava `_click_hold(...)`
+alle righe 327 e 436, ma il file importava solo `esegui_click_hold`
+(rinominato nella versione italiana). Stesso risultato: `NameError`
+quando il bot lanciava task con click YOLO.
+
+**Fix**: rinominate le 2 occorrenze di `_click_hold(` in
+`esegui_click_hold(`.
+
+#### Problema 3: `_extract_pure_shape` con firma SBAGLIATA
+
+`among_us_ai/ui/editor_mixins/_imports.py` importava
+`_extract_pure_shape` da `runtime.py`:
+
+```python
+from ...execution.runtime import esegui_azioni, _extract_pure_shape
+```
+
+Ma la versione di `runtime.py` prende un **dict azione** e ritorna
+una shape per l'editor. Mentre `canvas_input.py` (riga 321) la
+chiama con un'**immagine**:
+
+```python
+shape_blurred = _extract_pure_shape(img)
+```
+
+= **mismatch di firma**: la funzione veniva chiamata sbagliata,
+risultando in errori runtime quando l'utente cercava di registrare
+un template numerico per Stabilize Steering nell'editor.
+
+Esistono DUE funzioni omonime:
+- `runtime.py::_extract_pure_shape(az)` -> dict (per editor)
+- `_motore_pkg/input_mouse.py::_extract_pure_shape(img)` -> ndarray (image proc)
+
+**Fix**: cambiato l'import in `_imports.py` per puntare alla
+versione di `input_mouse.py` (image processing). La versione di
+`runtime.py` resta intatta - non viene piu' importata da editor,
+ma e' ancora utilizzabile da chi ne ha bisogno.
+
+### Falsi positivi verificati
+
+Lo scan AST ha segnalato 5 "potenziali" import mancanti che in
+realta' sono importati tramite `from ._imports import *`:
+
+| File | Simbolo | Importato da |
+|---|---|---|
+| `ui/mixins/rendering_world.py` | `_hex_to_rgba` | `_imports.py` |
+| `ui/mixins/tasks_launch.py` | `_send_scan` | `_imports.py` |
+| `ui/mixins/zones.py` | `_hex_to_rgba` | `_imports.py` |
+| `ui/mixins/dialogs.py` | `_hex_to_rgba` | `_imports.py` |
+| `ui/editor_mixins/canvas_input.py` | `_extract_pure_shape` | `_imports.py` (ora corretto) |
+
+OK in tutti i casi: lo scanner non vedeva l'import via wildcard
+ma le funzioni sono ben accessibili a runtime.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/handlers/number_match.py` | aggiunto `from .._motore_pkg.input_mouse import _extract_pure_shape` |
+| `among_us_ai/execution/handlers/yolo_actions.py` | `_click_hold(...)` -> `esegui_click_hold(...)` (2 occorrenze) |
+| `among_us_ai/ui/editor_mixins/_imports.py` | `_extract_pure_shape` importato da `_motore_pkg/input_mouse.py` invece che da `runtime.py` (firma corretta per uso in canvas_input.py) |
+
+### Verifica fatta
+
+- Scan AST completo di tutti gli 84 file `.py` del package:
+  **0 import mancanti**
+- Syntax check su tutti i file modificati: **OK**
+- Test import del package: **OK**
+- Test handler:
+  - `handle_number_match`: importabile **OK**
+  - `handle_yolo_click`, `handle_yolo_click_all`, `handle_yolo_drag`,
+    `handle_yolo_drag_all`: importabili **OK**
+- Test funzioni `_extract_pure_shape` in editor_mixins e _motore_pkg:
+  ora **identiche** (same object id)
+
+### Cosa NON e' cambiato
+
+- Tutti gli altri handler: invariati
+- Logica `_drag_fasi` per yolo_drag_all (v2.2.31): invariata
+- API del motore: invariata
+- File JSON delle task: invariati
+- Configurazioni: invariate
+
+
+## v2.2.32 — Reintroduzione LAUNCH_ANIMATION_ENABLED + controllo completo
+
+### Richiesta utente
+
+> Ora mi serve che controlli tutto per avere la conferma che ci sia
+> ogni funzione. Quindi controlla se c'e' tutto e se manca qualcosa.
+
+### Controllo eseguito
+
+Verifica esaustiva di:
+
+1. **Struttura package** (10 directory): tutte presenti ✓
+2. **File motore `_motore_pkg`** (14 file): tutti presenti ✓
+3. **Feature critiche** (28 controlli): tutte presenti ✓
+4. **UI Mixins in app.py** (20 mixin): tutti registrati ✓
+5. **Syntax check** (84 file Python): puliti ✓
+6. **Import test del package**: OK ✓
+7. **Metodi critici di GPSVisualizerPro** (17 metodi): tutti presenti ✓
+8. **API motore** (esegui_azioni, run_task, stop_flag, drag, handlers): OK ✓
+9. **API use_button** (is_lit, calibrazione): OK ✓
+10. **Configurazioni** (7 config attese): vedi sotto
+
+### Anomalia trovata e corretta
+
+**`LAUNCH_ANIMATION_ENABLED` mancava nel `config.py`**.
+
+La feature era stata introdotta in v2.2.12 per skippare l'animazione
+cosmetica del popup di lancio task (~2.6s di attesa fra "arrivato"
+e "subprocess avviato"). In qualche refactor successivo era stata
+rimossa per errore, e il bot tornava ad attendere ~2.6s ogni volta.
+
+**Fix**:
+
+1. Reintrodotta la config `LAUNCH_ANIMATION_ENABLED = False` (default).
+2. Aggiunta logica in `_update_task_launch`:
+
+```python
+anim_enabled = getattr(GPSConfig, 'LAUNCH_ANIMATION_ENABLED', False)
+if anim_enabled:
+    close_at = len(steps) * interval + 1.0  # ~2.6s
+else:
+    close_at = 0.0  # parti subito
+```
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/core/config.py` | reintrodotta `LAUNCH_ANIMATION_ENABLED = False` |
+| `among_us_ai/ui/mixins/tasks_launch.py` | `_update_task_launch` rispetta `LAUNCH_ANIMATION_ENABLED` |
+
+### Riepilogo Feature presenti (28/28)
+
+| Categoria | Feature |
+|---|---|
+| **Pre-warming** (v2.2.20) | `--wait-trigger`, `WAIT_TRIGGER` in TASK_META, stdin reader thread, `_invia_trigger_subprocess`, pre-warming all'arrivo |
+| **STOP watcher** (v2.2.22, 2.2.30) | `stop_flag` module, STOP check in dispatcher, STOP check in `_drag_umano`/`_drag_multi`/`_drag_seq_tappe`, `_stop_watcher_check`, `_invia_stop_subprocess`, STOP solo se step avanzato |
+| **delay_avvio** (v2.2.15) | campo in TASK_META, popup edit, `aggiorna()` propaga |
+| **Pulsante Use** (v2.2.23-26) | modulo `use_button.py`, popup calibrazione, selezione visuale ROI, workaround modal-sopra-modal |
+| **Micro-nudge iterativo** (v2.2.23) | `_do_arrival_nudge`, `USE_BUTTON_CHECK_ENABLED`, max nudges, durata |
+| **Simon Says** (v2.2.21) | `POST_CLICK_PAUSE`, ricattura base ad ogni round |
+| **yolo_drag_all** (v2.2.31) | `_drag_fasi` 7-step ottimizzato |
+| **Sistema Ripeti** (v2.2.7-9) | `max_tentativi`, `start_from_action` |
+| **YOLO anti-flicker** (v2.2.10) | `missed_scans` |
+| **Avvio rapido** (v2.2.11-12) | `AUTO_ARRIVAL_THRESHOLD=0.15`, `AUTO_FINAL_NUDGE_SEC`, `LAUNCH_ANIMATION_ENABLED=False` |
+
+### Verifica finale
+
+```
+[1] Import package: OK
+[2] Configs (7/7): tutte presenti con valori attesi
+[3] API motore: OK
+[4] use_button_calibration.json: presente (calibrato)
+[5] Punti chiave codice (4/4): OK
+```
+
+### Cosa NON e' cambiato
+
+- Logica `_drag_fasi` di yolo_drag_all (v2.2.31): invariata
+- API del motore: invariata
+- File JSON delle task: invariati (le modifiche utente a task_016/018 mantenute)
+
+
 ## v2.2.31 — yolo_drag_all: NUOVA logica drag a fasi (Among Us friendly)
 
 ### Diagnosi confermata
