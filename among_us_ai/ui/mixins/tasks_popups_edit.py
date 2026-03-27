@@ -181,6 +181,12 @@ class TasksPopupsEditMixin:
             # dopo l'apertura del minigioco prima di iniziare le azioni.
             delay_v  = (dpg.get_value("mt_delay_avvio")
                         if dpg.does_item_exist("mt_delay_avvio") else 0.0)
+            # Loop guard retry: se True, dopo subprocess terminato con
+            # task NON done in RAM, tenta 3 retry (premi ESC + rilancia)
+            # prima del cooldown finale. Se False (default), applica
+            # subito cooldown.
+            lgr_v = (dpg.get_value("mt_loop_guard_retry")
+                     if dpg.does_item_exist("mt_loop_guard_retry") else False)
             # Verifica se l'elemento DPG e' gia' stato creato
             parent_v = dpg.get_value("mt_parent") if dpg.does_item_exist("mt_parent") else "- (nessuno)"
             if not nome_v:
@@ -190,7 +196,8 @@ class TasksPopupsEditMixin:
                                    due_giocatori=due_p_v,
                                    codice_personalizzato=custom_v,
                                    lunghezza=lung_v,
-                                   delay_avvio=max(0.0, float(delay_v)))
+                                   delay_avvio=max(0.0, float(delay_v)),
+                                   loop_guard_retry=bool(lgr_v))
             # Estrai id del padre dal combo (formato "[ID] nome" o "- (nessuno)")
             new_parent = None
             if parent_v and parent_v.startswith("["):
@@ -292,6 +299,22 @@ class TasksPopupsEditMixin:
                     min_value=0.0, max_value=10.0, min_clamped=True,
                 )
                 dpg.add_text("(0 = parte subito)", color=Colors.TEXT_DIM)
+
+            # === LOOP GUARD RETRY ===
+            # Se True, quando il subprocess termina ma la task NON risulta
+            # done in RAM (es. il pannello non si e' aperto, il bot non e'
+            # arrivato perfetto, ecc.), il bot tenta fino a N retry: premi
+            # 3 ESC + rilancia la task SENZA ri-navigare. Se ESAURITI i
+            # retry, applica il cooldown di sicurezza (8s).
+            # Se False (DEFAULT), il bot applica subito il cooldown senza
+            # tentare alcun retry. Attivalo per task specifiche (es. Clean
+            # O2 Filter, Empty Garbage) dove il pannello a volte non si
+            # apre al primo SPAZIO.
+            dpg.add_checkbox(
+                tag="mt_loop_guard_retry",
+                label=" Loop guard retry (ESC + rilancia se task non riuscita)",
+                default_value=bool(t.get('loop_guard_retry', False)),
+            )
 
             dpg.add_checkbox(tag="mt_custom", label=" Codice Custom (non sovrascrivere il .py)",
                              default_value=bool(t.get('codice_personalizzato', False)))
