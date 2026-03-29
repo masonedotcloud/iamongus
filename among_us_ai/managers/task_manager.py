@@ -269,13 +269,15 @@ class TaskManager:
     def aggiorna(self, id_task, nome, x, y,
                  vitale=None, due_giocatori=None,
                  codice_personalizzato=None, cooldown=None, lunghezza=None,
-                 delay_avvio=None):
+                 delay_avvio=None,
+                 loop_guard_retry=None):
         """Aggiorna."""
         self.dettagli.aggiorna(
             id_task, nome, x, y,
             vitale=vitale, due_giocatori=due_giocatori,
             cooldown=cooldown, lunghezza=lunghezza,
             delay_avvio=delay_avvio,
+            loop_guard_retry=loop_guard_retry,
         )
         if codice_personalizzato is not None:
             self.esecuzione.set_codice_personalizzato(id_task, codice_personalizzato)

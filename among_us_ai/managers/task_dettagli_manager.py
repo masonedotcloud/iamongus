@@ -127,7 +127,8 @@ class TaskDettagliManager:
     def aggiorna(self, id_task, nome, x, y,
                  vitale=None, due_giocatori=None,
                  cooldown=None, lunghezza=None,
-                 delay_avvio=None):
+                 delay_avvio=None,
+                 loop_guard_retry=None):
         """Aggiorna."""
         for t in self.task_list:
             if t['id'] == id_task:
@@ -147,6 +148,14 @@ class TaskDettagliManager:
                     # 0 = parte subito, >0 = aspetta dopo apertura pannello.
                     # Utile per minigiochi con animazione di apertura lunga.
                     t['delay_avvio'] = max(0.0, float(delay_avvio))
+                if loop_guard_retry is not None:
+                    # Se True, quando il subprocess termina ma la task non
+                    # risulta done in RAM, il bot tenta automaticamente
+                    # fino a N retry (premi ESC + rilancia) prima di
+                    # applicare il cooldown di sicurezza.
+                    # Se False, applica subito il cooldown senza retry
+                    # (comportamento pre-v2.2.34).
+                    t['loop_guard_retry'] = bool(loop_guard_retry)
                 break
         self.salva()
 

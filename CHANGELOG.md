@@ -1,5 +1,103 @@
 # Changelog
 
+## v2.2.35 — Loop guard retry: opt-in per-task (default DISATTIVATO)
+
+### Richiesta utente
+
+> Questa cosa del retry la riesci a rendere un'opzione selezionabile
+> sulla task quindi decido io se metterla in atto oppure no?
+> Di default mettilo disattivato.
+
+### Cambiamenti rispetto a v2.2.34
+
+Il **loop guard retry** (ESC + rilancio invece di cooldown) era stato
+introdotto nella v2.2.34 come **comportamento globale** (sempre attivo).
+Ora diventa un'**opzione per-task** che l'utente attiva manualmente
+nell'editor di ogni task, con **default DISATTIVATO**.
+
+### Comportamento
+
+| Task con `loop_guard_retry=False` (default) | Task con `loop_guard_retry=True` |
+|---|---|
+| Subprocess fallito + RAM non done = cooldown subito 8s | Subprocess fallito + RAM non done = ESC + rilancio (max 3 retry) |
+| Comportamento pre-v2.2.34 | Comportamento v2.2.34 |
+
+### UI
+
+Nel popup "Modifica task" (Strumenti -> click su una task), e' presente
+una nuova checkbox:
+
+```
+[ ] Loop guard retry (ESC + rilancia se task non riuscita)
+```
+
+- **Spuntata**: il bot tenta fino a 3 retry con ESC prima del cooldown
+- **Non spuntata** (default): cooldown immediato come prima
+
+### Quando attivarlo
+
+Attiva il loop guard retry **solo per task specifiche** dove il
+pannello del minigioco a volte non si apre al primo tentativo:
+
+- **Clean O2 Filter**: a volte il pannello non si apre se la posizione
+  e' un po' fuori, oppure i drag falliscono al primo colpo
+- **Empty Garbage**: simile a Clean O2 Filter
+- **Unlock Manifolds**: se il bot a volte clicca fuori dai pulsanti
+
+Per task affidabili (Swipe Card, Fix Wiring, Reactor, ...) lascia
+disattivato per evitare retry inutili.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/tasks_process.py` | check `task.get('loop_guard_retry', False)` prima di tentare retry; se False, applica cooldown subito (comportamento pre-v2.2.34) |
+| `among_us_ai/ui/mixins/tasks_popups_edit.py` | default checkbox `mt_loop_guard_retry` cambiato da True a False |
+
+### File gia' presenti da v2.2.34 (invariati)
+
+- `among_us_ai/io_input/key_controller.py`: `'ESC': 0x01` in SCAN_CODES
+- `among_us_ai/core/config.py`: `LOOP_GUARD_MAX_RETRIES`, `LOOP_GUARD_ESC_COUNT`, `LOOP_GUARD_SAFETY_CD_SEC`
+- `among_us_ai/managers/task_dettagli_manager.py`: parametro `loop_guard_retry` in `aggiorna()`
+- `among_us_ai/ui/mixins/tasks_process.py`: helper `_premi_esc_loop_guard` e `_rilancia_task_loop_guard`
+
+### Verifica fatta
+
+Test logici simulati:
+
+| Scenario | Atteso | Ottenuto |
+|---|---|---|
+| Task SENZA retry, fallimento | Cooldown subito, 0 ESC, 0 rilanci | ✓ |
+| Task CON retry, 4 fallimenti | 3 ESC + 3 rilanci + 1 cooldown | ✓ |
+| 2 task miste | Task senza: cooldown subito; task con: retry funzionanti | ✓ |
+
+Test import del package: OK
+Verifica TaskDettagliManager.aggiorna(loop_guard_retry=...): OK
+Verifica config presenti: OK
+
+### Come si vede in console
+
+#### Task SENZA retry (default)
+```
+[Loop guard] Task non completata in RAM - cooldown di sicurezza 8.0s (retry disabilitato per questa task)
+```
+
+#### Task CON retry attivo (es. Clean O2 Filter)
+```
+[Loop guard] Task 'Clean O2 Filter' non completata in RAM - tentativo retry 1/3
+[Loop guard] Premuti 3 ESC per cleanup pannelli
+[Loop guard] Rilancio task 'Clean O2 Filter' (no re-navigazione)
+[Exec] 'Clean O2 Filter' terminata - exit code 0
+```
+
+### Cosa NON e' cambiato
+
+- Logica del retry stesso (3 ESC + rilancio): invariata
+- Sistema Ripeti per singole fasi (ripeti=True): invariato
+- Cooldown manuale task (campo `cooldown`): invariato
+- Tutto il resto del bot: invariato
+
+
 ## v2.2.34 — Loop guard con retry: ESC + rilancio invece di cooldown
 
 ### Richiesta utente
