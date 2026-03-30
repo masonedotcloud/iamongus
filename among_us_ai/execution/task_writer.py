@@ -1,7 +1,7 @@
 """
 Generazione dei file di esecuzione delle task in ``tasks_exec/``.
 
-Architettura del modello "thin wrapper" (v2.1.9):
+Architettura del modello "thin wrapper":
 
     tasks_exec/
         _motore/                      <- package modulare con il motore comune

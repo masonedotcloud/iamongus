@@ -108,10 +108,10 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False, start_from_action
     # successo (RAM e' avanzata) ma lo slide e' fallito.
     if not is_test and start_from_action > 0:
         if start_from_action >= len(azioni_da_eseguire):
-            print(f"[esegui_azioni] start_from_action ({start_from_action}) >= "
+            print(f"[EseguiAzioni] start_from_action ({start_from_action}) >= "
                   f"numero azioni ({len(azioni_da_eseguire)}), niente da eseguire.")
             return True
-        print(f"[esegui_azioni] Salto le prime {start_from_action} azioni del chunk "
+        print(f"[EseguiAzioni] Salto le prime {start_from_action} azioni del chunk "
               f"(modalita' ripeti azione).", flush=True)
         azioni_da_eseguire = azioni_da_eseguire[start_from_action:]
 
@@ -126,7 +126,7 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False, start_from_action
         # una nuova azione. Cosi' non facciamo click "fuori dal pannello"
         # quando la task e' gia' stata risolta dal gioco.
         if _stop_flag.is_stop_requested():
-            print(f"[esegui_azioni] STOP rilevato fra azioni, interrompo",
+            print(f"[EseguiAzioni] STOP rilevato fra azioni, interrompo",
                   flush=True)
             break
 
@@ -137,7 +137,7 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False, start_from_action
                 _time.sleep(0.5)
                 # Anche durante l'attesa di foreground, controlla stop
                 if _stop_flag.is_stop_requested():
-                    print(f"[esegui_azioni] STOP durante attesa foreground, esco",
+                    print(f"[EseguiAzioni] STOP durante attesa foreground, esco",
                           flush=True)
                     return True
             _time.sleep(0.3)
@@ -162,7 +162,7 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False, start_from_action
         #     stampiamo un warning ma andiamo avanti (non bloccante).
         handler = _DISPATCH_MAP.get(tipo)
         if handler is None:
-            print(f"[esegui_azioni] tipo sconosciuto: {tipo}")
+            print(f"[EseguiAzioni] tipo sconosciuto: {tipo}")
             continue
         handler(az, cx, cy, cw, ch, hwnd, durata, attesa)
 
@@ -171,7 +171,7 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False, start_from_action
         # aspettare (`attesa` post-azione) e senza fare le azioni
         # successive del chunk.
         if _stop_flag.is_stop_requested():
-            print(f"[esegui_azioni] STOP dopo azione '{tipo}', interrompo",
+            print(f"[EseguiAzioni] STOP dopo azione '{tipo}', interrompo",
                   flush=True)
             break
 

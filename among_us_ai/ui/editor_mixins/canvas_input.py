@@ -325,7 +325,7 @@ class EditorCanvasInputMixin:
                                 })
                                 self._imposta_istruzioni(f"Numero {len(self.buffer_num_match)} salvato. Trascina prossimo o CHIUDI PUNTI.", (100, 255, 255))
                         except Exception as e:
-                            print("[Number Match] Errore salvataggio template:", e)
+                            print("[NumberMatch] Errore salvataggio template:", e)
             else:
                 if self.stato == "WAIT_RECT_ON_CANVAS":
                     self._imposta_istruzioni("Rettangolo troppo piccolo, annullato.", (255, 150, 100))

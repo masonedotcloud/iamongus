@@ -226,7 +226,7 @@ def esegui_azioni(azioni, hwnd, current_step=0, is_test=False):
         # Ogni handler ha la firma: handle_X(az, cx, cy, cw, ch, hwnd, is_test)
         handler = DISPATCH_MAP.get(tipo)
         if handler is None:
-            print(f"[esegui_azioni] Tipo sconosciuto: {tipo}")
+            print(f"[EseguiAzioni] Tipo sconosciuto: {tipo}")
         else:
             handler(az, cx, cy, cw, ch, hwnd, is_test)
 
