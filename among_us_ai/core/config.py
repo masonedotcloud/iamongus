@@ -30,8 +30,8 @@ class GPSConfig:
     # AUTO_ARRIVAL_THRESHOLD: distanza dal target sotto la quale si considera
     # "arrivato" e si lancia la task. Valore basso = arrivo piu' preciso ma
     # piu' rischio di stuck per imprecisioni del pathfinding. 0.15 e' un
-    # compromesso fra precisione e robustezza (era 0.25 in v2.x, ridotto in
-    # v2.2.11 per arrivare meglio nel raggio di attivazione del pulsante Use).
+    # compromesso fra precisione e robustezza
+    # ridotto per arrivare meglio nel raggio di attivazione del pulsante Use.
     AUTO_ARRIVAL_THRESHOLD = 0.15
 
     # AUTO_FINAL_NUDGE: dopo aver toccato la soglia di arrivo, il bot fa
@@ -74,17 +74,41 @@ class GPSConfig:
     # done in RAM, applichiamo finalmente il cooldown di sicurezza.
     LOOP_GUARD_MAX_RETRIES = 3
     LOOP_GUARD_ESC_COUNT   = 3   # n. ESC premuti prima del retry
-    LOOP_GUARD_SAFETY_CD_SEC = 8.0  # cooldown finale (era hardcoded a 8s)
+    LOOP_GUARD_SAFETY_CD_SEC = 8.0  # cooldown finale di sicurezza
 
-    # EXEC_MODE: modalita' di esecuzione delle task (v2.2.17+).
+    # PESI PIANIFICATORE AUTO-ALL: controllano la priorita' di scelta
+    # delle task. Score finale = bonus_vitale + bonus_lunghezza +
+    # bonus_multi_fase - alpha_distanza * distanza_A*.
+    # Modificabili in runtime dal popup "Strumenti -> Pesi pianificatore".
+    # I valori vengono caricati da `planner_weights.json` se presente,
+    # altrimenti vengono usati questi default.
+    PLANNER_PESO_VITALE   = 1000.0  # priorita' assoluta sabotaggi
+    PLANNER_PESO_LONG     = 30.0    # bonus lunghezza='Long'
+    PLANNER_PESO_COMMON   = 20.0    # bonus lunghezza='Common'
+    PLANNER_PESO_NA       = 25.0    # bonus lunghezza='N/A' (sabotaggi)
+    PLANNER_PESO_SHORT    = 10.0    # bonus lunghezza='Short'
+    PLANNER_PESO_MULTI    = 15.0    # bonus task multi-fase (Submit Scan,
+                                    # Inspect Sample, Empty Garbage)
+    PLANNER_ALPHA_DIST    = 0.5     # peso della distanza (penalita')
+    PLANNER_USE_ASTAR     = True    # True: distanza A* reale, False: euclidea
+
+    # EXEC_MODE: modalita' di esecuzione delle task.
     #   - 'subprocess' : esegue il file .py come processo Python separato
-    #                    via subprocess.Popen. Modalita' originale, robusta
-    #                    e isolata. (Default consigliato)
-    #   - 'thread'     : esegue il motore come THREAD interno al bot
-    #                    principale. Risparmia ~300-500ms di startup di
-    #                    Python ma redirige sys.stdout (globale per processo)
-    #                    causando potenziali problemi con altre print del
-    #                    bot. SPERIMENTALE - usa solo se subprocess e' lento.
+    #                    via subprocess.Popen. Modalita' isolata e robusta,
+    #                    il vero stdout del bot principale resta intatto.
+    #                    DEFAULT.
+    #   - 'thread'     : esegue il motore come THREAD interno al bot.
+    #                    Risparmia 1-2s di startup di Python, MA reindirizza
+    #                    sys.stdout (globale per processo) -> tutte le print
+    #                    del bot principale finiscono nella pipe del thread.
+    #                    Pericoloso: rischio di pipe-buffer pieno (blocco)
+    #                    e crash su STOP. Lasciato disponibile solo per
+    #                    test specifici (sconsigliato in produzione).
+    #
+    # Per ridurre il delay del 'subprocess' al lancio, il bot fa
+    # PRE-WARMING: il subprocess parte all'INIZIO del viaggio verso la
+    # task (non all'arrivo). Cosi' al momento del SPAZIO il subprocess
+    # ha gia' completato lo startup di Python e parte istantaneo.
     #
     # In entrambi i modi i file .py in tasks_exec/ vengono generati e
     # restano funzionanti se l'utente li lancia a mano dalla shell.
@@ -122,10 +146,10 @@ class GPSConfig:
     ZONA_PUNTO_DIST_PX = 8
 
     # --- Task ---
-    # Formato v2.1: dettagli (struttura) + esecuzione (azioni) separati.
+    # Formato dettagli (struttura) + esecuzione (azioni) separati.
     TASK_DETTAGLI_FILE  = "tasks_dettagli.json"
     TASK_ESECUZIONE_DIR = "tasks_esecuzione"
-    # Vecchio formato monolitico (v2.0): se esiste e tasks_dettagli.json no,
+    # Vecchio formato monolitico: se esiste e tasks_dettagli.json no,
     # parte la migrazione automatica.
     TASK_LEGACY_FILE    = "task_registrate.json"
 

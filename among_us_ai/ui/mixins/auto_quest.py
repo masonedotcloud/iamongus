@@ -30,7 +30,19 @@ class AutoQuestMixin:
             self._ferma_processo_task()
 
     def _update_auto_all(self, dt):
-        """Loop logico dell'Auto-Quest: sceglie e avvia la prossima task se libero."""
+        """Loop logico dell'Auto-Quest: sceglie e avvia la prossima task se libero.
+
+        Algoritmo (con `task_planner.TaskPlanner`):
+          1. Filtra le task valide (non done, non in cooldown, registrate)
+          2. Per ogni candidata calcola lo score:
+             score = bonus_vitale + bonus_lunghezza + bonus_multi_fase
+                     - alpha * distanza_A*(bot, task)
+          3. Sceglie la task con score piu' alto (nearest-neighbor weighted)
+
+        L'ordine completo del giro viene ricalcolato A OGNI scelta:
+        cosi' se spawna un sabotaggio (vitale) o cambia lo stato delle
+        task, il bot reagisce immediatamente.
+        """
         if not self.auto_execute_all:
             return
 
@@ -69,7 +81,7 @@ class AutoQuestMixin:
         if not candidati:
             if non_registrate > 0:
                 # Messaggio di stato mostrato all'utente nel pannello
-                self.auto_status_msg = f"Auto-All in attesa: {non_registrate} task NON registrate."
+                self.auto_status_msg = f"Auto-All in attesa: {non_registrate} task non registrate"
             elif in_cooldown > 0:
                 # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"Auto-All in attesa: {in_cooldown} task in cooldown..."
@@ -79,20 +91,44 @@ class AutoQuestMixin:
                 self._toggle_auto_all()
             return
 
-        # Trova la task valida PIÙ VICINA
-        cx, cy = self.pos_target
-        closest = None
-        min_dist = float('inf')
+        # Costruisco la lista di task per il planner: ognuna deve avere
+        # i campi 'x','y','vitale','lunghezza','azioni' (per il check
+        # multi-fase) della task REGISTRATA + un riferimento all'enriched.
+        # Risolvo le azioni effettive (con ereditarieta' padre-figlio).
+        tasks_per_planner = []
         for c in candidati:
-            rx, ry = c['reg_task']['x'], c['reg_task']['y']
-            dist = math.hypot(cx - rx, cy - ry)
-            if dist < min_dist:
-                min_dist = dist
-                closest = c
-                
-        if closest:
-            print(f"[Auto-All] Scelta task piu' vicina: {closest['reg_task']['nome']} (Dist: {min_dist:.1f})")
-            self._avvia_task_selezionata(task_to_run=closest)
+            reg = c['reg_task']
+            azioni_eff, _src = self.task_mgr.get_azioni_effettive(reg['id'])
+            tasks_per_planner.append({
+                'id':         reg['id'],
+                'nome':       reg.get('nome', '?'),
+                'x':          reg['x'],
+                'y':          reg['y'],
+                'vitale':     bool(reg.get('vitale', False)),
+                'lunghezza':  reg.get('lunghezza', 'Short'),
+                'azioni':     azioni_eff,
+                # Riferimento all'enriched: lo uso per passarlo
+                # ad _avvia_task_selezionata
+                '_enriched':  c,
+            })
+
+        # Calcolo la prossima task con il planner
+        from ...managers.task_planner import carica_pesi_da_config
+        pesi = carica_pesi_da_config(GPSConfig)
+        use_astar = bool(getattr(GPSConfig, 'PLANNER_USE_ASTAR', True))
+
+        prossima = self.task_planner.scegli_prossima(
+            self.pos_target, tasks_per_planner, pesi,
+            use_astar=use_astar,
+        )
+
+        if prossima:
+            nome_t = prossima['nome']
+            vitale = "[VITALE] " if prossima['vitale'] else ""
+            lung   = prossima['lunghezza']
+            print(f"[Auto-All] Scelta task: {vitale}{nome_t} "
+                  f"({lung})")
+            self._avvia_task_selezionata(task_to_run=prossima['_enriched'])
 
     def _check_2p_yolo_thread(self, current_target_is_A):
         """Esegue l'analisi YOLO asincrona per vedere se il pannello e' occupato da un altro player."""
@@ -111,7 +147,7 @@ class AutoQuestMixin:
                     self.yolo_player = YOLO(model_path)
                 else:
                     self.yolo_player = None
-                    print(f"[YOLO 2P] Modello non trovato: {model_path}")
+                    print(f"[Yolo2P] Modello non trovato: {model_path}")
                 self.yolo_player_loaded = True
 
             if getattr(self, 'yolo_player', None) is None:
@@ -160,10 +196,10 @@ class AutoQuestMixin:
                 if new_target and new_target != self.auto_2p_current_target:
                     self.auto_2p_current_target = new_target
                     self._pending_2p_replan = new_target
-                    print(f"[YOLO 2P] Player rilevato al pannello! Spostamento alla seconda postazione.")
+                    print(f"[Yolo2P] Player rilevato al pannello! Spostamento alla seconda postazione.")
 
         except Exception as e:
-            print(f"[YOLO 2P] Errore: {e}")
+            print(f"[Yolo2P] Errore: {e}")
         finally:
             self._2p_yolo_active = False
 

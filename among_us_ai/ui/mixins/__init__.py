@@ -18,6 +18,7 @@ from .input_callbacks import InputCallbacksMixin
 from .map_loader import MapLoaderMixin
 from .memory_sync import MemorySyncMixin
 from .misc import MiscMixin
+from .planner_ui import PlannerMixin
 from .poi import PoiMixin
 from .rendering_entities import RenderingEntitiesMixin
 from .rendering_world import RenderingWorldMixin
@@ -35,7 +36,7 @@ from .zones import ZonesMixin
 __all__ = [
     "AutoMoveMixin", "AutoQuestMixin", "DialogsMixin",
     "InputCallbacksMixin", "MapLoaderMixin", "MemorySyncMixin",
-    "MiscMixin", "PoiMixin",
+    "MiscMixin", "PlannerMixin", "PoiMixin",
     "RenderingEntitiesMixin", "RenderingWorldMixin",
     "TasksLaunchMixin", "TasksListMixin",
     "TasksPopupsEditMixin", "TasksPopupsRegisterMixin",

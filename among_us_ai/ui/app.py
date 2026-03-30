@@ -86,6 +86,7 @@ from .mixins.rendering_world import RenderingWorldMixin
 from .mixins.rendering_entities import RenderingEntitiesMixin
 from .mixins.misc import MiscMixin
 from .mixins.use_button_calib import UseButtonCalibMixin
+from .mixins.planner_ui import PlannerMixin
 
 
 class GPSVisualizerPro(
@@ -113,6 +114,7 @@ class GPSVisualizerPro(
     RenderingEntitiesMixin,
     MiscMixin,
     UseButtonCalibMixin,
+    PlannerMixin,
 ):
     """Classe principale dell'applicazione: orchestra rendering, pathfinding, lettura RAM, scanner YOLO, esecuzione task."""
     def __init__(self):
@@ -184,13 +186,30 @@ class GPSVisualizerPro(
         self.zone_last_pixel = None
         self.zona_in_modifica = None
 
-        # --- Task (formato v2.1: dettagli + esecuzione separati) ---
+        # --- Task (formato dettagli + esecuzione separati) ---
         self.task_mgr = TaskManager(
             GPSConfig.TASK_DETTAGLI_FILE,
             GPSConfig.TASK_ESECUZIONE_DIR,
             GPSConfig.TASKS_DEF_FILE,
             GPSConfig.TASK_LEGACY_FILE,
         )
+
+        # --- Pianificatore Auto-All ---
+        # Decide la sequenza ottimale di task considerando vitalita',
+        # lunghezza, multi-fase e distanza A* dal bot.
+        from ..managers.task_planner import TaskPlanner
+        self.task_planner = TaskPlanner(pathfinder=self.pathfinder)
+        # Carico pesi personalizzati da `planner_weights.json` se presenti
+        # (sovrascrivono i default di GPSConfig). Import locale per
+        # evitare un import circolare con planner_ui.
+        from .mixins.planner_ui import PlannerMixin
+        PlannerMixin.carica_pesi_da_file()
+
+        # Stato della preview giro Auto-All (popup F1)
+        self._preview_giro_aperto = False
+        self._preview_giro_refresh_timer = 0.0
+        self._giro_preview_lista = []  # lista (task, dist, score) per rendering
+        self._giro_preview_paths = []  # lista path A* pre-calcolati (uno per task del giro)
 
         # --- Punti di Interesse ---
         self.poi_mgr  = PoiManager(GPSConfig.POI_FILE)
@@ -200,6 +219,7 @@ class GPSVisualizerPro(
         self._task_launch_nome      = ""
         self._task_launch_steps     = []
         self._task_launch_id        = None   # id task in corso di avvio
+        self._task_prewarm_id       = None   # id task con pre-warming attivo
         self._task_launch_arrivo    = False  # True quando il player e' arrivato (fase 3)
         self._task_launch_timer_arr = 0.0    # timer fase 3
         self._task_process          = None   # subprocess.Popen del file .py in esecuzione
@@ -275,6 +295,7 @@ class GPSVisualizerPro(
         self._update_task_launch(dt)
         self._controlla_processo_task()
         self._update_auto_all(dt)
+        self._update_preview_giro(dt)
         
         pending_2p = getattr(self, '_pending_next_2p_task', None)
         if pending_2p is not None:
