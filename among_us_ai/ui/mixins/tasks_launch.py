@@ -89,20 +89,51 @@ class TasksLaunchMixin:
         vp_w = dpg.get_viewport_client_width()
         vp_h = dpg.get_viewport_client_height()
 
-        with dpg.window(label=f"Task: {nome}", tag=tag,
-                        modal=True, no_resize=True, no_collapse=True,
+        # Pannello informativo NON MODALE: piccolo, in basso a destra,
+        # non blocca l'interazione con la mappa e gli altri controlli.
+        # Il bot continua a essere usabile (zoom, pan, status bar) mentre
+        # la task gira.
+        panel_w, panel_h = 360, 130
+        panel_x = max(0, vp_w - panel_w - 20)
+        panel_y = max(0, vp_h - panel_h - 60)
+        with dpg.window(label=f"In esecuzione: {nome}", tag=tag,
+                        no_resize=True,
+                        no_collapse=False,
                         no_close=True,
-                        width=440, height=260,
-                        pos=(max(0, vp_w // 2 - 220),
-                             max(0, vp_h // 2 - 130))):
+                        no_focus_on_appearing=True,
+                        no_bring_to_front_on_focus=True,
+                        width=panel_w, height=panel_h,
+                        pos=(panel_x, panel_y)):
             dpg.add_text(viaggio_txt, tag="task_launch_popup_text",
-                         color=(0, 200, 255, 255), wrap=420)
+                         color=(0, 200, 255, 255), wrap=panel_w - 20)
 
         # Disabilita l'animazione a step (il popup e' gia' pieno di testo)
         self.task_launch_active = False
         self._task_launch_nome  = nome
         self._task_launch_id    = id_task
         self._task_fallback_idx = 0
+
+        # === PRE-WARMING ANTICIPATO ===
+        # Avvia il subprocess ADESSO (inizio viaggio) con --wait-trigger.
+        # Cosi' fa lo startup di Python (1-2s) MENTRE il bot cammina
+        # verso la task. Quando arriva e preme SPAZIO, il subprocess
+        # e' gia' caricato e parte istantaneo al ricevere "GO" su stdin.
+        #
+        # NB: e' importante anticiparlo qui (no all'arrivo) perche'
+        # gli import sono lenti: mss + ultralytics + cv2 + win32 +
+        # numpy = ~1.5s su PC tipico. Se anticipassi solo all'arrivo,
+        # in caso di task vicine il GO arriverebbe prima del completamento
+        # dello startup -> attesa visibile.
+        try:
+            self._avvia_subprocess_task(id_task, wait_trigger=True)
+            self._task_prewarm_id = id_task  # ricordo che ho fatto pre-warm
+            print(f"[PreWarming] Subprocess avviato per '{nome}' "
+                  f"(inizio viaggio)", flush=True)
+        except Exception as e:
+            # Se il pre-warming fallisce, non e' fatale: continueremo
+            # con l'avvio classico al momento dell'arrivo.
+            print(f"[PreWarming] Errore avvio anticipato: {e}", flush=True)
+            self._task_prewarm_id = None
 
         # ── FASE 2->3: callback all'arrivo ──
         def on_arrivo():
@@ -112,38 +143,51 @@ class TasksLaunchMixin:
                 self._avvia_subprocess_task(id_task)
                 return
 
-            # === PRE-WARMING DEL SUBPROCESS ===
-            # Avvia il subprocess ADESSO con --wait-trigger. Cosi' fa
-            # tutto il startup di Python (~300-500ms) e import del motore
-            # MENTRE il bot fa il check visuale + animazione popup, e
-            # quando si preme SPAZIO il subprocess e' gia' caricato e
-            # pronto. Il trigger "GO" gli arriva dopo SPAZIO e l'analisi
-            # parte istantanea.
-            #
-            # Beneficio: ~500-800ms di anticipo sull'analisi, cruciale
-            # per Simon Says (Reactor) e altri minigiochi tempo-critici.
-            self._avvia_subprocess_task(id_task, wait_trigger=True)
+            # Se il pre-warming era stato fatto all'inizio del viaggio
+            # (`_avvia_task_selezionata`), il subprocess e' gia' avviato
+            # e in attesa di "GO". Saltiamo la riavvio.
+            if getattr(self, '_task_prewarm_id', None) != id_task:
+                # Pre-warming non fatto (o per task diversa): fallback
+                # al pre-warming "tardivo" all'arrivo.
+                self._avvia_subprocess_task(id_task, wait_trigger=True)
 
-            # Pausa il thread per il tempo specificato (secondi)
-            time.sleep(0.3) # pausa per stabilita' visiva (frame capture screen)
+            # === CHECK SE LA TASK E' TEMPO-CRITICA ===
+            # Per task con azioni `simon_says` (Start Reactor) o altre
+            # task che richiedono partenza istantanea, saltiamo la pausa
+            # di stabilita' visiva e il check visuale (USE/alone giallo).
+            # Quei 350-450ms di latenza causano la perdita dei primi
+            # flash della sequenza nel Simon Says.
+            try:
+                azioni_eff, _src = self.task_mgr.get_azioni_effettive(id_task)
+                is_tempo_critico = any(a.get('tipo') == 'simon_says'
+                                        for a in azioni_eff)
+            except Exception:
+                is_tempo_critico = False
 
-            # --- CHECK VISUALE (Use Button / Alone Giallo) ---
-            curr_target = getattr(self, '_current_nav_target', (tx, ty))
-            if not self._controlla_task_attiva(curr_target[0], curr_target[1]):
-                alternativi = reg.get('alternativi', [])
-                curr_alternativo = getattr(self, '_task_alternativo_idx', 0)
-                if curr_alternativo < len(alternativi):
-                    next_target = (alternativi[curr_alternativo]['x'], alternativi[curr_alternativo]['y'])
-                    self._task_alternativo_idx = curr_alternativo + 1
-                    # Messaggio di stato mostrato all'utente nel pannello
-                    self.auto_status_msg = f"Task non attiva qui, navigo al alternativo {self._task_alternativo_idx}..."
-                    print(f"[Visual Check] Niente USE o alone giallo. Navigo a alternativo: {next_target}")
-                    self._current_nav_target = next_target
-                    self._plan_path(next_target)
-                    self._on_arrival_callback = on_arrivo
-                    return
-                else:
-                    print(f"[Visual Check] Nessun alternativo rimanente o tutti inattivi, procedo comunque.")
+            if not is_tempo_critico:
+                # Pausa il thread per il tempo specificato (secondi)
+                time.sleep(0.3) # pausa per stabilita' visiva (frame capture screen)
+
+                # --- CHECK VISUALE (Use Button / Alone Giallo) ---
+                curr_target = getattr(self, '_current_nav_target', (tx, ty))
+                if not self._controlla_task_attiva(curr_target[0], curr_target[1]):
+                    alternativi = reg.get('alternativi', [])
+                    curr_alternativo = getattr(self, '_task_alternativo_idx', 0)
+                    if curr_alternativo < len(alternativi):
+                        next_target = (alternativi[curr_alternativo]['x'], alternativi[curr_alternativo]['y'])
+                        self._task_alternativo_idx = curr_alternativo + 1
+                        # Messaggio di stato mostrato all'utente nel pannello
+                        self.auto_status_msg = f"Task non attiva qui, navigo all'alternativo {self._task_alternativo_idx}..."
+                        print(f"[VisualCheck] Niente USE o alone giallo. Navigo a alternativo: {next_target}")
+                        self._current_nav_target = next_target
+                        self._plan_path(next_target)
+                        self._on_arrival_callback = on_arrivo
+                        return
+                    else:
+                        print(f"[VisualCheck] Nessun alternativo rimanente o tutti inattivi, procedo comunque.")
+            else:
+                print(f"[TaskLaunch] '{nome}' tempo-critica (simon_says): "
+                      f"skip pausa stabilita' + check visuale", flush=True)
 
             # Aggiorna popup con gli step di lancio animati
             self._task_launch_steps     = (TaskManager.STATI_LAUNCH
@@ -202,7 +246,7 @@ class TasksLaunchMixin:
                 # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item("task_launch_popup")
 
-            # --- ORDINE OTTIMIZZATO CON PRE-WARMING (v2.2.20+) ---
+            # --- ORDINE OTTIMIZZATO CON PRE-WARMING ---
             # Il subprocess e' gia' stato avviato in `on_arrivo()` con
             # --wait-trigger. Adesso e' caricato e in attesa di "GO" su
             # stdin.
@@ -211,6 +255,24 @@ class TasksLaunchMixin:
             # FASE C: invia "GO" sullo stdin -> il subprocess parte
             #   istantaneo (no startup, gia' fatto).
             id_task = getattr(self, '_task_launch_id', None)
+
+            # FASE A (preparatoria): garantisce che Among Us sia in
+            # primo piano PRIMA di premere SPAZIO. Cosi':
+            #   1. SPAZIO viene ricevuto dalla finestra giusta
+            #   2. Il subprocess (quando ricevera' GO subito dopo)
+            #      trova `GetForegroundWindow() == hwnd_amongus`
+            #      e SALTA il `sleep(0.4)` di grace period.
+            # Senza questo, ogni Simon Says/minigioco tempo-critico
+            # perdeva 400ms preziosi al primo flash della sequenza.
+            try:
+                if _WIN_OK:
+                    hwnd_au = win32gui.FindWindow(None, "Among Us")
+                    if hwnd_au and win32gui.GetForegroundWindow() != hwnd_au:
+                        win32gui.SetForegroundWindow(hwnd_au)
+            except Exception:
+                # Windows puo' rifiutare SetForegroundWindow per UAC
+                # o altri motivi: non e' fatale, proseguiamo.
+                pass
 
             # FASE B: premi SPAZIO per aprire il pannello del minigioco.
             try:

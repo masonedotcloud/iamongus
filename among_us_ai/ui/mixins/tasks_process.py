@@ -143,7 +143,7 @@ class TasksProcessMixin:
                 cmd += ["--wait-trigger"]
 
             # === MODALITA' DI ESECUZIONE: thread o subprocess ===
-            # In v2.2.17+ il default e' 'thread': il motore gira come
+            # Il default e' 'thread': il motore gira come
             # thread interno del bot. Risparmia ~300-500ms di startup
             # di Python e tutta l'IPC. Critico per minigiochi reattivi
             # come Simon Says.
@@ -226,7 +226,7 @@ class TasksProcessMixin:
             # Aggiorna lo stato di esecuzione (idle/running/done/error)
             self.task_mgr.imposta_stato_esecuzione(id_task, 'error')
             # Messaggio di stato mostrato all'utente nel pannello
-            self.auto_status_msg = f"Errore avvio: {e}"
+            self.auto_status_msg = f"Errore avvio task: {e}"
             print(f"[Exec] Errore avvio '{filepath}': {e}")
 
     def _invia_trigger_subprocess(self):
@@ -356,11 +356,12 @@ class TasksProcessMixin:
                     next_target = (alternativi[curr_fallback]['x'], alternativi[curr_fallback]['y'])
                     self._task_fallback_idx = curr_fallback + 1
                     # Messaggio di stato mostrato all'utente nel pannello
-                    self.auto_status_msg = f"Task fallita, provo alternativo {self._task_fallback_idx}..."
+                    self.auto_status_msg = f"Task fallita, provo l'alternativo {self._task_fallback_idx}..."
                     print(f"[Fallback] Errore esecuzione. Navigo al punto alternativo: {next_target}")
                     
                     self._task_process = None
                     self._task_process_task_id = None
+                    self._task_prewarm_id      = None
                     
                     self._current_nav_target = next_target
                     self._plan_path(next_target)
@@ -404,6 +405,7 @@ class TasksProcessMixin:
                       f"Rilancio subprocess saltando {start_from} azioni iniziali.")
                 self._task_process         = None
                 self._task_process_task_id = None
+                self._task_prewarm_id      = None
                 # Cleanup state per riavvio pulito (STOP watcher, retry counts)
                 if hasattr(self, "task_stop_sent"):
                     self.task_stop_sent.discard(id_task)
@@ -453,9 +455,17 @@ class TasksProcessMixin:
                     # Task NON done in RAM: il retry e' opt-in PER TASK
                     # (campo `loop_guard_retry` nel JSON della task).
                     # Default: False -> cooldown immediato (comportamento
-                    # pre-v2.2.34). Va attivato dall'editor solo per
+                    # cooldown immediato. Va attivato dall'editor solo per
                     # task specifiche (es. Clean O2 Filter, Empty Garbage).
-                    retry_enabled = bool(task.get('loop_guard_retry', False))
+                    #
+                    # EREDITARIETA': se la task figlia eredita le azioni
+                    # dal padre, eredita anche il flag `loop_guard_retry`
+                    # del padre (padre vince per coerenza). Vedi
+                    # task_manager.get_opzione_effettiva().
+                    retry_enabled = bool(
+                        self.task_mgr.get_opzione_effettiva(
+                            id_task, 'loop_guard_retry', False)
+                    )
 
                     if not retry_enabled:
                         # Retry disabilitato per questa task: cooldown subito
@@ -466,7 +476,7 @@ class TasksProcessMixin:
                         safety_cd = time.time() + cd_sec
                         if safety_cd > existing_cd:
                             self.task_cooldowns[id_task] = safety_cd
-                            print(f"[Loop guard] Task non completata in RAM "
+                            print(f"[LoopGuard] Task non completata in RAM "
                                   f"- cooldown di sicurezza {cd_sec}s "
                                   f"(retry disabilitato per questa task)")
                     else:
@@ -481,7 +491,7 @@ class TasksProcessMixin:
                             # Incrementa contatore retry
                             self.task_loop_guard_retries[id_task] = retry_count + 1
                             nome_r = task.get('nome', f'#{id_task}')
-                            print(f"[Loop guard] Task '{nome_r}' non completata "
+                            print(f"[LoopGuard] Task '{nome_r}' non completata "
                                   f"in RAM - tentativo retry "
                                   f"{retry_count+1}/{max_retries}")
                             # Premi ESC veloci per chiudere eventuali pannelli
@@ -494,6 +504,7 @@ class TasksProcessMixin:
                             # Cleanup stato corrente prima del rilancio
                             self._task_process         = None
                             self._task_process_task_id = None
+                            self._task_prewarm_id      = None
                             if hasattr(self, "task_stop_sent"):
                                 self.task_stop_sent.discard(id_task)
                             # Pausa breve dopo gli ESC per dare al gioco
@@ -515,7 +526,7 @@ class TasksProcessMixin:
                             safety_cd = time.time() + cd_sec
                             if safety_cd > existing_cd:
                                 self.task_cooldowns[id_task] = safety_cd
-                                print(f"[Loop guard] Task non completata in "
+                                print(f"[LoopGuard] Task non completata in "
                                       f"RAM dopo {max_retries} retry - "
                                       f"cooldown di sicurezza {cd_sec}s")
 
@@ -527,6 +538,7 @@ class TasksProcessMixin:
 
         self._task_process         = None
         self._task_process_task_id = None
+        self._task_prewarm_id      = None
         # Cleanup state per riavvio pulito (STOP watcher, retry counts)
         if hasattr(self, "task_stop_sent"):
             self.task_stop_sent.discard(id_task)
@@ -572,6 +584,7 @@ class TasksProcessMixin:
                 print(f"[Exec] '{nome}' terminata forzatamente")
         self._task_process         = None
         self._task_process_task_id = None
+        self._task_prewarm_id      = None
         # Cleanup state per riavvio pulito (STOP watcher, retry counts)
         if hasattr(self, "task_stop_sent"):
             self.task_stop_sent.discard(id_task)
@@ -617,7 +630,7 @@ class TasksProcessMixin:
                 chunks.append(current)
                 current = []
                 # Anche il cooldown stesso puo' avere ripeti=True
-                # (retro-compatibilita' con v2.2.1, lo includiamo nel
+                # (retro-compatibilita', lo includiamo nel
                 # chunk PRECEDENTE)
                 if a.get('ripeti'):
                     chunks[-1].append(a)
@@ -785,11 +798,6 @@ class TasksProcessMixin:
             print(f"[Ripeti] Task '{nome_t}': nessuna azione, no rilancio.")
             return False
 
-        # Debug: stampo quante azioni ho e quali hanno ripeti
-        n_ripeti = sum(1 for a in azioni_eff if a.get('ripeti'))
-        print(f"[Ripeti DEBUG] Task '{nome_t}': {len(azioni_eff)} azioni, "
-              f"{n_ripeti} con ripeti=True (src_id={src_id})")
-
         # Spezzo in chunk separati dai cooldown
         chunks = []
         current = []
@@ -797,7 +805,7 @@ class TasksProcessMixin:
             if a.get('tipo') == 'cooldown':
                 chunks.append(current)
                 current = []
-                # Cooldown con ripeti=True (retro-compat v2.2.1) si
+                # Cooldown con ripeti=True (retro-compat) si
                 # considera parte del chunk PRECEDENTE
                 if a.get('ripeti'):
                     chunks[-1].append(a)
@@ -1131,9 +1139,9 @@ class TasksProcessMixin:
                 time.sleep(0.05)
                 _send_scan(SCAN_CODES['ESC'], keyup=True)
                 # No pausa fra ESC consecutivi: "3 ESC veloci"
-            print(f"[Loop guard] Premuti {n_esc} ESC per cleanup pannelli")
+            print(f"[LoopGuard] Premuti {n_esc} ESC per cleanup pannelli")
         except Exception as e:
-            print(f"[Loop guard] Errore invio ESC: {e}")
+            print(f"[LoopGuard] Errore invio ESC: {e}")
 
     def _rilancia_task_loop_guard(self, id_task):
         """
@@ -1154,10 +1162,10 @@ class TasksProcessMixin:
         """
         task = self.task_mgr.get_by_id(id_task)
         if task is None:
-            print(f"[Loop guard] Rilancio fallito: task {id_task} non trovata")
+            print(f"[LoopGuard] Rilancio fallito: task {id_task} non trovata")
             return
         nome = task.get('nome', f'#{id_task}')
-        print(f"[Loop guard] Rilancio task '{nome}' (no re-navigazione)")
+        print(f"[LoopGuard] Rilancio task '{nome}' (no re-navigazione)")
 
         # 1) Avvia subprocess pre-warmed
         self._avvia_subprocess_task(id_task, wait_trigger=True)
@@ -1172,7 +1180,7 @@ class TasksProcessMixin:
                 time.sleep(0.05)
                 _send_scan(SCAN_CODES['SPACE'], keyup=True)
             except Exception as e:
-                print(f"[Loop guard] Errore SPAZIO durante rilancio: {e}")
+                print(f"[LoopGuard] Errore SPAZIO durante rilancio: {e}")
 
         # 4) Trigger GO al subprocess
         self._invia_trigger_subprocess()

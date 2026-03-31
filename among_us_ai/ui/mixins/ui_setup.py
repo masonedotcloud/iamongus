@@ -61,6 +61,11 @@ class UISetupMixin:
                     dpg.add_separator()
                     dpg.add_menu_item(label="Calibra pulsante 'Use'...",
                         callback=lambda *a: self._apri_popup_calibra_use_button())
+                    dpg.add_separator()
+                    dpg.add_menu_item(label="Preview giro Auto-All (F1)",
+                        callback=lambda *a: self._toggle_preview_giro())
+                    dpg.add_menu_item(label="Come scegliere le task...",
+                        callback=lambda *a: self._apri_popup_pesi_pianificatore())
                 # Menu
                 with dpg.menu(label="?"):
                     dpg.add_menu_item(label="Info e scorciatoie",
@@ -90,6 +95,8 @@ class UISetupMixin:
                         with dpg.draw_node(tag="other_players_node"): pass
                         with dpg.draw_node(tag="doors_node"): pass
                         with dpg.draw_node(tag="player_node"): pass
+                        # Sopra a tutto: preview del giro Auto-All (F1)
+                        with dpg.draw_node(tag="giro_preview_node"): pass
                         with dpg.draw_node(tag="hud_node"):    pass
 
                 with dpg.child_window(tag="side_panel",
@@ -152,6 +159,8 @@ class UISetupMixin:
                 callback=lambda *a: self._toggle_auto_enabled())
             dpg.add_key_press_handler(dpg.mvKey_N,
                 callback=lambda *a: self._start_new_zone_mode())
+            dpg.add_key_press_handler(dpg.mvKey_F1,
+                callback=lambda *a: self._toggle_preview_giro())
             dpg.add_key_press_handler(dpg.mvKey_Escape,
                 callback=lambda *a: self._cancel_all())
 
