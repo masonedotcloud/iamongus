@@ -1,5 +1,138 @@
 # Changelog
 
+## v2.2.36 — Ereditarieta' opzioni padre-figlio per task registrate
+
+### Richiesta utente
+
+> Quando imposto delle opzioni sulle task registrate (es. l'ultimo
+> checkbox del retry), valga anche per i figli che ereditano il
+> codice.
+
+### Comportamento PRIMA (v2.2.35)
+
+Le task "figlie" che ereditano le azioni dal padre (ad esempio task
+con `id_padre` che hanno la lista azioni vuota) ereditavano SOLO le
+azioni, ma NON le opzioni come `loop_guard_retry`. Risultato: se
+attivavi il retry sul padre, le figlie continuavano ad applicare il
+cooldown immediato perche' leggevano la propria opzione (False).
+
+NB: alcune opzioni (codice_personalizzato, lunghezza, delay_avvio)
+**erano gia' ereditate** perche' il codice in `_avvia_subprocess_task`
+le leggeva da `target_task` (la task risolta, gia' padre se la figlia
+eredita). Solo `loop_guard_retry` veniva letto direttamente dalla
+figlia.
+
+### Comportamento ADESSO (v2.2.36)
+
+Le opzioni "comportamentali" (`loop_guard_retry`, `codice_personalizzato`,
+`lunghezza`, `delay_avvio`, `cooldown`) seguono la stessa logica delle
+azioni:
+
+- **Figlia con azioni proprie** -> usa le sue opzioni
+- **Figlia che eredita azioni dal padre** -> eredita anche le opzioni
+  dal padre (padre vince sempre, per coerenza con il codice)
+
+Opzioni NON ereditate (sono per-task specifiche):
+- `nome`, `x`, `y`, `tipo`, `id_stanza`
+- `vitale`, `due_giocatori`
+- `fasi`, `alternativi`
+- `id_padre` (ovviamente)
+
+### Esempio pratico
+
+Configurazione:
+- **Task PADRE** "Wires Generic" con `loop_guard_retry=True`
+- **Task FIGLIA** "Wires in Electrical" con `id_padre=PADRE` e azioni vuote
+- **Task FIGLIA** "Wires in Admin" con `id_padre=PADRE` e azioni vuote
+
+Quando il bot esegue "Wires in Electrical":
+- Eredita le azioni dal padre (gia' funzionava)
+- Eredita anche `loop_guard_retry=True` dal padre (NUOVO in v2.2.36)
+- Quindi se la task fallisce, tenta 3 retry con ESC
+
+### Nuovi metodi in task_manager.py
+
+#### `get_opzione_effettiva(id_task, key, default=None)`
+
+Ritorna il valore effettivo di un'opzione considerando l'ereditarieta':
+
+```python
+retry = self.task_mgr.get_opzione_effettiva(id_task, 'loop_guard_retry', False)
+```
+
+#### `get_task_effettiva(id_task)`
+
+Ritorna una COPIA del dict della task con le opzioni ereditabili
+gia' risolte. Utile per accesso multi-proprieta':
+
+```python
+task_eff = self.task_mgr.get_task_effettiva(id_task)
+if task_eff.get('loop_guard_retry'):
+    ...
+```
+
+#### `_OPZIONI_EREDITABILI` (set di classe)
+
+```python
+_OPZIONI_EREDITABILI = {
+    'loop_guard_retry',
+    'codice_personalizzato',
+    'lunghezza',
+    'delay_avvio',
+    'cooldown',
+}
+```
+
+Chiavi non in questo set vengono SEMPRE lette dalla task stessa
+(es. `vitale`, `due_giocatori`, `nome`, ecc.)
+
+### Indicatore visuale nell'editor
+
+Nel popup di modifica task, sotto la checkbox `loop_guard_retry`,
+compare un indicatore se la task eredita le azioni dal padre:
+
+```
+[ ] Loop guard retry (ESC + rilancia se task non riuscita)
+   [eredita dal padre 'Wires Generic': loop_guard_retry=True]
+```
+
+Cosi' l'utente capisce subito che il proprio valore viene IGNORATO
+in favore di quello del padre. Per cambiare il comportamento di una
+figlia, basta dargli azioni proprie (override): in quel caso la
+figlia diventa standalone e usa le sue opzioni.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/managers/task_manager.py` | Aggiunti `_OPZIONI_EREDITABILI` (set), `get_opzione_effettiva(id_task, key, default)`, `get_task_effettiva(id_task)` |
+| `among_us_ai/ui/mixins/tasks_process.py` | `task.get('loop_guard_retry')` -> `self.task_mgr.get_opzione_effettiva(id_task, 'loop_guard_retry', False)` (1 occorrenza nel loop guard) |
+| `among_us_ai/ui/mixins/tasks_popups_edit.py` | Aggiunto indicatore visuale "[eredita dal padre ...]" sotto la checkbox |
+
+### Verifica fatta
+
+Test logici simulati (5 scenari):
+
+| Scenario | Atteso | Ottenuto |
+|---|---|---|
+| Figlia eredita azioni, padre retry=True | Figlia retry effettivo = True | ✓ |
+| Figlia ha azioni proprie, padre retry=True | Figlia retry effettivo = False (la sua) | ✓ |
+| Opzione NON ereditabile (vitale) | Figlia usa il suo (False) | ✓ |
+| Task standalone senza padre | Usa il proprio valore | ✓ |
+| delay_avvio (anche ereditabile) | Figlia eredita dal padre | ✓ |
+
+Test import package: OK
+Test syntax: OK su tutti i file modificati
+
+### Cosa NON e' cambiato
+
+- Logica del retry stesso (3 ESC + rilancio): invariata
+- Default `loop_guard_retry=False` per task standalone: invariato
+- `vitale`, `due_giocatori`: continuano a essere per-task (NON ereditate)
+- API motore: invariata
+- File JSON delle task: invariati
+
+
 ## v2.2.35 — Loop guard retry: opt-in per-task (default DISATTIVATO)
 
 ### Richiesta utente
