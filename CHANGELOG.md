@@ -1,5 +1,156 @@
 # Changelog
 
+## v2.2.38 — TaskPlanner: pianificazione intelligente Auto-All
+
+### Richiesta utente
+
+> Migliorare l'algoritmo di navigazione di Auto-All:
+> - Trova ogni volta il migliore, e considera che ogni volta puoi
+>   anche ricalcolare per trovare sempre il meglio del meglio
+> - Sempre prima le vitali, poi a fasi, poi lunghe, poi corte
+>   (10 -> 1, ma vitali hanno sempre priorita')
+> - Preview del giro: lista a sinistra + linee colorate sulla mappa
+> - Ricalcola SEMPRE dopo ogni task (le task possono spawnare)
+> - Pesi configurabili da UI con slider
+
+### Comportamento PRIMA
+
+Auto-All sceglieva la task piu' vicina con **distanza euclidea**
+(line-of-sight), ignorando muri/porte e senza distinguere tra
+vitali/sabotaggi/lunghe/corte. Bot sub-ottimale, soprattutto
+quando spawnavano sabotaggi.
+
+### Comportamento ADESSO
+
+#### Algoritmo di scelta: SCORE WEIGHTED
+
+```
+score(task) = bonus_vitale
+            + bonus_lunghezza      (Long > Common > N/A > Short)
+            + bonus_multi_fase     (task con cooldown interno)
+            - alpha * distanza_A*  (penalita' per distanza)
+```
+
+Default pesi:
+
+| Categoria | Bonus |
+|---|---|
+| Vitale (sabotaggi) | +1000 |
+| Lunghezza='Long' | +30 |
+| Lunghezza='Common' | +20 |
+| Lunghezza='N/A' | +25 |
+| Lunghezza='Short' | +10 |
+| Multi-fase (cooldown interno) | +15 |
+| alpha distanza | 0.5 |
+
+#### Distanza A* invece di euclidea
+
+Il planner usa il pathfinding A* esistente per calcolare la distanza
+reale (rispetta muri/porte). Cache interna per evitare ricalcoli.
+Fallback su distanza euclidea + 50% penalita' se A* fallisce
+(target irraggiungibile).
+
+#### Ricalcolo SEMPRE dopo ogni task
+
+Il giro non e' fissato all'inizio: ogni volta che il bot deve
+scegliere la prossima task, ricalcola tutto. Cosi' se spawna un
+sabotaggio (vitale) il bot abbandona la task corrente per andare
+a risolverlo.
+
+#### Preview giro (F1)
+
+Nuovo popup attivabile con il tasto **F1** o da **Strumenti ->
+Preview giro Auto-All**:
+
+- **Lista a sinistra**: sequenza numerata con dettagli
+  (nome, lunghezza, vitale/multi-fase, distanza, score)
+- **Linee sulla mappa**: connettono le task in sequenza
+  (verde = prossima, rosso = vitale, arancione = altre)
+- **Numeri sui pallini**: 1, 2, 3, ... nell'ordine del giro
+- Si aggiorna ogni 1s automaticamente
+
+Premi F1 una seconda volta per chiudere.
+
+#### Pesi configurabili (Strumenti -> Pesi pianificatore Auto-All)
+
+Nuovo popup con slider per modificare in runtime:
+- Bonus vitale (0 - 5000)
+- Bonus lunghezza (Long, Common, N/A, Short - ognuno 0-200)
+- Bonus multi-fase (0 - 200)
+- Alpha distanza (0 - 10)
+- Toggle "Usa A* per le distanze"
+
+Le modifiche vengono salvate in `planner_weights.json` per
+persistenza fra sessioni. Bottone "Ripristina default" per
+tornare ai valori originali.
+
+### Nuovi file
+
+| File | Scopo |
+|---|---|
+| `among_us_ai/managers/task_planner.py` | Classe TaskPlanner: calcolo score + giro |
+| `among_us_ai/ui/mixins/planner_ui.py` | Mixin con popup preview giro + popup pesi |
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/core/config.py` | 8 nuove costanti `PLANNER_*` |
+| `among_us_ai/ui/app.py` | Istanza `self.task_planner`, caricamento pesi da file, chiamata `_update_preview_giro` nel loop |
+| `among_us_ai/ui/mixins/__init__.py` | Export `PlannerMixin` |
+| `among_us_ai/ui/mixins/auto_quest.py` | `_update_auto_all` ora usa `task_planner.scegli_prossima()` invece di distanza euclidea |
+| `among_us_ai/ui/mixins/ui_setup.py` | Voce menu "Preview giro" + "Pesi pianificatore", handler tasto F1 |
+| `among_us_ai/ui/mixins/rendering_entities.py` | Nuovo `_render_giro_preview` per disegnare linee numerate sulla mappa |
+
+### Persistenza
+
+Nuovo file `planner_weights.json` (creato automaticamente quando
+modifichi i pesi). Esempio:
+
+```json
+{
+  "PLANNER_PESO_VITALE": 1000.0,
+  "PLANNER_PESO_LONG": 30.0,
+  "PLANNER_PESO_COMMON": 20.0,
+  "PLANNER_PESO_NA": 25.0,
+  "PLANNER_PESO_SHORT": 10.0,
+  "PLANNER_PESO_MULTI": 15.0,
+  "PLANNER_ALPHA_DIST": 0.5,
+  "PLANNER_USE_ASTAR": true
+}
+```
+
+### Verifica fatta
+
+Test funzionale con scenario realistico (bot in Cafeteria con 6
+task miste tra vitali, multi-fase, Long, Common, Short):
+
+| # | Task | Score |
+|---|---|---|
+| 1 | O2 Sabotage (vitale, N/A) | 1020 |
+| 2 | Submit Scan (Long, multi) | 42 |
+| 3 | Empty Garbage (Long, multi) | 42 |
+| 4 | Wires (Long) | 23 |
+| 5 | Swipe Card (Common) | 11 |
+| 6 | Download Data (Short) | 3 |
+
+Ordine corretto: vitali -> multi-fase -> Long -> Common -> Short ✓
+
+Test import package: OK
+Test syntax: OK su tutti i file modificati
+Test API `task_planner.calcola_giro()`: OK
+Test API `task_planner.scegli_prossima()`: OK
+
+### Cosa NON e' cambiato
+
+- Logica del run delle task (subprocess, pre-warming, STOP watcher): invariata
+- Pathfinding A*: invariato (il planner lo USA solo per stimare)
+- Sistema Ripeti, Loop guard retry: invariati
+- API del motore: invariata
+- File JSON delle task: invariati
+- Comportamento Auto-Quest senza Auto-All attivo: invariato
+
+
 ## v2.2.37 — Normalizzazione cosmetica: tag log, commenti, status messages
 
 ### Richiesta utente
