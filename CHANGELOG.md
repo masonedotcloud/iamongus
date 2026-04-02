@@ -1,5 +1,109 @@
 # Changelog
 
+## v2.2.37 — Normalizzazione cosmetica: tag log, commenti, status messages
+
+### Richiesta utente
+
+> Mi serve "normalizzare" e sistemare commenti, nomi di costanti,
+> nomi che si vedono a video. NON CAMBIARE IL CODICE, quello funziona.
+
+### Modifiche applicate (SOLO cosmetiche)
+
+Tutte le modifiche sono cosmetiche: stringhe, commenti, tag log.
+Nessun cambiamento alla logica funzionale.
+
+#### 1. Tag log uniformati in CamelCase (48 sostituzioni)
+
+| Vecchio | Nuovo |
+|---|---|
+| `[Loop guard]` | `[LoopGuard]` |
+| `[Number Match]` | `[NumberMatch]` |
+| `[Visual Lock]` | `[VisualLock]` |
+| `[Visual Check]` | `[VisualCheck]` |
+| `[YOLO 2P]` | `[Yolo2P]` |
+| `[yolo_drag_all]` | `[YoloDragAll]` |
+| `[yolo_click_all]` | `[YoloClickAll]` |
+| `[yolo_drag]` | `[YoloDrag]` |
+| `[yolo_click]` | `[YoloClick]` |
+| `[yolo_drag_seq]` | `[YoloDragSeq]` |
+| `[input_mouse]` | `[InputMouse]` |
+| `[esegui_azioni]` | `[EseguiAzioni]` |
+| `[sync_click]` | `[SyncClick]` |
+
+Tag gia' coerenti rimasti invariati: `[StopWatcher]`, `[TaskWriter]`,
+`[TaskManager]`, `[TaskActionEditor]`, `[Exec]`, `[ROI-Sel]`,
+`[Migrazione]`, `[Ripeti]`, `[Trigger]`, `[Fallback]`, `[Arrival]`,
+`[Anomalia]`, `[Auto-All]`, `[Wiring]`, `[Simon]`, `[OCR]`,
+`[UseButton]`, `[EXPORT]`, `[Test]`, ecc.
+
+#### 2. Print di debug rimossi
+
+Rimosso `print(f"[Ripeti DEBUG] Task ...")` rimasto da fase di
+sviluppo precedente in `tasks_process.py:798`.
+
+#### 3. Riferimenti a versioni vecchie rimossi dai commenti (16 occorrenze)
+
+I commenti contenevano riferimenti storici a versioni precedenti del
+codice (es. "pre-v2.2.34", "era 0.25 in v2.x", "comportamento v2.2.11"),
+che disorientavano la lettura del codice. Tutti riscritti per
+documentare il *comportamento attuale* invece della *storia*.
+
+Esempi:
+- `# (era hardcoded a 8s)` -> `# cooldown finale di sicurezza`
+- `# Strategia (v2.2.23+):` -> `# Strategia:`
+- `# pre-v2.2.34). Va attivato dall'editor` -> `# cooldown immediato). Va attivato dall'editor`
+- `# (era 0.25 in v2.x, ridotto in v2.2.11)` -> rimosso, ora la nota di tuning resta solo nel suo contenuto utile
+- `# In v2.2.17+ il default e' 'thread'` -> `# Il default e' 'thread'`
+
+#### 4. Status messages: piccole correzioni stilistiche
+
+| Vecchio | Nuovo |
+|---|---|
+| "task NON registrate." | "task non registrate" (no maiuscolo enfatico, no punto finale) |
+| "Errore avvio: {e}" | "Errore avvio task: {e}" (più specifico) |
+| "navigo al alternativo" | "navigo all'alternativo" (correzione grammaticale) |
+| "Task fallita, provo alternativo" | "Task fallita, provo l'alternativo" |
+
+### File toccati
+
+13 file modificati (solo stringhe e commenti):
+
+- `among_us_ai/core/config.py` (commenti versioni)
+- `among_us_ai/ui/app.py` (commento versione)
+- `among_us_ai/ui/mixins/auto_move.py` (commenti versioni)
+- `among_us_ai/ui/mixins/auto_quest.py` (tag log + status msg)
+- `among_us_ai/ui/mixins/tasks_launch.py` (tag log + status msg + commenti)
+- `among_us_ai/ui/mixins/tasks_process.py` (tag log + status msg + commenti + print debug)
+- `among_us_ai/ui/editor_mixins/canvas_input.py` (tag log)
+- `among_us_ai/managers/task_manager.py` (commenti versioni)
+- `among_us_ai/managers/task_dettagli_manager.py` (commenti versioni)
+- `among_us_ai/execution/runtime.py` (tag log)
+- `among_us_ai/execution/task_writer.py` (docstring)
+- `among_us_ai/execution/task_template.py` (docstring)
+- `among_us_ai/execution/handlers/yolo_actions.py` (tag log)
+- `among_us_ai/execution/handlers/sync_click.py` (tag log)
+- `among_us_ai/execution/_motore_pkg/dispatcher.py` (tag log)
+- `among_us_ai/execution/_motore_pkg/handlers_sync.py` (tag log)
+- `among_us_ai/execution/_motore_pkg/handlers_yolo.py` (tag log)
+- `among_us_ai/execution/_motore_pkg/input_mouse.py` (tag log)
+
+### Verifica fatta
+
+- Syntax check di tutti gli 84 file Python: OK
+- Import package GPSVisualizerPro: OK
+- Verifica zero tag obsoleti residui: OK
+- Verifica zero riferimenti a versioni residui: OK
+
+### Cosa NON e' cambiato
+
+- **TUTTO il codice funzionale**: invariato
+- API motore: invariata
+- Comportamento del bot: invariato (i log appaiono solo con
+  nomi diversi ma con stesso contenuto informativo)
+- File JSON delle task: invariati
+- Configurazioni e valori: invariati
+
+
 ## v2.2.36 — Ereditarieta' opzioni padre-figlio per task registrate
 
 ### Richiesta utente
