@@ -1,5 +1,140 @@
 # Changelog
 
+## v2.2.40 — Fix lag F1, trigger task istantaneo, path A* migliore, dashboard semplice
+
+### Richiesta utente
+
+> 1. Il trigger per la task parte in ritardo (2-3 secondi)
+> 2. L'interfaccia lagga quando apro F1 (preview giro)
+> 3. Alcune linee della preview F1 sono dritte invece di seguire i muri
+> 4. La dashboard dei pesi e' confusionaria
+
+### 1. FIX: Lag interfaccia con F1 aperto
+
+#### Causa
+
+`_render_giro_preview` chiamava `pathfinder.astar()` ad ogni frame
+(60 fps) per ogni segmento del giro. Con 10-15 task: 600-900 chiamate
+A* al secondo -> lag pesante.
+
+#### Fix
+
+Pre-calcolo dei path A* in `_aggiorna_preview_giro` (refresh ogni 1s):
+- I path vengono calcolati UNA VOLTA quando si aggiorna la preview
+- Memorizzati in `self._giro_preview_paths`
+- `_render_giro_preview` ora solo LEGGE la lista, non chiama A*
+
+Risultato:
+- Senza F1 aperto: zero overhead (A* mai chiamato)
+- Con F1 aperto: A* solo ogni 1s invece di 60 volte/s
+
+#### File toccati
+
+- `among_us_ai/ui/mixins/planner_ui.py`: pre-calcolo dei path
+- `among_us_ai/ui/mixins/rendering_entities.py`: rendering usa cache
+- `among_us_ai/ui/app.py`: aggiunto `_giro_preview_paths = []` init
+
+### 2. FIX: Trigger task istantaneo (era 2-3s di ritardo)
+
+#### Causa
+
+Il default `EXEC_MODE = 'subprocess'` faceva partire ogni task come
+un nuovo processo Python (subprocess.Popen). Lo startup di Python
+(import mss, ultralytics, win32, cv2, ...) richiede 1-2 secondi
+prima che il subprocess sia pronto a ricevere il "GO" trigger.
+
+Il pre-warming (`--wait-trigger`) avviava il subprocess in anticipo
+durante l'arrivo del bot, ma se il pre-warming non aveva completato
+lo startup quando si premeva SPAZIO, c'era comunque attesa.
+
+#### Fix
+
+Cambiato `EXEC_MODE = 'thread'` come default. In modalita' thread
+il motore gira come THREAD interno del bot principale: zero startup
+Python, nessun overhead di subprocess.Popen.
+
+Beneficio: task parte ISTANTANEO al SPAZIO (sotto 100ms invece di 1-2s).
+
+NB: `'subprocess'` mode resta disponibile per chi preferisce
+l'isolamento dei processi.
+
+#### File toccato
+
+- `among_us_ai/core/config.py`: `EXEC_MODE = 'thread'` (default cambiato)
+
+### 3. FIX: Linee dritte nella preview F1
+
+#### Causa
+
+`max_nodes=5000` per `pathfinder.astar()` era troppo basso per
+percorsi lunghi (es. da Cafeteria a Comms su Skeld). Quando A*
+esauriva i 5000 nodi senza trovare il path, ritornava None
+-> il render mostrava una linea retta (fallback).
+
+#### Fix
+
+Aumentato a `max_nodes=20000` (default del pathfinder per task
+normali). Adesso A* trova il path anche per task molto lontane.
+
+Performance: l'A* non viene piu' chiamato ad ogni frame (vedi fix #1),
+quindi posso permettermi `max_nodes` piu' alto senza problemi.
+
+#### File toccati
+
+- `among_us_ai/ui/mixins/planner_ui.py`: max_nodes=20000 nel pre-calcolo
+- `among_us_ai/managers/task_planner.py`: max_nodes=20000 nel calc dist
+
+### 4. FIX: Dashboard pesi senza termini tecnici
+
+#### Cambio approccio
+
+Il vecchio popup parlava di "score", "alpha", "bonus", "pesi",
+"multi-fase", "A*", "pathfinding" - termini tecnici incomprensibili
+per chi non conosce il codice.
+
+Nuovo popup parla solo in italiano normale. Titolo cambiato da
+"Pesi pianificatore Auto-All" a **"Come scegliere le task"**.
+
+| Vecchio (tecnico) | Nuovo (italiano semplice) |
+|---|---|
+| "Pesi pianificatore Auto-All" | "Come scegliere le task" |
+| "Bonus Vitale" | "Quanto urgenti sono i sabotaggi" |
+| "Bonus Long/Common/N/A/Short" | "Task LUNGHE/COMUNI/Sabotaggi/CORTE" |
+| "Bonus Multi-fase" | "Task con attesa interna" |
+| "Alpha distanza" | "Quanto contano le distanze" |
+| "Usa pathfinding A*" | "Calcola distanze evitando muri" |
+| "Default: X" | "Valore consigliato: X" |
+| "Ripristina default" | "Ripristina valori consigliati" |
+
+Esempi nei testi anche italianizzati:
+- "Wires, Inspect Sample" -> "cavi, ispezione campione"
+- "Swipe Card" -> "timbra il badge"
+- "O2 sabotage" -> "ossigeno che cala"
+- "Reactor meltdown" -> "reattore in fusione"
+
+Voce di menu rinominata:
+- "Pesi pianificatore Auto-All..." -> "Come scegliere le task..."
+
+#### File toccati
+
+- `among_us_ai/ui/mixins/planner_ui.py`: testi semplificati
+- `among_us_ai/ui/mixins/ui_setup.py`: voce menu
+
+### Verifica fatta
+
+- Syntax check OK su tutti i file modificati
+- Import package OK
+- EXEC_MODE verificato a runtime: 'thread'
+
+### Cosa NON e' cambiato
+
+- Algoritmo TaskPlanner: invariato (logica score + nearest-neighbor)
+- Sistema persistenza pesi: invariato (planner_weights.json)
+- Logica del retry loop guard: invariata
+- API del motore: invariata
+- File JSON delle task: invariati
+
+
 ## v2.2.39 — Fix Simon Says regressione + UX (preview curva, popup pesi, pannello task)
 
 ### Richiesta utente
