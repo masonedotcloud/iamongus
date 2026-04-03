@@ -1,5 +1,166 @@
 # Changelog
 
+## v2.2.39 — Fix Simon Says regressione + UX (preview curva, popup pesi, pannello task)
+
+### Richiesta utente
+
+> 1. Start Reactor (Simon Says) si e' rotto - prima funzionava
+> 2. Preview giro: linee curve che seguono il percorso (no linea retta)
+> 3. Popup pesi pianificatore: e' ambiguo, sistemalo
+> 4. Popup di lancio task "blocca tutto" - rendilo meno invasivo e elegante
+
+### 1. FIX: Simon Says rotto al round 2+
+
+#### Sintomo
+
+Il bot esegue correttamente il round 1 (1 LED) ma dal round 2 in poi
+non rileva piu' i flash o ne perde alcuni, fallendo la sequenza.
+
+#### Causa: regressione introdotta in v2.2.21
+
+In v2.2.21 era stata aggiunta una "ottimizzazione" all'handler:
+> "PAUSA prima del round successivo + RICATTURA della base"
+
+Logica: dopo ogni round, pausa 1s e ricattura la `base_colors` per il
+round successivo, "per gestire eventuali animazioni di feedback".
+
+**Problema**: il gioco INIZIA a mostrare la sequenza del round
+successivo **immediatamente dopo i nostri click**. Quando dopo 1s
+ricatturiamo la base, c'e' la concreta possibilita' che un LED del
+nuovo round sia GIA' ACCESO. La nuova base diventa errata: quel LED
+viene memorizzato come "stato spento" -> il bot non lo rilevera' piu'
+come flash quando si accendera' di nuovo.
+
+#### Fix: rollback alla logica monolite
+
+Confronto byte-per-byte con il `bot_original/bot_src/main.py:1731-1770`
+ha confermato che il monolite originale (funzionante) cattura
+`base_colors` **una sola volta all'inizio** e non la ricattura mai.
+
+I display point sono in posizione FISSA sullo schermo, e lo stato
+"spento" del LED non cambia tra round (e' sempre lo stesso colore di
+sfondo). La ricattura era una "miglioria" non necessaria che ha
+introdotto la regressione.
+
+#### File modificato
+
+`among_us_ai/execution/_motore_pkg/handlers_simon.py`:
+- Rimossa `_read_base()` helper interno e relativi commenti
+- Rimossa la ricattura tra round (righe 129-133)
+- Rimossa la costante `POST_CLICK_PAUSE = 1.0`
+- Mantenuti i log piu' verbosi (utili per debug)
+- Logica ora identica al monolite originale
+
+### 2. Preview giro: linee curve seguendo il pathfinding
+
+Le linee fra task in sequenza ora seguono il **percorso A* reale**
+invece di essere linee rette che attraversano i muri.
+
+#### Logica
+
+Per ogni segmento "task i -> task i+1" il rendering:
+1. Calcola `pathfinder.astar((prev_x, prev_y), (tx, ty))`
+2. Disegna la linea come sequenza di segmenti consecutivi fra
+   waypoint dell'A*
+3. Se A* fallisce (target irraggiungibile o no map): fallback su
+   linea retta sottile (visivamente diversa dalle linee normali)
+
+#### File modificato
+
+`among_us_ai/ui/mixins/rendering_entities.py`:
+- `_render_giro_preview`: usa `self.pathfinder.astar()` per ogni
+  segmento invece di una singola `draw_line` da inizio a fine
+
+### 3. Popup pesi pianificatore: UI chiara con sezioni espandibili
+
+Il vecchio popup elencava tutti i 7 slider in fila senza spiegazioni,
+con simboli ambigui (es. solo "Bonus vitale" senza dire a quando
+serve, dove sono i defaults, ecc.).
+
+#### Nuovo design
+
+Popup ora 600x640 con **4 sezioni `collapsing_header`** chiare:
+
+1. **Priorita' per TIPO di task** (aperta di default)
+   - Spiegazione: "le vitali hanno sempre la priorita'"
+   - Slider Bonus Vitale + esempi (O2 sabotage, Reactor meltdown)
+   - Default mostrato sotto: "1000 - le vitali dominano sempre"
+
+2. **Bonus in base alla LUNGHEZZA** (aperta di default)
+   - Spiegazione: "quanto preferire una task in base alla durata"
+   - 4 slider con esempi concreti per ognuno:
+     - `Long` (Wires, Inspect Sample)
+     - `Common` (Swipe Card)
+     - `N/A` (sabotaggi piccoli)
+     - `Short` (Download Data)
+
+3. **Bonus task MULTI-FASE** (chiusa di default)
+   - Spiegazione: "task con attese interne, conviene farle vicine"
+   - Slider unico con esempi (Submit Scan, Empty Garbage)
+
+4. **Quanto contano le DISTANZE** (aperta di default)
+   - Spiegazione: "valore BASSO = bot fa giri lunghi per priorita'"
+   - "valore ALTO = bot preferisce sempre le task vicine"
+   - Slider penalita' + toggle "Usa pathfinding A*" con descrizione
+
+Slider con format chiaro:
+- `"30 punti"` invece di solo `"30"`
+- `"0.50 x dist"` per la penalita' distanza
+
+Bottoni rinominati senza brackets:
+- `[ Applica ]` -> `Salva e applica`
+- `[ Ripristina default ]` -> `Ripristina default`
+- `[ Annulla ]` -> `Annulla`
+
+#### File modificato
+
+`among_us_ai/ui/mixins/planner_ui.py`:
+- `_apri_popup_pesi_pianificatore` riscritto con sezioni espandibili
+
+### 4. Popup di lancio task: pannello informativo non modale
+
+Il popup "Task: X" era **modale** (blocca tutto, non puoi interagire
+con la mappa, deve essere chiuso prima di fare altro) e centrato.
+Adesso diventa un **pannello informativo discreto** in basso a destra.
+
+#### Differenze
+
+| Aspetto | Prima | Adesso |
+|---|---|---|
+| Modale | Si' (blocca tutto) | No |
+| Dimensione | 440 x 260 | 360 x 130 |
+| Posizione | Centro schermo | Basso destra |
+| Focus | Ruba il focus all'apparire | No |
+| Bring-to-front | Si' | No |
+| Label | `"Task: X"` | `"In esecuzione: X"` |
+| Collapsable | No | Si' |
+| Interazione con mappa | Bloccata | Libera |
+
+Puoi continuare a usare zoom, pan, status bar e altri controlli
+mentre la task gira. Il pannello e' anche **collapsabile** (puoi
+ridurlo a una barra di titolo se ti da' fastidio).
+
+#### File modificato
+
+`among_us_ai/ui/mixins/tasks_launch.py`:
+- `_avvia_task_selezionata`: parametri popup cambiati
+
+### Verifica fatta
+
+- Syntax check di tutti i file modificati: OK
+- Import del package: OK
+- Confronto algoritmo Simon Says con monolite originale: OK (identico)
+- Test struttura nuovo popup pesi: OK
+
+### Cosa NON e' cambiato
+
+- API motore: invariata
+- Algoritmo TaskPlanner: invariato
+- Pathfinding A*: invariato
+- Tutti gli altri handler (yolo, drag, click): invariati
+- File JSON delle task: invariati
+
+
 ## v2.2.38 — TaskPlanner: pianificazione intelligente Auto-All
 
 ### Richiesta utente
