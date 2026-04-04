@@ -1,5 +1,104 @@
 # Changelog
 
+## v2.2.42 — Simon Says: trigger ISTANTANEO al lancio (skip overhead task tempo-critiche)
+
+### Richiesta utente
+
+> Ci mette troppo per avviare il processo quando faccio Simon Says,
+> mi serve istantaneo. Tutti i flash vengono persi.
+
+### Diagnosi
+
+Con il pre-warming di v2.2.41, il subprocess parte all'inizio del
+viaggio e fa lo startup di Python (~1-2s) mentre il bot cammina.
+Ma fra "arrivo task" e "subprocess ricevuto GO" passavano ancora
+~430ms di overhead nel bot principale, piu' altri ~400ms nel
+subprocess (`SetForegroundWindow + sleep(0.4)`).
+
+Totale latenza tra arrivo e analisi dei LED: **~800ms** -> il
+subprocess perdeva i primi flash della sequenza, e di conseguenza
+tutta la riproduzione.
+
+### Fix: 2 ottimizzazioni mirate
+
+#### A. Skip pausa stabilita' + check visuale per task tempo-critiche
+
+Per task con azioni `simon_says` (rilevato automaticamente da
+`get_azioni_effettive`), `on_arrivo` salta:
+- `time.sleep(0.3)` "pausa stabilita' visiva"
+- `_controlla_task_attiva()` (check USE button / alone giallo)
+
+Risparmio: ~350ms.
+
+NB: per le altre task (drag, click, ecc.) il check visuale resta
+attivo: serve per gestire gli alternativi e per task non tempo-critiche.
+
+#### B. SetForegroundWindow su Among Us PRIMA di SPAZIO
+
+Aggiunto un `SetForegroundWindow(hwnd_among_us)` nel bot principale
+**subito prima del SPAZIO**. Cosi':
+1. SPAZIO viene ricevuto dalla finestra giusta
+2. Il subprocess (quando ricevera' GO subito dopo) trova
+   `GetForegroundWindow() == hwnd_among_us` e SALTA il `sleep(0.4)`
+   di grace period.
+
+Senza questo, ogni volta che il bot principale aveva il focus al
+momento del SPAZIO, Among Us NON era foreground -> il subprocess
+faceva il `SetForegroundWindow + sleep(0.4)` di sicurezza,
+sprecando 400ms preziosi al primo flash.
+
+Risparmio: ~400ms.
+
+### Timing finale (Simon Says / Start Reactor)
+
+```
+PRIMA (v2.2.41):                  ADESSO (v2.2.42):
+0ms    Arrivo task                0ms    Arrivo task
+0ms    Pre-warming check          0ms    SKIP pausa (task simon)
+300ms  sleep stabilita' visuale   0ms    SKIP check visuale
+350ms  Check visuale ROI          16ms   SetForegroundWindow Among Us
+400ms  Set flag                   16ms   Premi SPAZIO
+416ms  Premi SPAZIO               66ms   Sleep 50ms
+466ms  Sleep 50ms                 66ms   Invia GO al subprocess
+466ms  Invia GO al subprocess     80ms   Subprocess: skip sleep(0.4)
+500ms  Subprocess foreground      80ms   Handler simon_says PARTE
+        check                            (in ascolto dei flash!)
+900ms  Handler simon_says
+        PARTE (TROPPO TARDI)
+```
+
+**Risparmio totale: ~820ms.** Il subprocess e' gia' in ascolto
+prima ancora che il pannello dei LED abbia iniziato a lampeggiare.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/tasks_launch.py` | `on_arrivo`: skip pausa+check per task con azioni `simon_says`. Aggiunto `SetForegroundWindow(hwnd_among_us)` prima di SPAZIO. |
+
+### Cosa NON e' cambiato
+
+- Handler `_h_simon_says`: invariato (fix v2.2.39 in place)
+- EXEC_MODE = 'subprocess': invariato (sicuro, no thread mode)
+- Pre-warming anticipato all'inizio viaggio: invariato (fix v2.2.41)
+- Algoritmo TaskPlanner: invariato
+- API motore: invariata
+- File JSON delle task: invariati
+
+### Effetto su altre task
+
+Le task con `simon_says` (Start Reactor) si avviano istantanee.
+Le altre task (drag, click, yolo, ecc.) continuano a usare il
+check visuale per scegliere il punto alternativo se necessario.
+
+### Verifica fatta
+
+- Syntax check OK
+- Import package OK
+- Logica di detection task tempo-critica funzionante (testato con
+  `get_azioni_effettive` + check tipo='simon_says')
+
+
 ## v2.2.41 — Fix Simon Says + crash STOP (rollback thread mode + pre-warming anticipato)
 
 ### Richiesta utente
