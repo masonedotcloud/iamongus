@@ -1,5 +1,105 @@
 # Changelog
 
+## v2.2.41 — Fix Simon Says + crash STOP (rollback thread mode + pre-warming anticipato)
+
+### Richiesta utente
+
+> Adesso quando faccio la task del Start Reactor di Simon Says,
+> innanzitutto non va, poi se la stoppo crasha tutto.
+
+### Causa: `EXEC_MODE = 'thread'` introdotto in v2.2.40
+
+In v2.2.40 avevo cambiato `EXEC_MODE` da `'subprocess'` (default storico)
+a `'thread'` per eliminare il ritardo di 2-3s al lancio task.
+
+Il problema: in modalita' thread, `task_thread_runner.py` reindirizza
+`sys.stdout` e `sys.stderr` (variabili GLOBALI per processo) per
+catturare le print del motore:
+
+```python
+sys.stdout = pipe_writer  # GLOBALE: cattura TUTTE le print del bot
+sys.stderr = pipe_writer
+```
+
+Effetti collaterali:
+- **Simon Says rotto**: tutte le print del bot principale (rendering,
+  key handler, ecc.) finiscono nella pipe del thread Simon. Il buffer
+  della pipe (4-64KB) si riempie -> le write si bloccano -> handler
+  Simon si congela tra round.
+- **Crash al STOP**: `terminate()` chiude la pipe del thread, ma
+  `sys.stdout` resta puntato a un oggetto con fd chiuso. La prossima
+  print del bot principale crasha con `OSError`.
+
+### Fix: 2 azioni combinate
+
+#### A. Rollback EXEC_MODE a 'subprocess' (default)
+
+Il subprocess e' isolato: stdout del motore va su pipe, stdout del bot
+principale resta intatto. Nessun rischio di blocco/crash.
+
+```python
+EXEC_MODE = 'subprocess'  # default sicuro
+```
+
+`'thread'` resta disponibile per chi vuole testare (con i caveat noti).
+
+#### B. Pre-warming ANTICIPATO all'inizio viaggio
+
+Il subprocess viene avviato adesso all'**inizio del viaggio** verso
+la task (`_avvia_task_selezionata`), invece che all'arrivo
+(`on_arrivo`). Cosi' lo startup di Python (1-2s) avviene MENTRE il
+bot cammina, e quando arriva il subprocess e' gia' pronto a ricevere
+"GO" su stdin.
+
+Beneficio:
+- Per task LONTANE (3+ secondi di viaggio): zero ritardo, il
+  subprocess e' pronto da un pezzo
+- Per task VICINE (sotto 1s di viaggio): il subprocess potrebbe
+  non aver completato il startup, ma anche cosi' siamo MOLTO meglio
+  di prima (1s residuo vs 1-2s di startup completo dall'arrivo)
+
+Cleanup: se l'utente annulla la task durante il viaggio
+(`_cancel_auto_move`), il subprocess pre-warmed viene killato per
+non restare appeso.
+
+### Tracking nuovo: `_task_prewarm_id`
+
+Nuovo attributo `self._task_prewarm_id` che indica per quale task
+e' stato fatto pre-warming. Usato da:
+- `_cancel_auto_move`: se attivo, killa il subprocess prima del reset
+- `on_arrivo`: se `_task_prewarm_id == id_task`, salta il nuovo avvio
+  (il subprocess e' gia' attivo)
+
+Reset automatico a None in tutti i punti dove `_task_process` viene
+resettato (fine task, ferma_processo, cleanup loop_guard, fallback).
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `core/config.py` | `EXEC_MODE = 'subprocess'` (era 'thread') + commento aggiornato |
+| `ui/app.py` | init `self._task_prewarm_id = None` |
+| `ui/mixins/tasks_launch.py` | Pre-warming spostato dall'on_arrivo all'inizio _avvia_task_selezionata. on_arrivo controlla `_task_prewarm_id` per evitare doppio avvio. |
+| `ui/mixins/tasks_process.py` | Reset `_task_prewarm_id = None` in tutti i 5 punti di reset di `_task_process` |
+| `ui/mixins/auto_move.py` | `_cancel_auto_move` killa subprocess pre-warmed se l'utente annulla |
+
+### Verifica fatta
+
+- Syntax check OK su tutti i file modificati
+- Import package OK
+- `EXEC_MODE` verificato a runtime: 'subprocess'
+- Handler `_h_simon_says` resta corretto (fix v2.2.39 invariato)
+
+### Cosa NON e' cambiato
+
+- Algoritmo TaskPlanner: invariato
+- Preview F1 + popup pesi: invariati (fix v2.2.40 invariati)
+- Sistema persistenza pesi: invariato
+- Logica del retry loop guard: invariata
+- API del motore: invariata
+- File JSON delle task: invariati
+
+
 ## v2.2.40 — Fix lag F1, trigger task istantaneo, path A* migliore, dashboard semplice
 
 ### Richiesta utente
