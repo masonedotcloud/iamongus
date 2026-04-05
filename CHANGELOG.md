@@ -1,5 +1,137 @@
 # Changelog
 
+## v2.2.43 — Simon Says: handler riscritto con base intelligente + rilevamento sequenza completa
+
+### Richiesta utente
+
+> La task appena si apre comparare la zona nera con i 9 quadrati
+> che si illumina e poi subito parte il gioco di luci, e ogni volta
+> che finiscono devo cliccare la sequenza. Quindi puoi fare che ogni
+> volta e' come se fosse una nuova risoluzione, perche' la sequenza
+> la fa vedere sempre tutta.
+
+### Comportamento del minigioco (capito ora!)
+
+Il gioco mostra:
+- Round 1: flash **1 LED (A)** -> clicco A
+- Round 2: flash **2 LED (A, B da capo!)** -> clicco A, B
+- Round 3: flash **3 LED (A, B, C da capo)** -> clicco A, B, C
+- Round 4: flash **4 LED da capo** -> clicco tutti
+- Round 5: flash **5 LED da capo** -> clicco tutti
+
+NON e' "1 nuovo LED per round" come pensavo. Ogni round ricomincia
+la sequenza dall'inizio, aumentata di 1 LED.
+
+### Problemi del handler precedente
+
+#### A. Cattura base sbagliata
+
+Il pannello inizia a lampeggiare SUBITO appena si apre. Quando
+l'handler partiva, catturava `base_img` un attimo dopo l'apertura,
+ma in quel momento UN LED POTEVA ESSERE GIA' ACCESO. Quel LED
+veniva memorizzato come "spento" -> mai piu' rilevato come flash
+per il resto della task.
+
+Risultato: spesso TIMEOUT al round 1 con 0 flash rilevati.
+
+#### B. Logica round basata su conteggio
+
+Il vecchio handler aspettava `rnd` flash per round (1 al primo,
+2 al secondo, ecc.). Ma se il primo round NON era stato rilevato
+(per il bug A), tutti i round successivi erano falsati.
+
+### Nuovo handler (v2.2.43)
+
+#### A. Cattura base INTELLIGENTE
+
+Invece di un singolo snapshot, l'handler prende **30 frame in 600ms**
+e per ogni LED tiene il valore RGB piu' SCURO (= spento).
+
+```python
+base_colors = None
+for _ in range(30):
+    img = sct.grab(monitor)
+    campione = [img[p[1]-cy, p[0]-cx, :3] for p in disp_pts]
+    if base_colors is None:
+        base_colors = [c.copy() for c in campione]
+    else:
+        for i, c in enumerate(campione):
+            if sum(c) < sum(base_colors[i]):
+                base_colors[i] = c.copy()
+    time.sleep(0.02)
+```
+
+Robustezza: anche se durante la cattura un LED si accende, nei 30
+frame il LED sara' spento in QUALCHE frame. Quel frame contribuisce
+con il valore scuro -> base corretta.
+
+#### B. Rilevamento "fine sequenza" basato su SILENZIO
+
+Invece di aspettare `rnd` flash, l'handler aspetta:
+- Almeno 1 flash registrato
+- Poi 0.6s di SILENZIO consecutivo (tutti LED spenti)
+- = sequenza terminata, vai a cliccare
+
+```python
+while True:
+    img = sct.grab(monitor)
+    lit_now = _led_acceso(img)
+    if lit_now != -1:
+        if lit_now != last_lit:
+            sequence.append(lit_now)
+            last_lit = lit_now
+            ultimo_flash_t = time.time()
+        time.sleep(DEBOUNCE_DT)
+    else:
+        last_lit = -1
+        if sequence and (time.time() - ultimo_flash_t > PAUSA_FINE_SEQUENZA):
+            break  # sequenza completa
+        time.sleep(POLL_DT)
+```
+
+Questo gestisce naturalmente il comportamento "sequenza completa
+ricominciata da capo": il bot la registra TUTTA, poi clicca TUTTA.
+
+#### C. Esci quando il pannello smette di lampeggiare
+
+Dopo i click di un round, l'handler aspetta il prossimo flash con
+un timeout di 4s (`TIMEOUT_PRIMO_FLASH`). Se non arriva, considera
+la task completata -> esce. Non c'e' piu' un conteggio max di round
+hardcoded a 5: si esce quando il gioco smette.
+
+### Parametri chiave (modificabili nel codice)
+
+```python
+SOGLIA_LED_ACCESO = 50         # diff RGB minima per "acceso"
+PAUSA_FINE_SEQUENZA = 0.6      # silenzio per dire "fine sequenza"
+TIMEOUT_PRIMO_FLASH = 4.0      # timeout primo flash per round
+POLL_DT = 0.02                 # polling 50fps
+DEBOUNCE_DT = 0.10             # debounce per non contare 2 volte
+```
+
+### Beneficio congiunto con fix v2.2.42
+
+In v2.2.42 ho ridotto la latenza fra arrivo task e GO subprocess a
+~80ms (era ~900ms). Adesso in v2.2.43 anche se il subprocess parte
+mentre il pannello sta gia' lampeggiando, la **cattura base
+intelligente** fa una scansione di 600ms catturando lo stato
+"spento" REALE di ogni LED. Robusto anche con timing imperfetto.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | Riscrittura completa del `_h_simon_says` |
+
+### Cosa NON e' cambiato
+
+- Flow lancio task (pre-warming + SPAZIO + GO): invariato (v2.2.42)
+- Posizione/scancode dei click: invariato
+- Algoritmo TaskPlanner: invariato
+- API motore: invariata
+- File JSON delle task: invariati
+
+
 ## v2.2.42 — Simon Says: trigger ISTANTANEO al lancio (skip overhead task tempo-critiche)
 
 ### Richiesta utente
