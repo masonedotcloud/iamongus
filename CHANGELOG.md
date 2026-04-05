@@ -1,5 +1,84 @@
 # Changelog
 
+## v2.2.44 — Simon Says: click iniziale per innescare il minigioco
+
+### Richiesta utente
+
+> Fai che preme prima un numero a caso del tastierino cosi' inizia
+> con la sequenza, altrimenti non riesci a farlo.
+
+### Comportamento reale (svelato)
+
+Il minigioco Start Reactor in Among Us NON parte automaticamente
+all'apertura del pannello: aspetta che il giocatore clicchi un LED
+qualsiasi del tastierino per "innescarsi". Senza questo click
+iniziale, il pannello resta inerte e nessuna sequenza viene mostrata.
+
+Tutti i tentativi precedenti di rilevare i flash fallivano perche'
+il bot stava semplicemente "ascoltando" un pannello fermo.
+
+### Fix
+
+Aggiunta una fase di **click di innesco** PRIMA del loop di ascolto:
+
+```python
+# === CLICK INIZIALE PER INNESCARE IL MINIGIOCO ===
+kx0, ky0 = keyp_pts[0]
+print(f"[Simon] Click iniziale di innesco sul keypad 0")
+_click_hold(kx0, ky0, durata)
+time.sleep(0.3)  # pausa per dare al gioco il tempo di partire
+```
+
+Clicchiamo il primo keypad (`idx=0`) come "trigger" del minigioco.
+Dopo 0.3s, il gioco mostra la sequenza del round 1 (1 LED).
+
+### Flow completo del handler (v2.2.44)
+
+1. Cattura base intelligente (30 frame in 600ms) - per avere
+   il colore "spento" REALE di ogni LED
+2. **Click di innesco** sul keypad 0 - per far partire il minigioco
+3. Per ogni round (max 6):
+   a. Aspetta inizio sequenza (timeout 4s)
+   b. Registra i flash uno a uno, con debounce
+   c. Quando vede 0.6s di silenzio -> sequenza completa
+   d. Clicca tutta la sequenza registrata
+4. Esce quando il pannello non mostra piu' flash (= task completata)
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | Aggiunto click iniziale di innesco PRIMA del loop dei round |
+
+### Log che vedrai
+
+```
+[Simon] Cattura base intelligente (30 frame in 600ms)...
+[Simon] Base catturata su 9 display point
+[Simon] Click iniziale di innesco sul keypad 0 (XXX,YYY)
+[Simon] Round 1: aspetto inizio sequenza...
+[Simon] Round 1: flash #1 = LED 3 (seq=[3])
+[Simon] Round 1: sequenza completa (1 flash), silenzio 0.62s -> clicco
+[Simon] Round 1: clicco 1 keypad...
+[Simon] Round 2: aspetto inizio sequenza...
+[Simon] Round 2: flash #1 = LED 3 (seq=[3])
+[Simon] Round 2: flash #2 = LED 7 (seq=[3, 7])
+[Simon] Round 2: sequenza completa (2 flash), silenzio 0.65s -> clicco
+[Simon] Round 2: clicco 2 keypad...
+...
+[Simon] Round 6: TIMEOUT, nessun flash rilevato in 4.0s.
+        Task probabilmente completata, esco.
+```
+
+### Cosa NON e' cambiato
+
+- Cattura base intelligente (v2.2.43): invariata
+- Rilevamento sequenza basato su silenzio: invariato
+- Flow di lancio task (v2.2.42): invariato
+- API motore: invariata
+- File JSON delle task: invariati
+
+
 ## v2.2.43 — Simon Says: handler riscritto con base intelligente + rilevamento sequenza completa
 
 ### Richiesta utente
