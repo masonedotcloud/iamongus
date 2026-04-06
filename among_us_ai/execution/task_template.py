@@ -15,7 +15,7 @@ Esistono TRE varianti di motore (in ordine cronologico):
 3. ``_motore_pkg/``: motore comune diviso in PACKAGE MODULARE.
    Cartella ``tasks_exec/_motore/`` con ~13 file Python (uno per
    famiglia di handler). I file task sono thin wrapper di ~74 righe.
-   E' il modello DEFAULT del task_writer (v2.1.9+).
+   E' il modello DEFAULT del task_writer.
 
 Il `task_writer` di default usa il modello (3): copia il package
 ``_motore_pkg/`` in ``tasks_exec/_motore/`` e genera i thin wrapper.

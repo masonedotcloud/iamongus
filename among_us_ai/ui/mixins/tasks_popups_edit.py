@@ -316,6 +316,26 @@ class TasksPopupsEditMixin:
                 default_value=bool(t.get('loop_guard_retry', False)),
             )
 
+            # Indicatore ereditarieta': se la task figlia eredita le azioni
+            # dal padre, mostra che eredita anche le opzioni (loop_guard_retry,
+            # delay_avvio, lunghezza, codice_personalizzato, cooldown).
+            # Il valore della figlia per queste opzioni VIENE IGNORATO a
+            # runtime in favore di quello del padre (padre vince sempre).
+            try:
+                azioni_proprie = self.task_mgr.esecuzione.get_azioni(id_t)
+                id_padre = t.get('id_padre')
+                if not azioni_proprie and id_padre is not None:
+                    padre = self.task_mgr.get_by_id(id_padre)
+                    if padre is not None:
+                        retry_padre = bool(padre.get('loop_guard_retry', False))
+                        dpg.add_text(
+                            f"   [eredita dal padre '{padre.get('nome','?')}': "
+                            f"loop_guard_retry={retry_padre}]",
+                            color=Colors.TEXT_DIM,
+                        )
+            except Exception:
+                pass
+
             dpg.add_checkbox(tag="mt_custom", label=" Codice Custom (non sovrascrivere il .py)",
                              default_value=bool(t.get('codice_personalizzato', False)))
 

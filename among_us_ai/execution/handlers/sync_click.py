@@ -63,7 +63,7 @@ def handle_sync_click(az, cx, cy, cw, ch, hwnd, is_test):
 
     while i_sync < len(punti_sync):
         if retry_count >= max_retries:
-            print(f"[sync_click] Tentativi massimi ({max_retries}) raggiunti. Annullamento.")
+            print(f"[SyncClick] Tentativi massimi ({max_retries}) raggiunti. Annullamento.")
             break
 
         _, _, bx_rel, by_rel = punti_sync[i_sync]
@@ -95,7 +95,7 @@ def handle_sync_click(az, cx, cy, cw, ch, hwnd, is_test):
             time.sleep(0.005)
         
         if not clicked:
-            print(f"[sync_click] Timeout al punto {i_sync+1}. Riavvio sequenza.")
+            print(f"[SyncClick] Timeout al punto {i_sync+1}. Riavvio sequenza.")
             i_sync = 0
             retry_count += 1
             # Pausa il thread per il tempo specificato (secondi)
@@ -121,7 +121,7 @@ def handle_sync_click(az, cx, cy, cw, ch, hwnd, is_test):
                 break
         
         if sequence_failed:
-            print(f"[sync_click] Fallimento rilevato al passo {failed_at_step}. Riavvio (tentativo {retry_count + 1}/{max_retries}).")
+            print(f"[SyncClick] Fallimento rilevato al passo {failed_at_step}. Riavvio (tentativo {retry_count + 1}/{max_retries}).")
             i_sync = 0
             retry_count += 1
             # Pausa il thread per il tempo specificato (secondi)

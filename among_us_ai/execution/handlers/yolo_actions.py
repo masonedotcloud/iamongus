@@ -69,7 +69,7 @@ def handle_yolo_drag(az, cx, cy, cw, ch, hwnd, is_test):
     roi_poly = az.get('roi_poly', [])
     start_t = time.time()
     found = False
-    print(f"[yolo_drag] Cerco oggetto con YOLO: {model_path}")
+    print(f"[YoloDrag] Cerco oggetto con YOLO: {model_path}")
     
     if _YOLO_OK and os.path.exists(model_path):
         model = YOLO(model_path)
@@ -125,7 +125,7 @@ def handle_yolo_drag(az, cx, cy, cw, ch, hwnd, is_test):
                 time.sleep(0.1)
     
     if not found:
-        print(f"[yolo_drag] Oggetto non trovato (cercato in: {model_path})")
+        print(f"[YoloDrag] Oggetto non trovato (cercato in: {model_path})")
     # Pausa il thread per il tempo specificato (secondi)
     time.sleep(attesa)
 
@@ -233,10 +233,10 @@ def handle_yolo_drag_all(az, cx, cy, cw, ch, hwnd, is_test):
                     time.sleep(0.15) 
                     
                 except Exception as e:
-                    print(f"[yolo_drag_all] Errore iterazione: {e}")
+                    print(f"[YoloDragAll] Errore iterazione: {e}")
                     break
     else:
-        print(f"[yolo_drag_all] YOLO o modello non trovato: {model_path}")
+        print(f"[YoloDragAll] YOLO o modello non trovato: {model_path}")
     
     _time.sleep(attesa)
 
@@ -332,7 +332,7 @@ def handle_yolo_click(az, cx, cy, cw, ch, hwnd, is_test):
                 _time.sleep(0.1)
     
     if not found:
-        print(f"[yolo_click] Oggetto non trovato (modello: {_model_path})")
+        print(f"[YoloClick] Oggetto non trovato (modello: {_model_path})")
     _time.sleep(attesa)
 
 
@@ -439,10 +439,10 @@ def handle_yolo_click_all(az, cx, cy, cw, ch, hwnd, is_test):
                     _time.sleep(0.15) 
                     
                 except Exception as e:
-                    print(f"[yolo_click_all] Errore iterazione: {e}")
+                    print(f"[YoloClickAll] Errore iterazione: {e}")
                     break
     else:
-        print(f"[yolo_click_all] YOLO o modello non trovato: {_model_path}")
+        print(f"[YoloClickAll] YOLO o modello non trovato: {_model_path}")
     
     # Pausa il thread per il tempo specificato (secondi)
     time.sleep(attesa)

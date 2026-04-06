@@ -88,7 +88,7 @@ def _h_yolo_drag(az, cx, cy, cw, ch, hwnd, durata, attesa):
                     pass
                 _time.sleep(0.1)
     if not found:
-        print(f'[yolo_drag] Oggetto non trovato (modello: {_model_path})')
+        print(f'[YoloDrag] Oggetto non trovato (modello: {_model_path})')
     _time.sleep(attesa)
 
 
@@ -129,12 +129,12 @@ def _h_yolo_drag_all(az, cx, cy, cw, ch, hwnd, durata, attesa):
     roi_poly = az.get('roi_poly', [])
 
     if not _YOLO_OK or not _os.path.exists(_model_path):
-        print(f'[yolo_drag_all] YOLO o modello non trovato: {_model_path}',
+        print(f'[YoloDragAll] YOLO o modello non trovato: {_model_path}',
               flush=True)
         _time.sleep(attesa)
         return
 
-    print(f'[yolo_drag_all] Inizio: target=({ex},{ey})', flush=True)
+    print(f'[YoloDragAll] Inizio: target=({ex},{ey})', flush=True)
     model = _YOLO(_model_path)
 
     def _drag_fasi(sx, sy, ex_t, ey_t):
@@ -263,7 +263,7 @@ def _h_yolo_drag_all(az, cx, cy, cw, ch, hwnd, durata, attesa):
                 if not valid_boxes:
                     empty_frames += 1
                     if empty_frames >= 3:
-                        print(f'[yolo_drag_all] Nessuna foglia in 3 frame. '
+                        print(f'[YoloDragAll] Nessuna foglia in 3 frame. '
                               f'Drag completati: {total_drags}', flush=True)
                         break
                     _time.sleep(0.1)
@@ -271,7 +271,7 @@ def _h_yolo_drag_all(az, cx, cy, cw, ch, hwnd, durata, attesa):
                 empty_frames = 0
                 best_box = max(valid_boxes, key=lambda b: b[2])
                 sx, sy = (best_box[0], best_box[1])
-                print(f'[yolo_drag_all] Drag {total_drags+1}: '
+                print(f'[YoloDragAll] Drag {total_drags+1}: '
                       f'({sx},{sy}) -> ({ex},{ey}) conf={best_box[2]:.2f}',
                       flush=True)
                 _drag_fasi(sx, sy, ex, ey)
@@ -281,11 +281,11 @@ def _h_yolo_drag_all(az, cx, cy, cw, ch, hwnd, durata, attesa):
                 # screenshot YOLO.
                 _time.sleep(0.4)
             except Exception as e:
-                print(f'[yolo_drag_all] Errore iterazione: {e}', flush=True)
+                print(f'[YoloDragAll] Errore iterazione: {e}', flush=True)
                 break
 
         if iteration >= max_iter:
-            print(f'[yolo_drag_all] Limite {max_iter} iter raggiunto. '
+            print(f'[YoloDragAll] Limite {max_iter} iter raggiunto. '
                   f'Drag completati: {total_drags}', flush=True)
 
     _time.sleep(attesa)
@@ -353,7 +353,7 @@ def _h_yolo_click(az, cx, cy, cw, ch, hwnd, durata, attesa):
                     pass
                 _time.sleep(0.1)
     if not found:
-        print(f'[yolo_click] Oggetto non trovato (modello: {_model_path})')
+        print(f'[YoloClick] Oggetto non trovato (modello: {_model_path})')
     _time.sleep(attesa)
 
 
@@ -425,10 +425,10 @@ def _h_yolo_click_all(az, cx, cy, cw, ch, hwnd, durata, attesa):
                         _time.sleep(0.05)
                     _time.sleep(0.15)
                 except Exception as e:
-                    print(f'[yolo_click_all] Errore iterazione: {e}')
+                    print(f'[YoloClickAll] Errore iterazione: {e}')
                     break
     else:
-        print(f'[yolo_click_all] YOLO o modello non trovato: {_model_path}')
+        print(f'[YoloClickAll] YOLO o modello non trovato: {_model_path}')
     _time.sleep(attesa)
 
 
@@ -531,11 +531,11 @@ def _h_yolo_drag_seq(az, cx, cy, cw, ch, hwnd, durata, attesa):
                     else:
                         _time.sleep(0.2)
                 except Exception as e:
-                    print(f'[yolo_drag_seq] Errore iterazione: {e}')
+                    print(f'[YoloDragSeq] Errore iterazione: {e}')
                     break
                 _time.sleep(0.1)
     else:
-        print(f'[yolo_drag_seq] YOLO o modello non trovato: {_model_path}')
+        print(f'[YoloDragSeq] YOLO o modello non trovato: {_model_path}')
     _time.sleep(attesa)
 
 

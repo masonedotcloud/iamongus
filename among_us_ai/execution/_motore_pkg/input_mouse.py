@@ -14,7 +14,7 @@ try:
     _pag.PAUSE = 0
     _OK = True
 except Exception as _e:
-    print(f"[input_mouse] pyautogui mancante: {_e}")
+    print(f"[InputMouse] pyautogui mancante: {_e}")
     _pag = None
     _OK = False
 

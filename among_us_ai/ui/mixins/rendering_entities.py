@@ -183,6 +183,110 @@ class RenderingEntitiesMixin:
 
         dpg.pop_container_stack()
 
+        # === RENDERING DEL GIRO PREVIEW (popup F1 aperto) ===
+        # Se la preview del giro Auto-All e' aperta, disegniamo le linee
+        # numerate fra task in sequenza sopra la mappa.
+        self._render_giro_preview(cam_x, cam_y, half_w, half_h, scale)
+
+    def _render_giro_preview(self, cam_x, cam_y, half_w, half_h, scale):
+        """
+        Disegna sulla mappa la sequenza del giro Auto-All quando la
+        preview e' aperta (popup F1). Mostra:
+          - Linee colorate che SEGUONO IL PATHFINDING A* fra task in
+            sequenza (NON in linea retta - rispettano muri/porte)
+          - Numeri sui pallini delle task per indicare l'ordine
+          - Linea dal bot alla prima task
+
+        PERFORMANCE: i path A* sono PRE-CALCOLATI in
+        `_aggiorna_preview_giro` (refresh ogni 1s) e qui solo letti
+        dalla lista `_giro_preview_paths`. NON viene chiamato A*
+        nel render loop, altrimenti laggherebbe pesantemente (60 fps
+        x N task A* = troppo).
+
+        Il nodo `giro_preview_node` e' pre-creato in `ui_setup.py`
+        come gli altri layer (task_node, player_node, ecc.).
+        """
+        # Cleanup contenuto precedente del nodo (svuoto i children)
+        if dpg.does_item_exist("giro_preview_node"):
+            dpg.delete_item("giro_preview_node", children_only=True)
+        else:
+            # Sicurezza: se per qualche motivo il nodo non esiste, esco.
+            # In condizioni normali viene creato in ui_setup.py.
+            return
+
+        giro = getattr(self, '_giro_preview_lista', None)
+        if not giro:
+            return
+        paths = getattr(self, '_giro_preview_paths', None) or []
+
+        dpg.push_container_stack("giro_preview_node")
+
+        try:
+            # Coordinate di partenza: posizione del bot
+            prev_x, prev_y = self.pos_target
+
+            for i, (task, dist, score) in enumerate(giro, 1):
+                tx, ty = task['x'], task['y']
+
+                # === COLORE DEL SEGMENTO ===
+                # Verde brillante per la prossima (i=1), rosso per le
+                # vitali successive, arancione/giallo per le altre.
+                if i == 1:
+                    col_line = (0, 255, 100, 220)    # verde (prossima)
+                    col_text = (0, 255, 100, 255)
+                elif task.get('vitale'):
+                    col_line = (255, 100, 100, 200)  # rosso (vitale)
+                    col_text = (255, 100, 100, 255)
+                else:
+                    # Sfumatura di arancione/giallo
+                    alpha = max(80, 200 - i * 20)
+                    col_line = (255, 200, 80, alpha)
+                    col_text = (255, 200, 80, 255)
+
+                # === DISEGNO DEL PERCORSO ===
+                # Leggo il path pre-calcolato per il segmento i-esimo.
+                # Se manca (lista pi corta del giro, A* fallita), uso
+                # linea retta come fallback.
+                path = paths[i - 1] if i - 1 < len(paths) else None
+
+                if path and len(path) >= 2:
+                    # Disegno il path come sequenza di segmenti consecutivi
+                    # fra i waypoint dell'A*.
+                    for j in range(1, len(path)):
+                        ax, ay = path[j-1]
+                        bx, by = path[j]
+                        sax = (ax - cam_x) * scale + half_w
+                        say = -(ay - cam_y) * scale + half_h
+                        sbx = (bx - cam_x) * scale + half_w
+                        sby = -(by - cam_y) * scale + half_h
+                        dpg.draw_line((sax, say), (sbx, sby),
+                                        color=col_line, thickness=2)
+                else:
+                    # Fallback: linea retta (path non disponibile)
+                    px = (prev_x - cam_x) * scale + half_w
+                    py = -(prev_y - cam_y) * scale + half_h
+                    wx = (tx - cam_x) * scale + half_w
+                    wy = -(ty - cam_y) * scale + half_h
+                    # Linea sottile per evidenziare il fallback
+                    dpg.draw_line((px, py), (wx, wy),
+                                    color=col_line, thickness=1)
+
+                # === NUMERO + CERCHIO SOPRA AL PALLINO TASK ===
+                wx = (tx - cam_x) * scale + half_w
+                wy = -(ty - cam_y) * scale + half_h
+                # Cerchio nero di sfondo per leggibilita' del numero
+                dpg.draw_circle((wx, wy), 16,
+                                  color=(0, 0, 0, 180),
+                                  fill=(0, 0, 0, 160),
+                                  thickness=2)
+                # Numero della sequenza al centro
+                dpg.draw_text((wx - 5 if i < 10 else wx - 9, wy - 8),
+                                str(i), color=col_text, size=14)
+
+                prev_x, prev_y = tx, ty
+        finally:
+            dpg.pop_container_stack()
+
     def _render_other_players(self, cam_x, cam_y, half_w, half_h, scale):
         """Disegna su DPG other players."""
         # Rimuove l'elemento DPG (cleanup)

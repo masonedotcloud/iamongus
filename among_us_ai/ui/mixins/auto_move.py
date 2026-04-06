@@ -82,7 +82,21 @@ class AutoMoveMixin:
         self.auto_is_2p_task = False
         self._task_alternativi_pendenti = None
         self.key_ctrl.release_all()
-        
+
+        # Se c'e' un subprocess pre-warmed in attesa, killalo: l'utente
+        # ha cancellato la task prima dell'arrivo, il subprocess non
+        # serve piu' (resterebbe appeso in attesa del "GO").
+        if (getattr(self, '_task_prewarm_id', None) is not None
+                and self._task_process is not None
+                and self._task_process.poll() is None):
+            try:
+                self._task_process.terminate()
+            except Exception:
+                pass
+            self._task_process = None
+            self._task_process_task_id = None
+            self._task_prewarm_id = None
+
         if stop_auto_all:
             self.auto_execute_all = False
             self._current_auto_all_task_id = None
@@ -95,7 +109,7 @@ class AutoMoveMixin:
                 dpg.bind_item_theme("btn_auto_all", th)
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("btn_auto_all", label="> Esegui TUTTE le Task")
-            
+
         if not silent:
             # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Annullato"
@@ -226,7 +240,7 @@ class AutoMoveMixin:
             if lock_target:
                 # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Task individuata visivamente! Lock acquisito."
-                print(f"[Visual Lock] Alone giallo rilevato a {lock_target}! Aggiorno il path.")
+                print(f"[VisualLock] Alone giallo rilevato a {lock_target}! Aggiorno il path.")
                 self._current_nav_target = lock_target
                 self._task_alternativi_pendenti = None # Lock acquisito
                 self.auto_final_target = lock_target
@@ -266,7 +280,7 @@ class AutoMoveMixin:
                 # il bot non entra nel raggio di interazione del gioco
                 # (il pulsante Use non si illumina).
                 #
-                # Strategia (v2.2.23+):
+                # Strategia:
                 #   1) Se la calibrazione del pulsante Use e' presente,
                 #      controlla se gia' acceso. Se SI -> lancia subito.
                 #   2) Altrimenti fai un micro-nudge WASD verso il target
@@ -510,7 +524,7 @@ class AutoMoveMixin:
                     return
 
         # === FASE 2: fallback nudge fisso (calibrazione mancante o
-        # disabilitata) - comportamento v2.2.11 ===
+        # disabilitata) - nudge fisso classico ===
         nudge_sec = getattr(GPSConfig, 'AUTO_FINAL_NUDGE_SEC', 0.0)
         if nudge_sec > 0:
             tx, ty = target

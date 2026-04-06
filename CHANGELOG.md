@@ -1,5 +1,1099 @@
 # Changelog
 
+## v2.2.44 — Simon Says: click iniziale per innescare il minigioco
+
+### Richiesta utente
+
+> Fai che preme prima un numero a caso del tastierino cosi' inizia
+> con la sequenza, altrimenti non riesci a farlo.
+
+### Comportamento reale (svelato)
+
+Il minigioco Start Reactor in Among Us NON parte automaticamente
+all'apertura del pannello: aspetta che il giocatore clicchi un LED
+qualsiasi del tastierino per "innescarsi". Senza questo click
+iniziale, il pannello resta inerte e nessuna sequenza viene mostrata.
+
+Tutti i tentativi precedenti di rilevare i flash fallivano perche'
+il bot stava semplicemente "ascoltando" un pannello fermo.
+
+### Fix
+
+Aggiunta una fase di **click di innesco** PRIMA del loop di ascolto:
+
+```python
+# === CLICK INIZIALE PER INNESCARE IL MINIGIOCO ===
+kx0, ky0 = keyp_pts[0]
+print(f"[Simon] Click iniziale di innesco sul keypad 0")
+_click_hold(kx0, ky0, durata)
+time.sleep(0.3)  # pausa per dare al gioco il tempo di partire
+```
+
+Clicchiamo il primo keypad (`idx=0`) come "trigger" del minigioco.
+Dopo 0.3s, il gioco mostra la sequenza del round 1 (1 LED).
+
+### Flow completo del handler (v2.2.44)
+
+1. Cattura base intelligente (30 frame in 600ms) - per avere
+   il colore "spento" REALE di ogni LED
+2. **Click di innesco** sul keypad 0 - per far partire il minigioco
+3. Per ogni round (max 6):
+   a. Aspetta inizio sequenza (timeout 4s)
+   b. Registra i flash uno a uno, con debounce
+   c. Quando vede 0.6s di silenzio -> sequenza completa
+   d. Clicca tutta la sequenza registrata
+4. Esce quando il pannello non mostra piu' flash (= task completata)
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | Aggiunto click iniziale di innesco PRIMA del loop dei round |
+
+### Log che vedrai
+
+```
+[Simon] Cattura base intelligente (30 frame in 600ms)...
+[Simon] Base catturata su 9 display point
+[Simon] Click iniziale di innesco sul keypad 0 (XXX,YYY)
+[Simon] Round 1: aspetto inizio sequenza...
+[Simon] Round 1: flash #1 = LED 3 (seq=[3])
+[Simon] Round 1: sequenza completa (1 flash), silenzio 0.62s -> clicco
+[Simon] Round 1: clicco 1 keypad...
+[Simon] Round 2: aspetto inizio sequenza...
+[Simon] Round 2: flash #1 = LED 3 (seq=[3])
+[Simon] Round 2: flash #2 = LED 7 (seq=[3, 7])
+[Simon] Round 2: sequenza completa (2 flash), silenzio 0.65s -> clicco
+[Simon] Round 2: clicco 2 keypad...
+...
+[Simon] Round 6: TIMEOUT, nessun flash rilevato in 4.0s.
+        Task probabilmente completata, esco.
+```
+
+### Cosa NON e' cambiato
+
+- Cattura base intelligente (v2.2.43): invariata
+- Rilevamento sequenza basato su silenzio: invariato
+- Flow di lancio task (v2.2.42): invariato
+- API motore: invariata
+- File JSON delle task: invariati
+
+
+## v2.2.43 — Simon Says: handler riscritto con base intelligente + rilevamento sequenza completa
+
+### Richiesta utente
+
+> La task appena si apre comparare la zona nera con i 9 quadrati
+> che si illumina e poi subito parte il gioco di luci, e ogni volta
+> che finiscono devo cliccare la sequenza. Quindi puoi fare che ogni
+> volta e' come se fosse una nuova risoluzione, perche' la sequenza
+> la fa vedere sempre tutta.
+
+### Comportamento del minigioco (capito ora!)
+
+Il gioco mostra:
+- Round 1: flash **1 LED (A)** -> clicco A
+- Round 2: flash **2 LED (A, B da capo!)** -> clicco A, B
+- Round 3: flash **3 LED (A, B, C da capo)** -> clicco A, B, C
+- Round 4: flash **4 LED da capo** -> clicco tutti
+- Round 5: flash **5 LED da capo** -> clicco tutti
+
+NON e' "1 nuovo LED per round" come pensavo. Ogni round ricomincia
+la sequenza dall'inizio, aumentata di 1 LED.
+
+### Problemi del handler precedente
+
+#### A. Cattura base sbagliata
+
+Il pannello inizia a lampeggiare SUBITO appena si apre. Quando
+l'handler partiva, catturava `base_img` un attimo dopo l'apertura,
+ma in quel momento UN LED POTEVA ESSERE GIA' ACCESO. Quel LED
+veniva memorizzato come "spento" -> mai piu' rilevato come flash
+per il resto della task.
+
+Risultato: spesso TIMEOUT al round 1 con 0 flash rilevati.
+
+#### B. Logica round basata su conteggio
+
+Il vecchio handler aspettava `rnd` flash per round (1 al primo,
+2 al secondo, ecc.). Ma se il primo round NON era stato rilevato
+(per il bug A), tutti i round successivi erano falsati.
+
+### Nuovo handler (v2.2.43)
+
+#### A. Cattura base INTELLIGENTE
+
+Invece di un singolo snapshot, l'handler prende **30 frame in 600ms**
+e per ogni LED tiene il valore RGB piu' SCURO (= spento).
+
+```python
+base_colors = None
+for _ in range(30):
+    img = sct.grab(monitor)
+    campione = [img[p[1]-cy, p[0]-cx, :3] for p in disp_pts]
+    if base_colors is None:
+        base_colors = [c.copy() for c in campione]
+    else:
+        for i, c in enumerate(campione):
+            if sum(c) < sum(base_colors[i]):
+                base_colors[i] = c.copy()
+    time.sleep(0.02)
+```
+
+Robustezza: anche se durante la cattura un LED si accende, nei 30
+frame il LED sara' spento in QUALCHE frame. Quel frame contribuisce
+con il valore scuro -> base corretta.
+
+#### B. Rilevamento "fine sequenza" basato su SILENZIO
+
+Invece di aspettare `rnd` flash, l'handler aspetta:
+- Almeno 1 flash registrato
+- Poi 0.6s di SILENZIO consecutivo (tutti LED spenti)
+- = sequenza terminata, vai a cliccare
+
+```python
+while True:
+    img = sct.grab(monitor)
+    lit_now = _led_acceso(img)
+    if lit_now != -1:
+        if lit_now != last_lit:
+            sequence.append(lit_now)
+            last_lit = lit_now
+            ultimo_flash_t = time.time()
+        time.sleep(DEBOUNCE_DT)
+    else:
+        last_lit = -1
+        if sequence and (time.time() - ultimo_flash_t > PAUSA_FINE_SEQUENZA):
+            break  # sequenza completa
+        time.sleep(POLL_DT)
+```
+
+Questo gestisce naturalmente il comportamento "sequenza completa
+ricominciata da capo": il bot la registra TUTTA, poi clicca TUTTA.
+
+#### C. Esci quando il pannello smette di lampeggiare
+
+Dopo i click di un round, l'handler aspetta il prossimo flash con
+un timeout di 4s (`TIMEOUT_PRIMO_FLASH`). Se non arriva, considera
+la task completata -> esce. Non c'e' piu' un conteggio max di round
+hardcoded a 5: si esce quando il gioco smette.
+
+### Parametri chiave (modificabili nel codice)
+
+```python
+SOGLIA_LED_ACCESO = 50         # diff RGB minima per "acceso"
+PAUSA_FINE_SEQUENZA = 0.6      # silenzio per dire "fine sequenza"
+TIMEOUT_PRIMO_FLASH = 4.0      # timeout primo flash per round
+POLL_DT = 0.02                 # polling 50fps
+DEBOUNCE_DT = 0.10             # debounce per non contare 2 volte
+```
+
+### Beneficio congiunto con fix v2.2.42
+
+In v2.2.42 ho ridotto la latenza fra arrivo task e GO subprocess a
+~80ms (era ~900ms). Adesso in v2.2.43 anche se il subprocess parte
+mentre il pannello sta gia' lampeggiando, la **cattura base
+intelligente** fa una scansione di 600ms catturando lo stato
+"spento" REALE di ogni LED. Robusto anche con timing imperfetto.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/execution/_motore_pkg/handlers_simon.py` | Riscrittura completa del `_h_simon_says` |
+
+### Cosa NON e' cambiato
+
+- Flow lancio task (pre-warming + SPAZIO + GO): invariato (v2.2.42)
+- Posizione/scancode dei click: invariato
+- Algoritmo TaskPlanner: invariato
+- API motore: invariata
+- File JSON delle task: invariati
+
+
+## v2.2.42 — Simon Says: trigger ISTANTANEO al lancio (skip overhead task tempo-critiche)
+
+### Richiesta utente
+
+> Ci mette troppo per avviare il processo quando faccio Simon Says,
+> mi serve istantaneo. Tutti i flash vengono persi.
+
+### Diagnosi
+
+Con il pre-warming di v2.2.41, il subprocess parte all'inizio del
+viaggio e fa lo startup di Python (~1-2s) mentre il bot cammina.
+Ma fra "arrivo task" e "subprocess ricevuto GO" passavano ancora
+~430ms di overhead nel bot principale, piu' altri ~400ms nel
+subprocess (`SetForegroundWindow + sleep(0.4)`).
+
+Totale latenza tra arrivo e analisi dei LED: **~800ms** -> il
+subprocess perdeva i primi flash della sequenza, e di conseguenza
+tutta la riproduzione.
+
+### Fix: 2 ottimizzazioni mirate
+
+#### A. Skip pausa stabilita' + check visuale per task tempo-critiche
+
+Per task con azioni `simon_says` (rilevato automaticamente da
+`get_azioni_effettive`), `on_arrivo` salta:
+- `time.sleep(0.3)` "pausa stabilita' visiva"
+- `_controlla_task_attiva()` (check USE button / alone giallo)
+
+Risparmio: ~350ms.
+
+NB: per le altre task (drag, click, ecc.) il check visuale resta
+attivo: serve per gestire gli alternativi e per task non tempo-critiche.
+
+#### B. SetForegroundWindow su Among Us PRIMA di SPAZIO
+
+Aggiunto un `SetForegroundWindow(hwnd_among_us)` nel bot principale
+**subito prima del SPAZIO**. Cosi':
+1. SPAZIO viene ricevuto dalla finestra giusta
+2. Il subprocess (quando ricevera' GO subito dopo) trova
+   `GetForegroundWindow() == hwnd_among_us` e SALTA il `sleep(0.4)`
+   di grace period.
+
+Senza questo, ogni volta che il bot principale aveva il focus al
+momento del SPAZIO, Among Us NON era foreground -> il subprocess
+faceva il `SetForegroundWindow + sleep(0.4)` di sicurezza,
+sprecando 400ms preziosi al primo flash.
+
+Risparmio: ~400ms.
+
+### Timing finale (Simon Says / Start Reactor)
+
+```
+PRIMA (v2.2.41):                  ADESSO (v2.2.42):
+0ms    Arrivo task                0ms    Arrivo task
+0ms    Pre-warming check          0ms    SKIP pausa (task simon)
+300ms  sleep stabilita' visuale   0ms    SKIP check visuale
+350ms  Check visuale ROI          16ms   SetForegroundWindow Among Us
+400ms  Set flag                   16ms   Premi SPAZIO
+416ms  Premi SPAZIO               66ms   Sleep 50ms
+466ms  Sleep 50ms                 66ms   Invia GO al subprocess
+466ms  Invia GO al subprocess     80ms   Subprocess: skip sleep(0.4)
+500ms  Subprocess foreground      80ms   Handler simon_says PARTE
+        check                            (in ascolto dei flash!)
+900ms  Handler simon_says
+        PARTE (TROPPO TARDI)
+```
+
+**Risparmio totale: ~820ms.** Il subprocess e' gia' in ascolto
+prima ancora che il pannello dei LED abbia iniziato a lampeggiare.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/ui/mixins/tasks_launch.py` | `on_arrivo`: skip pausa+check per task con azioni `simon_says`. Aggiunto `SetForegroundWindow(hwnd_among_us)` prima di SPAZIO. |
+
+### Cosa NON e' cambiato
+
+- Handler `_h_simon_says`: invariato (fix v2.2.39 in place)
+- EXEC_MODE = 'subprocess': invariato (sicuro, no thread mode)
+- Pre-warming anticipato all'inizio viaggio: invariato (fix v2.2.41)
+- Algoritmo TaskPlanner: invariato
+- API motore: invariata
+- File JSON delle task: invariati
+
+### Effetto su altre task
+
+Le task con `simon_says` (Start Reactor) si avviano istantanee.
+Le altre task (drag, click, yolo, ecc.) continuano a usare il
+check visuale per scegliere il punto alternativo se necessario.
+
+### Verifica fatta
+
+- Syntax check OK
+- Import package OK
+- Logica di detection task tempo-critica funzionante (testato con
+  `get_azioni_effettive` + check tipo='simon_says')
+
+
+## v2.2.41 — Fix Simon Says + crash STOP (rollback thread mode + pre-warming anticipato)
+
+### Richiesta utente
+
+> Adesso quando faccio la task del Start Reactor di Simon Says,
+> innanzitutto non va, poi se la stoppo crasha tutto.
+
+### Causa: `EXEC_MODE = 'thread'` introdotto in v2.2.40
+
+In v2.2.40 avevo cambiato `EXEC_MODE` da `'subprocess'` (default storico)
+a `'thread'` per eliminare il ritardo di 2-3s al lancio task.
+
+Il problema: in modalita' thread, `task_thread_runner.py` reindirizza
+`sys.stdout` e `sys.stderr` (variabili GLOBALI per processo) per
+catturare le print del motore:
+
+```python
+sys.stdout = pipe_writer  # GLOBALE: cattura TUTTE le print del bot
+sys.stderr = pipe_writer
+```
+
+Effetti collaterali:
+- **Simon Says rotto**: tutte le print del bot principale (rendering,
+  key handler, ecc.) finiscono nella pipe del thread Simon. Il buffer
+  della pipe (4-64KB) si riempie -> le write si bloccano -> handler
+  Simon si congela tra round.
+- **Crash al STOP**: `terminate()` chiude la pipe del thread, ma
+  `sys.stdout` resta puntato a un oggetto con fd chiuso. La prossima
+  print del bot principale crasha con `OSError`.
+
+### Fix: 2 azioni combinate
+
+#### A. Rollback EXEC_MODE a 'subprocess' (default)
+
+Il subprocess e' isolato: stdout del motore va su pipe, stdout del bot
+principale resta intatto. Nessun rischio di blocco/crash.
+
+```python
+EXEC_MODE = 'subprocess'  # default sicuro
+```
+
+`'thread'` resta disponibile per chi vuole testare (con i caveat noti).
+
+#### B. Pre-warming ANTICIPATO all'inizio viaggio
+
+Il subprocess viene avviato adesso all'**inizio del viaggio** verso
+la task (`_avvia_task_selezionata`), invece che all'arrivo
+(`on_arrivo`). Cosi' lo startup di Python (1-2s) avviene MENTRE il
+bot cammina, e quando arriva il subprocess e' gia' pronto a ricevere
+"GO" su stdin.
+
+Beneficio:
+- Per task LONTANE (3+ secondi di viaggio): zero ritardo, il
+  subprocess e' pronto da un pezzo
+- Per task VICINE (sotto 1s di viaggio): il subprocess potrebbe
+  non aver completato il startup, ma anche cosi' siamo MOLTO meglio
+  di prima (1s residuo vs 1-2s di startup completo dall'arrivo)
+
+Cleanup: se l'utente annulla la task durante il viaggio
+(`_cancel_auto_move`), il subprocess pre-warmed viene killato per
+non restare appeso.
+
+### Tracking nuovo: `_task_prewarm_id`
+
+Nuovo attributo `self._task_prewarm_id` che indica per quale task
+e' stato fatto pre-warming. Usato da:
+- `_cancel_auto_move`: se attivo, killa il subprocess prima del reset
+- `on_arrivo`: se `_task_prewarm_id == id_task`, salta il nuovo avvio
+  (il subprocess e' gia' attivo)
+
+Reset automatico a None in tutti i punti dove `_task_process` viene
+resettato (fine task, ferma_processo, cleanup loop_guard, fallback).
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `core/config.py` | `EXEC_MODE = 'subprocess'` (era 'thread') + commento aggiornato |
+| `ui/app.py` | init `self._task_prewarm_id = None` |
+| `ui/mixins/tasks_launch.py` | Pre-warming spostato dall'on_arrivo all'inizio _avvia_task_selezionata. on_arrivo controlla `_task_prewarm_id` per evitare doppio avvio. |
+| `ui/mixins/tasks_process.py` | Reset `_task_prewarm_id = None` in tutti i 5 punti di reset di `_task_process` |
+| `ui/mixins/auto_move.py` | `_cancel_auto_move` killa subprocess pre-warmed se l'utente annulla |
+
+### Verifica fatta
+
+- Syntax check OK su tutti i file modificati
+- Import package OK
+- `EXEC_MODE` verificato a runtime: 'subprocess'
+- Handler `_h_simon_says` resta corretto (fix v2.2.39 invariato)
+
+### Cosa NON e' cambiato
+
+- Algoritmo TaskPlanner: invariato
+- Preview F1 + popup pesi: invariati (fix v2.2.40 invariati)
+- Sistema persistenza pesi: invariato
+- Logica del retry loop guard: invariata
+- API del motore: invariata
+- File JSON delle task: invariati
+
+
+## v2.2.40 — Fix lag F1, trigger task istantaneo, path A* migliore, dashboard semplice
+
+### Richiesta utente
+
+> 1. Il trigger per la task parte in ritardo (2-3 secondi)
+> 2. L'interfaccia lagga quando apro F1 (preview giro)
+> 3. Alcune linee della preview F1 sono dritte invece di seguire i muri
+> 4. La dashboard dei pesi e' confusionaria
+
+### 1. FIX: Lag interfaccia con F1 aperto
+
+#### Causa
+
+`_render_giro_preview` chiamava `pathfinder.astar()` ad ogni frame
+(60 fps) per ogni segmento del giro. Con 10-15 task: 600-900 chiamate
+A* al secondo -> lag pesante.
+
+#### Fix
+
+Pre-calcolo dei path A* in `_aggiorna_preview_giro` (refresh ogni 1s):
+- I path vengono calcolati UNA VOLTA quando si aggiorna la preview
+- Memorizzati in `self._giro_preview_paths`
+- `_render_giro_preview` ora solo LEGGE la lista, non chiama A*
+
+Risultato:
+- Senza F1 aperto: zero overhead (A* mai chiamato)
+- Con F1 aperto: A* solo ogni 1s invece di 60 volte/s
+
+#### File toccati
+
+- `among_us_ai/ui/mixins/planner_ui.py`: pre-calcolo dei path
+- `among_us_ai/ui/mixins/rendering_entities.py`: rendering usa cache
+- `among_us_ai/ui/app.py`: aggiunto `_giro_preview_paths = []` init
+
+### 2. FIX: Trigger task istantaneo (era 2-3s di ritardo)
+
+#### Causa
+
+Il default `EXEC_MODE = 'subprocess'` faceva partire ogni task come
+un nuovo processo Python (subprocess.Popen). Lo startup di Python
+(import mss, ultralytics, win32, cv2, ...) richiede 1-2 secondi
+prima che il subprocess sia pronto a ricevere il "GO" trigger.
+
+Il pre-warming (`--wait-trigger`) avviava il subprocess in anticipo
+durante l'arrivo del bot, ma se il pre-warming non aveva completato
+lo startup quando si premeva SPAZIO, c'era comunque attesa.
+
+#### Fix
+
+Cambiato `EXEC_MODE = 'thread'` come default. In modalita' thread
+il motore gira come THREAD interno del bot principale: zero startup
+Python, nessun overhead di subprocess.Popen.
+
+Beneficio: task parte ISTANTANEO al SPAZIO (sotto 100ms invece di 1-2s).
+
+NB: `'subprocess'` mode resta disponibile per chi preferisce
+l'isolamento dei processi.
+
+#### File toccato
+
+- `among_us_ai/core/config.py`: `EXEC_MODE = 'thread'` (default cambiato)
+
+### 3. FIX: Linee dritte nella preview F1
+
+#### Causa
+
+`max_nodes=5000` per `pathfinder.astar()` era troppo basso per
+percorsi lunghi (es. da Cafeteria a Comms su Skeld). Quando A*
+esauriva i 5000 nodi senza trovare il path, ritornava None
+-> il render mostrava una linea retta (fallback).
+
+#### Fix
+
+Aumentato a `max_nodes=20000` (default del pathfinder per task
+normali). Adesso A* trova il path anche per task molto lontane.
+
+Performance: l'A* non viene piu' chiamato ad ogni frame (vedi fix #1),
+quindi posso permettermi `max_nodes` piu' alto senza problemi.
+
+#### File toccati
+
+- `among_us_ai/ui/mixins/planner_ui.py`: max_nodes=20000 nel pre-calcolo
+- `among_us_ai/managers/task_planner.py`: max_nodes=20000 nel calc dist
+
+### 4. FIX: Dashboard pesi senza termini tecnici
+
+#### Cambio approccio
+
+Il vecchio popup parlava di "score", "alpha", "bonus", "pesi",
+"multi-fase", "A*", "pathfinding" - termini tecnici incomprensibili
+per chi non conosce il codice.
+
+Nuovo popup parla solo in italiano normale. Titolo cambiato da
+"Pesi pianificatore Auto-All" a **"Come scegliere le task"**.
+
+| Vecchio (tecnico) | Nuovo (italiano semplice) |
+|---|---|
+| "Pesi pianificatore Auto-All" | "Come scegliere le task" |
+| "Bonus Vitale" | "Quanto urgenti sono i sabotaggi" |
+| "Bonus Long/Common/N/A/Short" | "Task LUNGHE/COMUNI/Sabotaggi/CORTE" |
+| "Bonus Multi-fase" | "Task con attesa interna" |
+| "Alpha distanza" | "Quanto contano le distanze" |
+| "Usa pathfinding A*" | "Calcola distanze evitando muri" |
+| "Default: X" | "Valore consigliato: X" |
+| "Ripristina default" | "Ripristina valori consigliati" |
+
+Esempi nei testi anche italianizzati:
+- "Wires, Inspect Sample" -> "cavi, ispezione campione"
+- "Swipe Card" -> "timbra il badge"
+- "O2 sabotage" -> "ossigeno che cala"
+- "Reactor meltdown" -> "reattore in fusione"
+
+Voce di menu rinominata:
+- "Pesi pianificatore Auto-All..." -> "Come scegliere le task..."
+
+#### File toccati
+
+- `among_us_ai/ui/mixins/planner_ui.py`: testi semplificati
+- `among_us_ai/ui/mixins/ui_setup.py`: voce menu
+
+### Verifica fatta
+
+- Syntax check OK su tutti i file modificati
+- Import package OK
+- EXEC_MODE verificato a runtime: 'thread'
+
+### Cosa NON e' cambiato
+
+- Algoritmo TaskPlanner: invariato (logica score + nearest-neighbor)
+- Sistema persistenza pesi: invariato (planner_weights.json)
+- Logica del retry loop guard: invariata
+- API del motore: invariata
+- File JSON delle task: invariati
+
+
+## v2.2.39 — Fix Simon Says regressione + UX (preview curva, popup pesi, pannello task)
+
+### Richiesta utente
+
+> 1. Start Reactor (Simon Says) si e' rotto - prima funzionava
+> 2. Preview giro: linee curve che seguono il percorso (no linea retta)
+> 3. Popup pesi pianificatore: e' ambiguo, sistemalo
+> 4. Popup di lancio task "blocca tutto" - rendilo meno invasivo e elegante
+
+### 1. FIX: Simon Says rotto al round 2+
+
+#### Sintomo
+
+Il bot esegue correttamente il round 1 (1 LED) ma dal round 2 in poi
+non rileva piu' i flash o ne perde alcuni, fallendo la sequenza.
+
+#### Causa: regressione introdotta in v2.2.21
+
+In v2.2.21 era stata aggiunta una "ottimizzazione" all'handler:
+> "PAUSA prima del round successivo + RICATTURA della base"
+
+Logica: dopo ogni round, pausa 1s e ricattura la `base_colors` per il
+round successivo, "per gestire eventuali animazioni di feedback".
+
+**Problema**: il gioco INIZIA a mostrare la sequenza del round
+successivo **immediatamente dopo i nostri click**. Quando dopo 1s
+ricatturiamo la base, c'e' la concreta possibilita' che un LED del
+nuovo round sia GIA' ACCESO. La nuova base diventa errata: quel LED
+viene memorizzato come "stato spento" -> il bot non lo rilevera' piu'
+come flash quando si accendera' di nuovo.
+
+#### Fix: rollback alla logica monolite
+
+Confronto byte-per-byte con il `bot_original/bot_src/main.py:1731-1770`
+ha confermato che il monolite originale (funzionante) cattura
+`base_colors` **una sola volta all'inizio** e non la ricattura mai.
+
+I display point sono in posizione FISSA sullo schermo, e lo stato
+"spento" del LED non cambia tra round (e' sempre lo stesso colore di
+sfondo). La ricattura era una "miglioria" non necessaria che ha
+introdotto la regressione.
+
+#### File modificato
+
+`among_us_ai/execution/_motore_pkg/handlers_simon.py`:
+- Rimossa `_read_base()` helper interno e relativi commenti
+- Rimossa la ricattura tra round (righe 129-133)
+- Rimossa la costante `POST_CLICK_PAUSE = 1.0`
+- Mantenuti i log piu' verbosi (utili per debug)
+- Logica ora identica al monolite originale
+
+### 2. Preview giro: linee curve seguendo il pathfinding
+
+Le linee fra task in sequenza ora seguono il **percorso A* reale**
+invece di essere linee rette che attraversano i muri.
+
+#### Logica
+
+Per ogni segmento "task i -> task i+1" il rendering:
+1. Calcola `pathfinder.astar((prev_x, prev_y), (tx, ty))`
+2. Disegna la linea come sequenza di segmenti consecutivi fra
+   waypoint dell'A*
+3. Se A* fallisce (target irraggiungibile o no map): fallback su
+   linea retta sottile (visivamente diversa dalle linee normali)
+
+#### File modificato
+
+`among_us_ai/ui/mixins/rendering_entities.py`:
+- `_render_giro_preview`: usa `self.pathfinder.astar()` per ogni
+  segmento invece di una singola `draw_line` da inizio a fine
+
+### 3. Popup pesi pianificatore: UI chiara con sezioni espandibili
+
+Il vecchio popup elencava tutti i 7 slider in fila senza spiegazioni,
+con simboli ambigui (es. solo "Bonus vitale" senza dire a quando
+serve, dove sono i defaults, ecc.).
+
+#### Nuovo design
+
+Popup ora 600x640 con **4 sezioni `collapsing_header`** chiare:
+
+1. **Priorita' per TIPO di task** (aperta di default)
+   - Spiegazione: "le vitali hanno sempre la priorita'"
+   - Slider Bonus Vitale + esempi (O2 sabotage, Reactor meltdown)
+   - Default mostrato sotto: "1000 - le vitali dominano sempre"
+
+2. **Bonus in base alla LUNGHEZZA** (aperta di default)
+   - Spiegazione: "quanto preferire una task in base alla durata"
+   - 4 slider con esempi concreti per ognuno:
+     - `Long` (Wires, Inspect Sample)
+     - `Common` (Swipe Card)
+     - `N/A` (sabotaggi piccoli)
+     - `Short` (Download Data)
+
+3. **Bonus task MULTI-FASE** (chiusa di default)
+   - Spiegazione: "task con attese interne, conviene farle vicine"
+   - Slider unico con esempi (Submit Scan, Empty Garbage)
+
+4. **Quanto contano le DISTANZE** (aperta di default)
+   - Spiegazione: "valore BASSO = bot fa giri lunghi per priorita'"
+   - "valore ALTO = bot preferisce sempre le task vicine"
+   - Slider penalita' + toggle "Usa pathfinding A*" con descrizione
+
+Slider con format chiaro:
+- `"30 punti"` invece di solo `"30"`
+- `"0.50 x dist"` per la penalita' distanza
+
+Bottoni rinominati senza brackets:
+- `[ Applica ]` -> `Salva e applica`
+- `[ Ripristina default ]` -> `Ripristina default`
+- `[ Annulla ]` -> `Annulla`
+
+#### File modificato
+
+`among_us_ai/ui/mixins/planner_ui.py`:
+- `_apri_popup_pesi_pianificatore` riscritto con sezioni espandibili
+
+### 4. Popup di lancio task: pannello informativo non modale
+
+Il popup "Task: X" era **modale** (blocca tutto, non puoi interagire
+con la mappa, deve essere chiuso prima di fare altro) e centrato.
+Adesso diventa un **pannello informativo discreto** in basso a destra.
+
+#### Differenze
+
+| Aspetto | Prima | Adesso |
+|---|---|---|
+| Modale | Si' (blocca tutto) | No |
+| Dimensione | 440 x 260 | 360 x 130 |
+| Posizione | Centro schermo | Basso destra |
+| Focus | Ruba il focus all'apparire | No |
+| Bring-to-front | Si' | No |
+| Label | `"Task: X"` | `"In esecuzione: X"` |
+| Collapsable | No | Si' |
+| Interazione con mappa | Bloccata | Libera |
+
+Puoi continuare a usare zoom, pan, status bar e altri controlli
+mentre la task gira. Il pannello e' anche **collapsabile** (puoi
+ridurlo a una barra di titolo se ti da' fastidio).
+
+#### File modificato
+
+`among_us_ai/ui/mixins/tasks_launch.py`:
+- `_avvia_task_selezionata`: parametri popup cambiati
+
+### Verifica fatta
+
+- Syntax check di tutti i file modificati: OK
+- Import del package: OK
+- Confronto algoritmo Simon Says con monolite originale: OK (identico)
+- Test struttura nuovo popup pesi: OK
+
+### Cosa NON e' cambiato
+
+- API motore: invariata
+- Algoritmo TaskPlanner: invariato
+- Pathfinding A*: invariato
+- Tutti gli altri handler (yolo, drag, click): invariati
+- File JSON delle task: invariati
+
+
+## v2.2.38 — TaskPlanner: pianificazione intelligente Auto-All
+
+### Richiesta utente
+
+> Migliorare l'algoritmo di navigazione di Auto-All:
+> - Trova ogni volta il migliore, e considera che ogni volta puoi
+>   anche ricalcolare per trovare sempre il meglio del meglio
+> - Sempre prima le vitali, poi a fasi, poi lunghe, poi corte
+>   (10 -> 1, ma vitali hanno sempre priorita')
+> - Preview del giro: lista a sinistra + linee colorate sulla mappa
+> - Ricalcola SEMPRE dopo ogni task (le task possono spawnare)
+> - Pesi configurabili da UI con slider
+
+### Comportamento PRIMA
+
+Auto-All sceglieva la task piu' vicina con **distanza euclidea**
+(line-of-sight), ignorando muri/porte e senza distinguere tra
+vitali/sabotaggi/lunghe/corte. Bot sub-ottimale, soprattutto
+quando spawnavano sabotaggi.
+
+### Comportamento ADESSO
+
+#### Algoritmo di scelta: SCORE WEIGHTED
+
+```
+score(task) = bonus_vitale
+            + bonus_lunghezza      (Long > Common > N/A > Short)
+            + bonus_multi_fase     (task con cooldown interno)
+            - alpha * distanza_A*  (penalita' per distanza)
+```
+
+Default pesi:
+
+| Categoria | Bonus |
+|---|---|
+| Vitale (sabotaggi) | +1000 |
+| Lunghezza='Long' | +30 |
+| Lunghezza='Common' | +20 |
+| Lunghezza='N/A' | +25 |
+| Lunghezza='Short' | +10 |
+| Multi-fase (cooldown interno) | +15 |
+| alpha distanza | 0.5 |
+
+#### Distanza A* invece di euclidea
+
+Il planner usa il pathfinding A* esistente per calcolare la distanza
+reale (rispetta muri/porte). Cache interna per evitare ricalcoli.
+Fallback su distanza euclidea + 50% penalita' se A* fallisce
+(target irraggiungibile).
+
+#### Ricalcolo SEMPRE dopo ogni task
+
+Il giro non e' fissato all'inizio: ogni volta che il bot deve
+scegliere la prossima task, ricalcola tutto. Cosi' se spawna un
+sabotaggio (vitale) il bot abbandona la task corrente per andare
+a risolverlo.
+
+#### Preview giro (F1)
+
+Nuovo popup attivabile con il tasto **F1** o da **Strumenti ->
+Preview giro Auto-All**:
+
+- **Lista a sinistra**: sequenza numerata con dettagli
+  (nome, lunghezza, vitale/multi-fase, distanza, score)
+- **Linee sulla mappa**: connettono le task in sequenza
+  (verde = prossima, rosso = vitale, arancione = altre)
+- **Numeri sui pallini**: 1, 2, 3, ... nell'ordine del giro
+- Si aggiorna ogni 1s automaticamente
+
+Premi F1 una seconda volta per chiudere.
+
+#### Pesi configurabili (Strumenti -> Pesi pianificatore Auto-All)
+
+Nuovo popup con slider per modificare in runtime:
+- Bonus vitale (0 - 5000)
+- Bonus lunghezza (Long, Common, N/A, Short - ognuno 0-200)
+- Bonus multi-fase (0 - 200)
+- Alpha distanza (0 - 10)
+- Toggle "Usa A* per le distanze"
+
+Le modifiche vengono salvate in `planner_weights.json` per
+persistenza fra sessioni. Bottone "Ripristina default" per
+tornare ai valori originali.
+
+### Nuovi file
+
+| File | Scopo |
+|---|---|
+| `among_us_ai/managers/task_planner.py` | Classe TaskPlanner: calcolo score + giro |
+| `among_us_ai/ui/mixins/planner_ui.py` | Mixin con popup preview giro + popup pesi |
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/core/config.py` | 8 nuove costanti `PLANNER_*` |
+| `among_us_ai/ui/app.py` | Istanza `self.task_planner`, caricamento pesi da file, chiamata `_update_preview_giro` nel loop |
+| `among_us_ai/ui/mixins/__init__.py` | Export `PlannerMixin` |
+| `among_us_ai/ui/mixins/auto_quest.py` | `_update_auto_all` ora usa `task_planner.scegli_prossima()` invece di distanza euclidea |
+| `among_us_ai/ui/mixins/ui_setup.py` | Voce menu "Preview giro" + "Pesi pianificatore", handler tasto F1 |
+| `among_us_ai/ui/mixins/rendering_entities.py` | Nuovo `_render_giro_preview` per disegnare linee numerate sulla mappa |
+
+### Persistenza
+
+Nuovo file `planner_weights.json` (creato automaticamente quando
+modifichi i pesi). Esempio:
+
+```json
+{
+  "PLANNER_PESO_VITALE": 1000.0,
+  "PLANNER_PESO_LONG": 30.0,
+  "PLANNER_PESO_COMMON": 20.0,
+  "PLANNER_PESO_NA": 25.0,
+  "PLANNER_PESO_SHORT": 10.0,
+  "PLANNER_PESO_MULTI": 15.0,
+  "PLANNER_ALPHA_DIST": 0.5,
+  "PLANNER_USE_ASTAR": true
+}
+```
+
+### Verifica fatta
+
+Test funzionale con scenario realistico (bot in Cafeteria con 6
+task miste tra vitali, multi-fase, Long, Common, Short):
+
+| # | Task | Score |
+|---|---|---|
+| 1 | O2 Sabotage (vitale, N/A) | 1020 |
+| 2 | Submit Scan (Long, multi) | 42 |
+| 3 | Empty Garbage (Long, multi) | 42 |
+| 4 | Wires (Long) | 23 |
+| 5 | Swipe Card (Common) | 11 |
+| 6 | Download Data (Short) | 3 |
+
+Ordine corretto: vitali -> multi-fase -> Long -> Common -> Short ✓
+
+Test import package: OK
+Test syntax: OK su tutti i file modificati
+Test API `task_planner.calcola_giro()`: OK
+Test API `task_planner.scegli_prossima()`: OK
+
+### Cosa NON e' cambiato
+
+- Logica del run delle task (subprocess, pre-warming, STOP watcher): invariata
+- Pathfinding A*: invariato (il planner lo USA solo per stimare)
+- Sistema Ripeti, Loop guard retry: invariati
+- API del motore: invariata
+- File JSON delle task: invariati
+- Comportamento Auto-Quest senza Auto-All attivo: invariato
+
+
+## v2.2.37 — Normalizzazione cosmetica: tag log, commenti, status messages
+
+### Richiesta utente
+
+> Mi serve "normalizzare" e sistemare commenti, nomi di costanti,
+> nomi che si vedono a video. NON CAMBIARE IL CODICE, quello funziona.
+
+### Modifiche applicate (SOLO cosmetiche)
+
+Tutte le modifiche sono cosmetiche: stringhe, commenti, tag log.
+Nessun cambiamento alla logica funzionale.
+
+#### 1. Tag log uniformati in CamelCase (48 sostituzioni)
+
+| Vecchio | Nuovo |
+|---|---|
+| `[Loop guard]` | `[LoopGuard]` |
+| `[Number Match]` | `[NumberMatch]` |
+| `[Visual Lock]` | `[VisualLock]` |
+| `[Visual Check]` | `[VisualCheck]` |
+| `[YOLO 2P]` | `[Yolo2P]` |
+| `[yolo_drag_all]` | `[YoloDragAll]` |
+| `[yolo_click_all]` | `[YoloClickAll]` |
+| `[yolo_drag]` | `[YoloDrag]` |
+| `[yolo_click]` | `[YoloClick]` |
+| `[yolo_drag_seq]` | `[YoloDragSeq]` |
+| `[input_mouse]` | `[InputMouse]` |
+| `[esegui_azioni]` | `[EseguiAzioni]` |
+| `[sync_click]` | `[SyncClick]` |
+
+Tag gia' coerenti rimasti invariati: `[StopWatcher]`, `[TaskWriter]`,
+`[TaskManager]`, `[TaskActionEditor]`, `[Exec]`, `[ROI-Sel]`,
+`[Migrazione]`, `[Ripeti]`, `[Trigger]`, `[Fallback]`, `[Arrival]`,
+`[Anomalia]`, `[Auto-All]`, `[Wiring]`, `[Simon]`, `[OCR]`,
+`[UseButton]`, `[EXPORT]`, `[Test]`, ecc.
+
+#### 2. Print di debug rimossi
+
+Rimosso `print(f"[Ripeti DEBUG] Task ...")` rimasto da fase di
+sviluppo precedente in `tasks_process.py:798`.
+
+#### 3. Riferimenti a versioni vecchie rimossi dai commenti (16 occorrenze)
+
+I commenti contenevano riferimenti storici a versioni precedenti del
+codice (es. "pre-v2.2.34", "era 0.25 in v2.x", "comportamento v2.2.11"),
+che disorientavano la lettura del codice. Tutti riscritti per
+documentare il *comportamento attuale* invece della *storia*.
+
+Esempi:
+- `# (era hardcoded a 8s)` -> `# cooldown finale di sicurezza`
+- `# Strategia (v2.2.23+):` -> `# Strategia:`
+- `# pre-v2.2.34). Va attivato dall'editor` -> `# cooldown immediato). Va attivato dall'editor`
+- `# (era 0.25 in v2.x, ridotto in v2.2.11)` -> rimosso, ora la nota di tuning resta solo nel suo contenuto utile
+- `# In v2.2.17+ il default e' 'thread'` -> `# Il default e' 'thread'`
+
+#### 4. Status messages: piccole correzioni stilistiche
+
+| Vecchio | Nuovo |
+|---|---|
+| "task NON registrate." | "task non registrate" (no maiuscolo enfatico, no punto finale) |
+| "Errore avvio: {e}" | "Errore avvio task: {e}" (più specifico) |
+| "navigo al alternativo" | "navigo all'alternativo" (correzione grammaticale) |
+| "Task fallita, provo alternativo" | "Task fallita, provo l'alternativo" |
+
+### File toccati
+
+13 file modificati (solo stringhe e commenti):
+
+- `among_us_ai/core/config.py` (commenti versioni)
+- `among_us_ai/ui/app.py` (commento versione)
+- `among_us_ai/ui/mixins/auto_move.py` (commenti versioni)
+- `among_us_ai/ui/mixins/auto_quest.py` (tag log + status msg)
+- `among_us_ai/ui/mixins/tasks_launch.py` (tag log + status msg + commenti)
+- `among_us_ai/ui/mixins/tasks_process.py` (tag log + status msg + commenti + print debug)
+- `among_us_ai/ui/editor_mixins/canvas_input.py` (tag log)
+- `among_us_ai/managers/task_manager.py` (commenti versioni)
+- `among_us_ai/managers/task_dettagli_manager.py` (commenti versioni)
+- `among_us_ai/execution/runtime.py` (tag log)
+- `among_us_ai/execution/task_writer.py` (docstring)
+- `among_us_ai/execution/task_template.py` (docstring)
+- `among_us_ai/execution/handlers/yolo_actions.py` (tag log)
+- `among_us_ai/execution/handlers/sync_click.py` (tag log)
+- `among_us_ai/execution/_motore_pkg/dispatcher.py` (tag log)
+- `among_us_ai/execution/_motore_pkg/handlers_sync.py` (tag log)
+- `among_us_ai/execution/_motore_pkg/handlers_yolo.py` (tag log)
+- `among_us_ai/execution/_motore_pkg/input_mouse.py` (tag log)
+
+### Verifica fatta
+
+- Syntax check di tutti gli 84 file Python: OK
+- Import package GPSVisualizerPro: OK
+- Verifica zero tag obsoleti residui: OK
+- Verifica zero riferimenti a versioni residui: OK
+
+### Cosa NON e' cambiato
+
+- **TUTTO il codice funzionale**: invariato
+- API motore: invariata
+- Comportamento del bot: invariato (i log appaiono solo con
+  nomi diversi ma con stesso contenuto informativo)
+- File JSON delle task: invariati
+- Configurazioni e valori: invariati
+
+
+## v2.2.36 — Ereditarieta' opzioni padre-figlio per task registrate
+
+### Richiesta utente
+
+> Quando imposto delle opzioni sulle task registrate (es. l'ultimo
+> checkbox del retry), valga anche per i figli che ereditano il
+> codice.
+
+### Comportamento PRIMA (v2.2.35)
+
+Le task "figlie" che ereditano le azioni dal padre (ad esempio task
+con `id_padre` che hanno la lista azioni vuota) ereditavano SOLO le
+azioni, ma NON le opzioni come `loop_guard_retry`. Risultato: se
+attivavi il retry sul padre, le figlie continuavano ad applicare il
+cooldown immediato perche' leggevano la propria opzione (False).
+
+NB: alcune opzioni (codice_personalizzato, lunghezza, delay_avvio)
+**erano gia' ereditate** perche' il codice in `_avvia_subprocess_task`
+le leggeva da `target_task` (la task risolta, gia' padre se la figlia
+eredita). Solo `loop_guard_retry` veniva letto direttamente dalla
+figlia.
+
+### Comportamento ADESSO (v2.2.36)
+
+Le opzioni "comportamentali" (`loop_guard_retry`, `codice_personalizzato`,
+`lunghezza`, `delay_avvio`, `cooldown`) seguono la stessa logica delle
+azioni:
+
+- **Figlia con azioni proprie** -> usa le sue opzioni
+- **Figlia che eredita azioni dal padre** -> eredita anche le opzioni
+  dal padre (padre vince sempre, per coerenza con il codice)
+
+Opzioni NON ereditate (sono per-task specifiche):
+- `nome`, `x`, `y`, `tipo`, `id_stanza`
+- `vitale`, `due_giocatori`
+- `fasi`, `alternativi`
+- `id_padre` (ovviamente)
+
+### Esempio pratico
+
+Configurazione:
+- **Task PADRE** "Wires Generic" con `loop_guard_retry=True`
+- **Task FIGLIA** "Wires in Electrical" con `id_padre=PADRE` e azioni vuote
+- **Task FIGLIA** "Wires in Admin" con `id_padre=PADRE` e azioni vuote
+
+Quando il bot esegue "Wires in Electrical":
+- Eredita le azioni dal padre (gia' funzionava)
+- Eredita anche `loop_guard_retry=True` dal padre (NUOVO in v2.2.36)
+- Quindi se la task fallisce, tenta 3 retry con ESC
+
+### Nuovi metodi in task_manager.py
+
+#### `get_opzione_effettiva(id_task, key, default=None)`
+
+Ritorna il valore effettivo di un'opzione considerando l'ereditarieta':
+
+```python
+retry = self.task_mgr.get_opzione_effettiva(id_task, 'loop_guard_retry', False)
+```
+
+#### `get_task_effettiva(id_task)`
+
+Ritorna una COPIA del dict della task con le opzioni ereditabili
+gia' risolte. Utile per accesso multi-proprieta':
+
+```python
+task_eff = self.task_mgr.get_task_effettiva(id_task)
+if task_eff.get('loop_guard_retry'):
+    ...
+```
+
+#### `_OPZIONI_EREDITABILI` (set di classe)
+
+```python
+_OPZIONI_EREDITABILI = {
+    'loop_guard_retry',
+    'codice_personalizzato',
+    'lunghezza',
+    'delay_avvio',
+    'cooldown',
+}
+```
+
+Chiavi non in questo set vengono SEMPRE lette dalla task stessa
+(es. `vitale`, `due_giocatori`, `nome`, ecc.)
+
+### Indicatore visuale nell'editor
+
+Nel popup di modifica task, sotto la checkbox `loop_guard_retry`,
+compare un indicatore se la task eredita le azioni dal padre:
+
+```
+[ ] Loop guard retry (ESC + rilancia se task non riuscita)
+   [eredita dal padre 'Wires Generic': loop_guard_retry=True]
+```
+
+Cosi' l'utente capisce subito che il proprio valore viene IGNORATO
+in favore di quello del padre. Per cambiare il comportamento di una
+figlia, basta dargli azioni proprie (override): in quel caso la
+figlia diventa standalone e usa le sue opzioni.
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/managers/task_manager.py` | Aggiunti `_OPZIONI_EREDITABILI` (set), `get_opzione_effettiva(id_task, key, default)`, `get_task_effettiva(id_task)` |
+| `among_us_ai/ui/mixins/tasks_process.py` | `task.get('loop_guard_retry')` -> `self.task_mgr.get_opzione_effettiva(id_task, 'loop_guard_retry', False)` (1 occorrenza nel loop guard) |
+| `among_us_ai/ui/mixins/tasks_popups_edit.py` | Aggiunto indicatore visuale "[eredita dal padre ...]" sotto la checkbox |
+
+### Verifica fatta
+
+Test logici simulati (5 scenari):
+
+| Scenario | Atteso | Ottenuto |
+|---|---|---|
+| Figlia eredita azioni, padre retry=True | Figlia retry effettivo = True | ✓ |
+| Figlia ha azioni proprie, padre retry=True | Figlia retry effettivo = False (la sua) | ✓ |
+| Opzione NON ereditabile (vitale) | Figlia usa il suo (False) | ✓ |
+| Task standalone senza padre | Usa il proprio valore | ✓ |
+| delay_avvio (anche ereditabile) | Figlia eredita dal padre | ✓ |
+
+Test import package: OK
+Test syntax: OK su tutti i file modificati
+
+### Cosa NON e' cambiato
+
+- Logica del retry stesso (3 ESC + rilancio): invariata
+- Default `loop_guard_retry=False` per task standalone: invariato
+- `vitale`, `due_giocatori`: continuano a essere per-task (NON ereditate)
+- API motore: invariata
+- File JSON delle task: invariati
+
+
 ## v2.2.35 — Loop guard retry: opt-in per-task (default DISATTIVATO)
 
 ### Richiesta utente

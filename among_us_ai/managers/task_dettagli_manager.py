@@ -154,7 +154,7 @@ class TaskDettagliManager:
                     # fino a N retry (premi ESC + rilancia) prima di
                     # applicare il cooldown di sicurezza.
                     # Se False, applica subito il cooldown senza retry
-                    # (comportamento pre-v2.2.34).
+                    # (comportamento di default: cooldown immediato).
                     t['loop_guard_retry'] = bool(loop_guard_retry)
                 break
         self.salva()

@@ -19,7 +19,7 @@ modificare decine di chiamate sparse. La facade preserva l'API attesa:
     tm.crea_file_esecuzione(id) # genera il .py (immutato)
 
 Migrazione automatica:
-- Al primo avvio della v2.1, se esistono ``task_registrate.json`` ma NON
+- Al primo avvio del nuovo formato, se esiste ``task_registrate.json`` ma NON
   ``tasks_dettagli.json``, i 56 task vengono splittati nei due nuovi
   formati e il vecchio file viene rinominato ``task_registrate.json.bak``
   per sicurezza.
@@ -80,7 +80,8 @@ class TaskManager:
         # Sono PROPERTY (vedi sotto), aggiornate in tempo reale.
 
     # ==================================================================
-    # MIGRAZIONE da v2.0 (task_registrate.json) -> v2.1 (split)
+    # MIGRAZIONE dal vecchio formato monolitico (task_registrate.json)
+    # al formato nuovo (dettagli + esecuzione separati)
     # ==================================================================
 
     def _migra_se_serve(self, legacy_file):
@@ -112,7 +113,7 @@ class TaskManager:
 
         dettagli_list = []
         for t in old_list:
-            # NB: leggo sia i nomi nuovi (v2.1) sia i nomi vecchi (v2.0)
+            # NB: leggo sia i nomi nuovi sia i nomi vecchi (retro-compat)
             # cosi' la migrazione funziona sia da un task_registrate.json
             # del nuovo formato che da uno del vecchio formato.
             def _get(*keys, default=None):
@@ -356,6 +357,88 @@ class TaskManager:
             if padre_d is not None:
                 return self.esecuzione.get_azioni(id_padre), id_padre
         return [], None
+
+    # Set delle chiavi che vengono ereditate dal padre quando la figlia
+    # eredita anche le azioni. Sono opzioni "comportamentali" che hanno
+    # senso essere condivise insieme al codice condiviso.
+    # NB: nome/x/y/id_stanza/tipo/vitale/due_giocatori/id_padre/fasi/
+    # alternativi NON sono qui perche' sono PROPRIETA' INTRINSECHE della
+    # task, non sono legate alle azioni.
+    _OPZIONI_EREDITABILI = {
+        'loop_guard_retry',
+        'codice_personalizzato',
+        'lunghezza',
+        'delay_avvio',
+        'cooldown',
+    }
+
+    def get_opzione_effettiva(self, id_task, key, default=None):
+        """
+        Risolve il valore effettivo di un'opzione di task considerando
+        l'ereditarieta', con la stessa logica di `get_azioni_effettive`:
+
+        - Se la figlia ha AZIONI PROPRIE (non eredita codice dal padre):
+          usa la sua opzione.
+        - Se la figlia EREDITA AZIONI dal padre, eredita anche le opzioni
+          dal padre (padre vince sempre per coerenza con il codice).
+        - Se la chiave non e' nel set delle opzioni ereditabili, usa
+          sempre il valore della task stessa (es. nome, vitale, ...).
+
+        Esempio: una figlia che eredita le azioni del padre eredita
+        anche il flag `loop_guard_retry=True` del padre, anche se la
+        figlia stessa ha `loop_guard_retry=False`.
+        """
+        d = self.dettagli.get_by_id(id_task)
+        if d is None:
+            return default
+        # Chiavi non ereditabili: sempre il valore della task stessa
+        if key not in self._OPZIONI_EREDITABILI:
+            return d.get(key, default)
+        # Chiavi ereditabili: ereditarieta' SOLO se non ha azioni proprie
+        proprie = self.esecuzione.get_azioni(id_task)
+        if proprie:
+            # Figlia con azioni proprie: usa la sua opzione
+            return d.get(key, default)
+        # Figlia che eredita azioni dal padre: eredita anche le opzioni
+        id_padre = d.get('id_padre')
+        if id_padre is not None:
+            padre_d = self.dettagli.get_by_id(id_padre)
+            if padre_d is not None:
+                return padre_d.get(key, default)
+        # Nessun padre valido: fallback alla task stessa
+        return d.get(key, default)
+
+    def get_task_effettiva(self, id_task):
+        """
+        Ritorna un dict con i campi della task in cui le opzioni
+        ereditabili sono gia' risolte (con eredita dal padre se la
+        figlia non ha azioni proprie).
+
+        Utile per chi vuole accedere alle opzioni senza chiamare
+        `get_opzione_effettiva()` ad ogni proprieta'. Restituisce
+        una COPIA del dict originale (modifiche non si propagano).
+
+        Esempio:
+            task_eff = mgr.get_task_effettiva(id_task)
+            if task_eff.get('loop_guard_retry'):
+                ...   # eredita dal padre se la figlia eredita codice
+        """
+        d = self.dettagli.get_by_id(id_task)
+        if d is None:
+            return None
+        # Copia per non mutare l'originale del dettagli_manager
+        result = dict(d)
+        # Eredita opzioni se applicable
+        proprie = self.esecuzione.get_azioni(id_task)
+        if not proprie:
+            id_padre = d.get('id_padre')
+            if id_padre is not None:
+                padre_d = self.dettagli.get_by_id(id_padre)
+                if padre_d is not None:
+                    for k in self._OPZIONI_EREDITABILI:
+                        if k in padre_d:
+                            result[k] = padre_d[k]
+        return result
 
     # ==================================================================
     # FASI / FRATELLI / ZONE LINK (delegato ai dettagli)
