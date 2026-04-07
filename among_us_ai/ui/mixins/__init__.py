@@ -15,6 +15,7 @@ from .auto_move import AutoMoveMixin
 from .auto_quest import AutoQuestMixin
 from .dialogs import DialogsMixin
 from .input_callbacks import InputCallbacksMixin
+from .intelligence_sidebar import IntelligenceSidebarMixin
 from .map_loader import MapLoaderMixin
 from .memory_sync import MemorySyncMixin
 from .misc import MiscMixin
@@ -35,7 +36,8 @@ from .zones import ZonesMixin
 
 __all__ = [
     "AutoMoveMixin", "AutoQuestMixin", "DialogsMixin",
-    "InputCallbacksMixin", "MapLoaderMixin", "MemorySyncMixin",
+    "InputCallbacksMixin", "IntelligenceSidebarMixin",
+    "MapLoaderMixin", "MemorySyncMixin",
     "MiscMixin", "PlannerMixin", "PoiMixin",
     "RenderingEntitiesMixin", "RenderingWorldMixin",
     "TasksLaunchMixin", "TasksListMixin",

@@ -66,6 +66,9 @@ class UISetupMixin:
                         callback=lambda *a: self._toggle_preview_giro())
                     dpg.add_menu_item(label="Come scegliere le task...",
                         callback=lambda *a: self._apri_popup_pesi_pianificatore())
+                    dpg.add_separator()
+                    dpg.add_menu_item(label="Intelligence (F2)",
+                        callback=lambda *a: self._toggle_intelligence_sidebar())
                 # Menu
                 with dpg.menu(label="?"):
                     dpg.add_menu_item(label="Info e scorciatoie",
@@ -161,6 +164,8 @@ class UISetupMixin:
                 callback=lambda *a: self._start_new_zone_mode())
             dpg.add_key_press_handler(dpg.mvKey_F1,
                 callback=lambda *a: self._toggle_preview_giro())
+            dpg.add_key_press_handler(dpg.mvKey_F2,
+                callback=lambda *a: self._toggle_intelligence_sidebar())
             dpg.add_key_press_handler(dpg.mvKey_Escape,
                 callback=lambda *a: self._cancel_all())
 

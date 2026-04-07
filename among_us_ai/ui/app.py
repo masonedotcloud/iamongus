@@ -87,6 +87,7 @@ from .mixins.rendering_entities import RenderingEntitiesMixin
 from .mixins.misc import MiscMixin
 from .mixins.use_button_calib import UseButtonCalibMixin
 from .mixins.planner_ui import PlannerMixin
+from .mixins.intelligence_sidebar import IntelligenceSidebarMixin
 
 
 class GPSVisualizerPro(
@@ -115,6 +116,7 @@ class GPSVisualizerPro(
     MiscMixin,
     UseButtonCalibMixin,
     PlannerMixin,
+    IntelligenceSidebarMixin,
 ):
     """Classe principale dell'applicazione: orchestra rendering, pathfinding, lettura RAM, scanner YOLO, esecuzione task."""
     def __init__(self):
@@ -211,6 +213,43 @@ class GPSVisualizerPro(
         self._giro_preview_lista = []  # lista (task, dist, score) per rendering
         self._giro_preview_paths = []  # lista path A* pre-calcolati (uno per task del giro)
 
+        # --- INTELLIGENCE: analisi sospettosita' player ---
+        # Sistema MODULARE separato (vedi among_us_ai/intelligence/).
+        # Si alimenta automaticamente dai detection YOLO esistenti.
+        # Sidebar attivabile con F2 (vedi IntelligenceSidebarMixin).
+        self._intelligence_enabled = bool(
+            getattr(GPSConfig, 'INTELLIGENCE_ENABLED', True))
+        if self._intelligence_enabled:
+            from ..intelligence import (
+                PlayerTracker, ActivityDetector,
+                ProximityAnalyzer, TaskInference, SuspicionAnalyzer,
+            )
+            # Inizializzo i 5 moduli intelligence
+            self._intelligence_tracker = PlayerTracker()
+            # ActivityDetector senza posizioni vent: il rilevamento dei
+            # vent uses funziona via teletrasporto fra osservazioni, senza
+            # bisogno di sapere dove sono fisicamente le vent.
+            self._intelligence_activity = ActivityDetector()
+            self._intelligence_proximity = ProximityAnalyzer()
+            # La task_list per inference dei task fatti dai player
+            task_list_for_inf = []
+            try:
+                for t in self.task_mgr.dettagli.task_list:
+                    task_list_for_inf.append({
+                        'id': t.get('id'),
+                        'nome': t.get('nome'),
+                        'x': t.get('x'),
+                        'y': t.get('y'),
+                        'lunghezza': t.get('lunghezza', 'Short'),
+                    })
+            except Exception:
+                pass
+            self._intelligence_task_inf = TaskInference(task_list_for_inf)
+            self._intelligence_suspicion = SuspicionAnalyzer()
+            # Stato UI
+            self._intelligence_sidebar_open = False
+            self._intelligence_update_timer = 0.0
+
         # --- Punti di Interesse ---
         self.poi_mgr  = PoiManager(GPSConfig.POI_FILE)
         self.show_poi = True
@@ -296,6 +335,7 @@ class GPSVisualizerPro(
         self._controlla_processo_task()
         self._update_auto_all(dt)
         self._update_preview_giro(dt)
+        self._update_intelligence_sidebar(dt)
         
         pending_2p = getattr(self, '_pending_next_2p_task', None)
         if pending_2p is not None:
