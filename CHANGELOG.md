@@ -1,5 +1,73 @@
 # Changelog
 
+## v2.2.46 — Intelligence: rimosso "near_vent" detector
+
+### Richiesta utente
+
+> Facciamo che la parte delle vent per ora la rimuovi, quindi non
+> gestisci la vicinanza di un player alle vent che l'impostore
+> potrebbe utilizzare.
+
+### Cosa e' stato rimosso
+
+Tutto il sotto-sistema di rilevamento "player fermo vicino a una
+vent". Richiedeva conoscere le posizioni fisiche delle vent sulla
+mappa (in passato pensavamo di prenderle dai POI o associandole alle
+task). Decisione: scartato per ora.
+
+### Cosa CONTINUA a funzionare
+
+Il rilevamento `VENT_USE` (teletrasporto improvviso) e' RIMASTO ed
+e' tuttora il sintomo PIU' FORTE di un impostore. Funziona senza
+bisogno di conoscere le vent: si basa solo sul gap di movimento
+(player sparito in pos A, ricomparso lontano in pos B in <3s).
+
+| Detector | Stato v2.2.46 |
+|---|---|
+| `VENT_USE` (teletrasporto rilevato) | ATTIVO |
+| `STOP` (player fermo per >1.5s) | ATTIVO |
+| `NEAR_BODY` (vicino a cadavere) | ATTIVO |
+| `NEAR_VENT` (fermo vicino a vent) | RIMOSSO |
+
+### Pesi suspicion aggiornati
+
+I 5 fattori dello score restano (con un peso in meno):
+
+```
++35  per ogni vent usata (teletrasporto)
++12  per ogni vicinanza a cadaveri
++0.3 per secondo di follow del bot (cap 18)
++8   se >60s senza task viste
+-8   per task inferita (scagiona)
+```
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/intelligence/activity_detector.py` | Rimosse: docstring NEAR_VENT, `NEAR_VENT_RADIUS`, `EV_NEAR_VENT`, parametro `vent_positions` dal costruttore, attributo `self.vent_positions`, attributo `self._last_seen_pos`, chiamata `_check_near_vent` nell'`update`, intero metodo `_check_near_vent`, riga di reset di `_last_seen_pos` |
+| `among_us_ai/intelligence/__init__.py` | Rimosso `EV_NEAR_VENT` da imports e `__all__`; aggiornata docstring esempio |
+| `among_us_ai/intelligence/suspicion_analyzer.py` | Rimosso `EV_NEAR_VENT` da imports, costante `W_NEAR_VENT_FERMO`, parametro `w_near_vent` dal costruttore, attributo `self.w_near_vent`, sezione 3 ("Fermo vicino a vent") nel metodo `analyze()`. Rinumerati commenti 4->3, 5->4, 6->5 |
+| `among_us_ai/ui/app.py` | Rimosso blocco di lettura `vent_positions` dai POI; `ActivityDetector()` ora chiamato senza argomenti |
+| `among_us_ai/ui/mixins/intelligence_sidebar.py` | Rimosso `'near_vent': 'fermo vicino a vent'` dal dict `_human_factor` |
+
+### Verifica fatta
+
+- Grep `near_vent|NEAR_VENT|EV_NEAR_VENT|vent_positions` su tutto
+  `among_us_ai/`: **NESSUN RESIDUO**
+- Syntax check OK su tutti i 8 file controllati
+- Import package: OK
+- Test funzionale: `VENT_USE` continua a essere rilevato e a
+  contribuire allo score (+35 per teletrasporto)
+
+### Cosa NON e' cambiato
+
+- API motore: invariata
+- Simon Says (v2.2.44): invariato
+- TaskPlanner / Auto-All / preview F1: invariati
+- Tutti i fix precedenti: invariati
+
+
 ## v2.2.45 — Intelligence Sidebar: analisi sospettosita' player (F2)
 
 ### Richiesta utente
