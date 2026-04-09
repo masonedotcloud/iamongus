@@ -1,5 +1,241 @@
 # Changelog
 
+## v2.2.46 — Intelligence: rimosso "near_vent" detector
+
+### Richiesta utente
+
+> Facciamo che la parte delle vent per ora la rimuovi, quindi non
+> gestisci la vicinanza di un player alle vent che l'impostore
+> potrebbe utilizzare.
+
+### Cosa e' stato rimosso
+
+Tutto il sotto-sistema di rilevamento "player fermo vicino a una
+vent". Richiedeva conoscere le posizioni fisiche delle vent sulla
+mappa (in passato pensavamo di prenderle dai POI o associandole alle
+task). Decisione: scartato per ora.
+
+### Cosa CONTINUA a funzionare
+
+Il rilevamento `VENT_USE` (teletrasporto improvviso) e' RIMASTO ed
+e' tuttora il sintomo PIU' FORTE di un impostore. Funziona senza
+bisogno di conoscere le vent: si basa solo sul gap di movimento
+(player sparito in pos A, ricomparso lontano in pos B in <3s).
+
+| Detector | Stato v2.2.46 |
+|---|---|
+| `VENT_USE` (teletrasporto rilevato) | ATTIVO |
+| `STOP` (player fermo per >1.5s) | ATTIVO |
+| `NEAR_BODY` (vicino a cadavere) | ATTIVO |
+| `NEAR_VENT` (fermo vicino a vent) | RIMOSSO |
+
+### Pesi suspicion aggiornati
+
+I 5 fattori dello score restano (con un peso in meno):
+
+```
++35  per ogni vent usata (teletrasporto)
++12  per ogni vicinanza a cadaveri
++0.3 per secondo di follow del bot (cap 18)
++8   se >60s senza task viste
+-8   per task inferita (scagiona)
+```
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/intelligence/activity_detector.py` | Rimosse: docstring NEAR_VENT, `NEAR_VENT_RADIUS`, `EV_NEAR_VENT`, parametro `vent_positions` dal costruttore, attributo `self.vent_positions`, attributo `self._last_seen_pos`, chiamata `_check_near_vent` nell'`update`, intero metodo `_check_near_vent`, riga di reset di `_last_seen_pos` |
+| `among_us_ai/intelligence/__init__.py` | Rimosso `EV_NEAR_VENT` da imports e `__all__`; aggiornata docstring esempio |
+| `among_us_ai/intelligence/suspicion_analyzer.py` | Rimosso `EV_NEAR_VENT` da imports, costante `W_NEAR_VENT_FERMO`, parametro `w_near_vent` dal costruttore, attributo `self.w_near_vent`, sezione 3 ("Fermo vicino a vent") nel metodo `analyze()`. Rinumerati commenti 4->3, 5->4, 6->5 |
+| `among_us_ai/ui/app.py` | Rimosso blocco di lettura `vent_positions` dai POI; `ActivityDetector()` ora chiamato senza argomenti |
+| `among_us_ai/ui/mixins/intelligence_sidebar.py` | Rimosso `'near_vent': 'fermo vicino a vent'` dal dict `_human_factor` |
+
+### Verifica fatta
+
+- Grep `near_vent|NEAR_VENT|EV_NEAR_VENT|vent_positions` su tutto
+  `among_us_ai/`: **NESSUN RESIDUO**
+- Syntax check OK su tutti i 8 file controllati
+- Import package: OK
+- Test funzionale: `VENT_USE` continua a essere rilevato e a
+  contribuire allo score (+35 per teletrasporto)
+
+### Cosa NON e' cambiato
+
+- API motore: invariata
+- Simon Says (v2.2.44): invariato
+- TaskPlanner / Auto-All / preview F1: invariati
+- Tutti i fix precedenti: invariati
+
+
+## v2.2.45 — Intelligence Sidebar: analisi sospettosita' player (F2)
+
+### Richiesta utente
+
+> Mi serve creare una sorta di barra a sinistra dove ci sono statistiche
+> generate al player che vede probabilita' di chi puo' essere safe/impostore,
+> chi mi segue di piu', ultimi avvistamenti, giri sospetti usando le vent,
+> chi pensi che abbia fatto una task perche' si trova in quel punto.
+> Implementa sempre a parte in modo da rimanere modulare.
+
+### Architettura modulare
+
+Nuovo sottopackage isolato:
+
+```
+among_us_ai/intelligence/      ← NUOVO
+  __init__.py
+  player_tracker.py             - Storia posizioni di ogni player
+  activity_detector.py          - Eventi sospetti (vent, fermate, ecc.)
+  proximity_analyzer.py         - "Chi mi segue di piu'"
+  task_inference.py             - Task probabilmente fatte
+  suspicion_analyzer.py         - Score 0-100% di impostore
+
+among_us_ai/ui/mixins/
+  intelligence_sidebar.py       - Sidebar UI (apribile con F2)
+```
+
+I 5 moduli intelligence sono **completamente separati** dal resto del
+bot. Lavorano alimentati dal sistema YOLO esistente
+(`self.detected_players`) senza toccarlo. Si possono disattivare con
+un flag `INTELLIGENCE_ENABLED = False` in config.
+
+### Componenti
+
+#### 1. PlayerTracker
+
+Per ogni player rilevato mantiene una storia rolling delle posizioni
+(max 500 snapshot, decadimento dopo 10 minuti). Espone:
+- `all_players()`, `visible_players(now)`, `dead_players()`
+- `observe(name, x, y, color, t, is_dead)` per alimentarlo
+- Statistiche: `stationary_time()`, `distance_traveled()`,
+  `stationary_for_seconds()`, `seconds_since_last_seen()`
+
+#### 2. ActivityDetector
+
+Genera eventi sospetti dall'analisi della storia:
+- `EV_VENT_USE`: player sparito + ricomparso >8u in <3s
+- `EV_STOP`: player fermo per >1.5s
+- `EV_NEAR_BODY`: player visto entro 3u da un cadavere
+- `EV_NEAR_VENT`: player fermo vicino a un vent (sospetto debole)
+- Anti-duplicato per non registrare lo stesso evento piu' volte
+
+#### 3. ProximityAnalyzer
+
+Misura quanto ogni player segue il bot:
+- `follow_score(player)`: secondi cumulati passati entro 5u dal bot
+- `follow_ranking()`: classifica chi segue di piu'
+- `detect_groups(tracker)`: gruppi di 2+ player vicini fra loro
+
+#### 4. TaskInference
+
+Deduce task probabilmente fatte dai player:
+- Se un player si ferma >1.5s entro 2u da una task registrata,
+  conta come "task probabilmente fatta"
+- Confidence in base alla durata della fermata + lunghezza task
+- Anti-duplicato (stessa task in 30s = conteggio singolo)
+
+#### 5. SuspicionAnalyzer
+
+Combina tutti i sopra in uno score 0-100% per ciascun player:
+
+```
+score = +35  per ogni vent usata
+      + 12  per ogni vicinanza a cadaveri
+      + 5   per fermo vicino a vent
+      + 0.3 per secondo speso vicino al bot (cap 18)
+      + 8   se mai vista una task in oltre 60s
+      - 8   per ogni task inferita
+
+verdetto = 'super_sus' (>=60%) | 'sus' (>=30%) | 'safe'
+```
+
+I pesi sono parametri del costruttore, configurabili in futuro
+da UI.
+
+### Sidebar UI (F2)
+
+Pannello a sinistra (320 px) che mostra:
+- Header con conteggio player vivi/morti + gruppi attivi
+- Per ogni player VIVO (ordine: piu' sospetto in alto):
+  * Pallino colorato + nome (verde/giallo/rosso a seconda del verdetto)
+  * Indicatore [VISTO] o "-Ns" (secondi dall'ultimo avvistamento)
+  * Barra progress di sospettosita' (% + verdetto)
+  * Fattori che contribuiscono (ognuno con segno e count)
+  * Task inferite (numero + ultime 3)
+  * Tempo di follow del bot
+  * Mini-cronologia ultime 3 posizioni
+- In fondo: lista compatta dei morti (con pos del cadavere)
+
+Refresh ogni 0.5s (configurabile via `INTELLIGENCE_REFRESH_HZ`).
+
+I dati GREZZI vengono raccolti SEMPRE in background, anche a
+sidebar chiusa. F2 (o menu Strumenti -> Intelligence) apre/chiude.
+
+### Vent positions
+
+Il detector di vent uses lavora se le posizioni dei vent sono
+registrate come POI (con "vent" o "condotto" nel nome). Se la mappa
+non ha POI vent, l'analisi resta valida ma il rilevamento "fermo
+vicino a vent" e' disabilitato (il vent_use diretto continua a
+funzionare via teletrasporto).
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `among_us_ai/intelligence/__init__.py` | NUOVO - export package |
+| `among_us_ai/intelligence/player_tracker.py` | NUOVO - tracker base |
+| `among_us_ai/intelligence/activity_detector.py` | NUOVO - eventi sospetti |
+| `among_us_ai/intelligence/proximity_analyzer.py` | NUOVO - follow score |
+| `among_us_ai/intelligence/task_inference.py` | NUOVO - task inferite |
+| `among_us_ai/intelligence/suspicion_analyzer.py` | NUOVO - score finale |
+| `among_us_ai/ui/mixins/intelligence_sidebar.py` | NUOVO - UI sidebar |
+| `among_us_ai/ui/mixins/__init__.py` | Export `IntelligenceSidebarMixin` |
+| `among_us_ai/ui/app.py` | Istanziazione 5 moduli intelligence + render loop + chiamata `_update_intelligence_sidebar(dt)` |
+| `among_us_ai/ui/mixins/ui_setup.py` | Voce menu "Intelligence (F2)" + handler tasto F2 |
+| `among_us_ai/core/config.py` | 3 nuove costanti `INTELLIGENCE_*` |
+
+### Verifica fatta
+
+Test funzionale con scenario simulato (Rosso sospetto, Blu crewmate,
+Verde morto):
+
+| Player | Score | Verdetto |
+|---|---|---|
+| Rosso (vent + near_body + follows) | 17%+ | safe -> sus |
+| Blu (1 task fatta) | -8% -> 0% | safe |
+| Verde | (morto, escluso) | - |
+
+Test rilevamento eventi:
+- VENT_USE: OK (rilevato teletrasporto >8u in <3s)
+- NEAR_BODY: OK (rilevato vicinanza a cadavere)
+- TASKS_DONE: OK (rilevato fermata vicino a task)
+- FOLLOW_SCORE: OK (rilevato follow del bot)
+- DETECT_GROUPS: OK (clustering di player vicini)
+
+Test import package: OK su tutti i 7 file nuovi
+Test syntax: OK
+
+### Cosa NON e' cambiato
+
+- Sistema YOLO scanner: invariato (la sidebar legge in sola lettura)
+- Tutto il resto del bot: invariato
+- API motore: invariata
+- File JSON delle task: invariati
+- Algoritmo TaskPlanner: invariato
+
+### Limitazioni note (per estensioni future)
+
+- I nomi dei player vengono dal YOLO model. Se il model classifica
+  due crew con lo stesso colore, possono fondersi nel tracker.
+- Vent positions vengono solo dai POI. Per attivare il
+  "near_vent" detector bisogna registrare i POI di tipo vent
+  (oggi solo 3 POI di test nel JSON).
+- Score di sospettosita' sono euristici, NON deterministi:
+  affidatevi al giudizio personale per l'accusa finale!
+
+
 ## v2.2.44 — Simon Says: click iniziale per innescare il minigioco
 
 ### Richiesta utente

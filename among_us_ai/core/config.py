@@ -92,6 +92,20 @@ class GPSConfig:
     PLANNER_ALPHA_DIST    = 0.5     # peso della distanza (penalita')
     PLANNER_USE_ASTAR     = True    # True: distanza A* reale, False: euclidea
 
+    # ============================================================
+    # INTELLIGENCE: sidebar con analisi sospettosita' dei player
+    # ============================================================
+    # Sistema modulare che gira IN BACKGROUND raccogliendo dati dai
+    # detection esistenti. Mostra una sidebar (tasto F2) con:
+    # - Sospettosita' per ogni player (0-100%)
+    # - Task probabilmente fatte
+    # - Chi mi segue di piu'
+    # - Vent uses, vicinanza cadaveri, ecc.
+    INTELLIGENCE_ENABLED       = True
+    INTELLIGENCE_SIDEBAR_WIDTH = 320     # px
+    INTELLIGENCE_REFRESH_HZ    = 2.0     # 2 update al secondo
+    # I dati GREZZI vengono raccolti sempre, anche se la sidebar e' chiusa.
+
     # EXEC_MODE: modalita' di esecuzione delle task.
     #   - 'subprocess' : esegue il file .py come processo Python separato
     #                    via subprocess.Popen. Modalita' isolata e robusta,
