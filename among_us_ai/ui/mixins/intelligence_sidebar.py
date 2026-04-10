@@ -72,6 +72,21 @@ class IntelligenceSidebarMixin:
                          color=Colors.TEXT_DIM)
             dpg.add_separator()
 
+            # === OPZIONI ===
+            with dpg.group(horizontal=False):
+                dpg.add_checkbox(
+                    label="Evita player sospetti (path-aware)",
+                    tag="intel_avoid_suspects_chk",
+                    default_value=bool(getattr(self, '_avoid_suspects', False)),
+                    callback=lambda s, app, ud: setattr(
+                        self, '_avoid_suspects', bool(app)),
+                )
+                dpg.add_text("  Il bot evita di passare sopra i player",
+                              color=Colors.TEXT_DIM)
+                dpg.add_text("  con sospetto > 40% (sorpasso laterale).",
+                              color=Colors.TEXT_DIM)
+            dpg.add_separator()
+
             # Container per la lista (riempito dinamicamente)
             with dpg.child_window(tag=SIDEBAR_CONTENT_TAG,
                                    border=False,
@@ -113,7 +128,9 @@ class IntelligenceSidebarMixin:
         # === Aggiornamento moduli intelligence ===
         try:
             self._intelligence_feed_tracker()
-            self._intelligence_activity.update(self._intelligence_tracker)
+            self._intelligence_activity.update(
+                self._intelligence_tracker,
+                bot_pos=self.pos_target)
             self._intelligence_proximity.update(
                 self._intelligence_tracker, self.pos_target)
             self._intelligence_task_inf.update(self._intelligence_tracker)
@@ -328,9 +345,11 @@ class IntelligenceSidebarMixin:
     def _human_factor(fname):
         """Trasforma il nome del fattore in italiano leggibile."""
         return {
-            'vent_use':      'vent uses',
-            'near_body':     'vicino a cadaveri',
-            'tasks_done':    'task fatte',
-            'following_me':  's vicino a me',
-            'no_tasks_seen': 's senza task',
+            'vent_use':         'vent uses',
+            'sudden_disappear': 'sparizioni improvvise',
+            'near_body':        'vicino a cadaveri',
+            'tasks_done':       'task fatte',
+            'following_me':     's vicino a me',
+            'alone_with_safe':  's 1v1 vivi (safe)',
+            'no_tasks_seen':    's senza task',
         }.get(fname, fname)

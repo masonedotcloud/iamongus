@@ -86,8 +86,16 @@ class Pathfinder:
     # A*
     # ------------------------------------------------------------------
 
-    def astar(self, start_xy, goal_xy, max_nodes=20000):
-        """Algoritmo A*: trova il percorso piu' corto da start a goal."""
+    def astar(self, start_xy, goal_xy, max_nodes=20000, extra_penalties=None):
+        """
+        Algoritmo A*: trova il percorso piu' corto da start a goal.
+
+        :param extra_penalties: dict {(cx, cy): float} con penalita'
+            aggiuntive PER CELLA, sommate alle `self.penalties` di base.
+            Utile per "evita player sospetti": chi chiama costruisce
+            un dict con celle vicine ai player sospetti -> A* preferisce
+            aggirarle (ma puo' ancora passarci se serve).
+        """
         if not self.walkable:
             # Goal irraggiungibile o limite nodi superato
             return None
@@ -113,6 +121,9 @@ class Pathfinder:
         neighbors = [(-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
                      (-1, -1, 1.4142), (-1, 1, 1.4142),
                      (1, -1, 1.4142), (1, 1, 1.4142)]
+
+        # Helper per leggere penalita' totale di una cella
+        extra = extra_penalties or {}
 
         while open_heap:
             _, _, current = heapq.heappop(open_heap)
@@ -152,7 +163,8 @@ class Pathfinder:
                         continue
 
                 wall_penalty = self.penalties.get(nb, 0.0)
-                tentative = g_score[current] + cost + wall_penalty
+                extra_penalty = extra.get(nb, 0.0)
+                tentative = g_score[current] + cost + wall_penalty + extra_penalty
                 if tentative < g_score.get(nb, float('inf')):
                     came_from[nb] = current
                     g_score[nb] = tentative
