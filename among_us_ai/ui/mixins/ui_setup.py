@@ -69,6 +69,8 @@ class UISetupMixin:
                     dpg.add_separator()
                     dpg.add_menu_item(label="Intelligence (F2)",
                         callback=lambda *a: self._toggle_intelligence_sidebar())
+                    dpg.add_menu_item(label="Anti-AFK on/off (F3)",
+                        callback=lambda *a: self._toggle_anti_afk())
                 # Menu
                 with dpg.menu(label="?"):
                     dpg.add_menu_item(label="Info e scorciatoie",
@@ -166,6 +168,8 @@ class UISetupMixin:
                 callback=lambda *a: self._toggle_preview_giro())
             dpg.add_key_press_handler(dpg.mvKey_F2,
                 callback=lambda *a: self._toggle_intelligence_sidebar())
+            dpg.add_key_press_handler(dpg.mvKey_F3,
+                callback=lambda *a: self._toggle_anti_afk())
             dpg.add_key_press_handler(dpg.mvKey_Escape,
                 callback=lambda *a: self._cancel_all())
 

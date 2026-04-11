@@ -16,6 +16,7 @@ from .auto_quest import AutoQuestMixin
 from .dialogs import DialogsMixin
 from .input_callbacks import InputCallbacksMixin
 from .intelligence_sidebar import IntelligenceSidebarMixin
+from .anti_afk import AntiAfkMixin
 from .map_loader import MapLoaderMixin
 from .memory_sync import MemorySyncMixin
 from .misc import MiscMixin
@@ -35,6 +36,7 @@ from .yolo_scanner import YoloScannerMixin
 from .zones import ZonesMixin
 
 __all__ = [
+    "AntiAfkMixin",
     "AutoMoveMixin", "AutoQuestMixin", "DialogsMixin",
     "InputCallbacksMixin", "IntelligenceSidebarMixin",
     "MapLoaderMixin", "MemorySyncMixin",

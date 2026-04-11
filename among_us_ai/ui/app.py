@@ -88,6 +88,7 @@ from .mixins.misc import MiscMixin
 from .mixins.use_button_calib import UseButtonCalibMixin
 from .mixins.planner_ui import PlannerMixin
 from .mixins.intelligence_sidebar import IntelligenceSidebarMixin
+from .mixins.anti_afk import AntiAfkMixin
 
 
 class GPSVisualizerPro(
@@ -117,6 +118,7 @@ class GPSVisualizerPro(
     UseButtonCalibMixin,
     PlannerMixin,
     IntelligenceSidebarMixin,
+    AntiAfkMixin,
 ):
     """Classe principale dell'applicazione: orchestra rendering, pathfinding, lettura RAM, scanner YOLO, esecuzione task."""
     def __init__(self):
@@ -249,6 +251,15 @@ class GPSVisualizerPro(
             # Stato UI
             self._intelligence_sidebar_open = False
             self._intelligence_update_timer = 0.0
+            # Toggle "evita player sospetti" (modifica A* del path)
+            self._avoid_suspects = bool(
+                getattr(GPSConfig, 'AVOID_SUSPECTS_DEFAULT', False))
+
+        # Anti-AFK: toggle attivabile con F3. Se attivo e bot fermo
+        # da >ANTI_AFK_THRESHOLD_SEC, lancia Auto-All automaticamente.
+        self._anti_afk_enabled = bool(
+            getattr(GPSConfig, 'ANTI_AFK_DEFAULT', False))
+        self._anti_afk_idle_since = 0.0
 
         # --- Punti di Interesse ---
         self.poi_mgr  = PoiManager(GPSConfig.POI_FILE)
@@ -336,6 +347,7 @@ class GPSVisualizerPro(
         self._update_auto_all(dt)
         self._update_preview_giro(dt)
         self._update_intelligence_sidebar(dt)
+        self._update_anti_afk(dt)
         
         pending_2p = getattr(self, '_pending_next_2p_task', None)
         if pending_2p is not None:
