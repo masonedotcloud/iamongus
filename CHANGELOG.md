@@ -1,5 +1,128 @@
 # Changelog
 
+## v2.2.48 — Intelligence: fix player fermo al 100% + smoothing score + alone_with robusto
+
+### Richieste utente
+
+> Sembra che se un player e' fermo mette sospettoso al 100%.
+> Non cresce subito ma a step.
+> Poi cerca di migliorare la rilevazione delle statistiche.
+
+### Causa del bug "player fermo al 100%"
+
+Tre bug distinti combinati:
+
+#### Bug 1: Cache anti-duplicato con set NON ordinato
+
+`_recent_event_keys` era un `set()`. Quando si superava il cap (200
+chiavi), il codice faceva `set(keys[-100:])` dove `keys = list(set)`.
+Ma **un set Python non ha ordine deterministico**: l'eviction era
+casuale, non LRU.
+
+Effetto: una chiave anti-duplicato per `SUDDEN_DISAPPEAR` poteva essere
+scartata casualmente -> stesso evento ri-generato -> +25 al score, +25,
++25... fino al 100%.
+
+#### Bug 2: alone_with_safe si resettava troppo facilmente
+
+Il `_alone_with_last_t.clear()` veniva chiamato OGNI tick in cui non
+eravamo 1v1 (es. quando un altro player passava per 1 secondo). Cosi'
+il bonus negativo `-0.5/s` non si accumulava mai abbastanza per
+scagionare un player crewmate -> score non scendeva mai.
+
+#### Bug 3: nessun smoothing dello score
+
+Lo score cambiava istantaneamente ad ogni nuovo evento o ad ogni
+aggiornamento del follow time. Un evento +25 portava una salita brusca
+visibile come "step".
+
+### Fix applicati
+
+#### Fix 1: Cache LRU corretta con dict insertion-ordered
+
+```python
+# Prima:
+self._recent_event_keys = set()
+# eviction: set(keys[-N:])  -> CASUALE!
+
+# Ora:
+self._recent_event_keys = {}  # dict insertion-ordered
+# eviction: while len > max: del next(iter(...))  -> LRU corretto
+```
+
+In piu' aggiunto `self._reported_disappear_sessions` (set DEDICATO,
+mai evettato) come anti-duplicato STRONG per SUDDEN_DISAPPEAR: una
+sessione di sparizione genera UN solo evento per partita.
+
+#### Fix 2: alone_with non si resetta mai
+
+Rimosso `_alone_with_last_t.clear()`. Adesso quando non e' 1v1 il
+timer non viene cancellato: smette di aggiornarsi naturalmente.
+Al prossimo 1v1, se il delta e' troppo grande (>5s) non aggiungo
+quel delta, ma riparto pulito dal tick successivo. Il bonus gia'
+accumulato resta intatto.
+
+Test: player crewmate 1v1 col bot interrotto da Verde per 5s -
+ora accumula **290s** di alone_with (era 23s prima del fix).
+
+#### Fix 3: smoothing dello score
+
+Aggiunto parametro `smoothing=0.5` al SuspicionAnalyzer:
+
+```python
+# Il nuovo score e' una media pesata col vecchio
+score = old * smoothing + new * (1 - smoothing)
+```
+
+Effetto: la barra di sospettosita' si muove dolcemente, no piu'
+salti improvvisi. smoothing=0.5 e' un buon compromesso fra
+reattivita' e stabilita'.
+
+### Test post-fix
+
+Player Rosso fermo per 5 minuti vicino al bot, con Verde che passa
+brevemente a t=100s (simulazione 1v1 interrotto):
+
+```
+Evoluzione score Rosso:
+  t=0s:   0.0%
+  t=30s:  0.0%
+  t=60s:  0.0%
+  t=90s:  5.2%   <- arrivo dolce, non a step
+  t=120s: 5.9%
+  t=150s: 6.0%
+  t=180s: 6.0%
+  ...
+```
+
+Finale: **Rosso fermo 6%** (prima del fix poteva arrivare al 100%).
+Score evoluzione liscia, niente salti. Bonus alone_with accumulato
+correttamente (290s, era 23s).
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `intelligence/activity_detector.py` | Cache: `set()` -> `dict()`. Eviction LRU corretta con `next(iter())`. Nuovo `_reported_disappear_sessions` per anti-duplicato STRONG di SUDDEN_DISAPPEAR. Cap cache aumentato 200 -> 500. |
+| `intelligence/proximity_analyzer.py` | Rimosso `_alone_with_last_t.clear()` nel ramo "non 1v1". Il timer smette di aggiornarsi naturalmente quando non siamo soli; il bonus accumulato resta. |
+| `intelligence/suspicion_analyzer.py` | Aggiunto parametro costruttore `smoothing=0.5`. Aggiunta cache `_last_scores`. In `analyze()`, dopo il clamp 0-100, applico la media pesata col valore precedente. |
+
+### Verifica
+
+- Syntax check OK su tutti i file modificati
+- Import package OK
+- Test funzionale 5 minuti con player fermo: 6% (non 100%)
+- Test eventi rigenerati: 0 (prima ne generava decine)
+- Test evoluzione score: smooth (no step)
+
+### Cosa NON e' cambiato
+
+- Pesi default dello score (W_VENT_USE=35, ecc.)
+- Logica dei detector (vent, near_body, sudden_disappear, stop)
+- API motore / TaskPlanner / preview F1 / Simon Says: invariati
+- Tutte le altre feature v2.2.47 (anti-AFK F3, evita sospetti, ecc.): invariate
+
+
 ## v2.2.47 — Intelligence avanzata: sparizioni, 1v1 safe, evita sospetti, anti-AFK (F3)
 
 ### Richieste utente
