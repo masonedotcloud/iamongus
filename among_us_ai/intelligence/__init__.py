@@ -38,7 +38,7 @@ from .player_tracker import (
 )
 from .activity_detector import (
     ActivityDetector, ActivityEvent,
-    EV_VENT_USE, EV_STOP, EV_NEAR_BODY, EV_ERRATIC_MOVE,
+    EV_VENT_USE, EV_STOP, EV_NEAR_BODY, EV_SUDDEN_DISAPPEAR, EV_ERRATIC_MOVE,
 )
 from .proximity_analyzer import (
     ProximityAnalyzer,
@@ -47,7 +47,7 @@ from .task_inference import (
     TaskInference, InferredTask,
 )
 from .suspicion_analyzer import (
-    SuspicionAnalyzer, SuspicionScore,
+    SuspicionAnalyzer, SuspicionScore, build_avoidance_cost_map,
 )
 
 __all__ = [
@@ -55,11 +55,11 @@ __all__ = [
     'PlayerTracker', 'PlayerInfo', 'PlayerSnapshot',
     # Activity
     'ActivityDetector', 'ActivityEvent',
-    'EV_VENT_USE', 'EV_STOP', 'EV_NEAR_BODY', 'EV_ERRATIC_MOVE',
+    'EV_VENT_USE', 'EV_STOP', 'EV_NEAR_BODY', 'EV_SUDDEN_DISAPPEAR', 'EV_ERRATIC_MOVE',
     # Proximity
     'ProximityAnalyzer',
     # Task
     'TaskInference', 'InferredTask',
     # Suspicion
-    'SuspicionAnalyzer', 'SuspicionScore',
+    'SuspicionAnalyzer', 'SuspicionScore', 'build_avoidance_cost_map',
 ]

@@ -106,6 +106,17 @@ class GPSConfig:
     INTELLIGENCE_REFRESH_HZ    = 2.0     # 2 update al secondo
     # I dati GREZZI vengono raccolti sempre, anche se la sidebar e' chiusa.
 
+    # Toggle iniziale "evita player sospetti": se True, il path A*
+    # del bot evita di passare sopra player con score > 40%. Si puo'
+    # cambiare a runtime dal checkbox nella sidebar Intelligence (F2).
+    AVOID_SUSPECTS_DEFAULT = False
+
+    # Toggle iniziale Anti-AFK: se True, quando il bot e' fermo per
+    # piu' di ANTI_AFK_THRESHOLD_SEC, lancia Auto-All automaticamente.
+    # Si puo' cambiare a runtime con F3.
+    ANTI_AFK_DEFAULT        = False
+    ANTI_AFK_THRESHOLD_SEC  = 30.0
+
     # EXEC_MODE: modalita' di esecuzione delle task.
     #   - 'subprocess' : esegue il file .py come processo Python separato
     #                    via subprocess.Popen. Modalita' isolata e robusta,

@@ -30,9 +30,37 @@ class AutoMoveMixin:
         
         start = (self.pos_target[0], self.pos_target[1])
         t0 = time.time()
-        
+
+        # === Cost map per "evita player sospetti" ===
+        # Se l'utente ha attivato l'opzione (checkbox nella sidebar F2)
+        # E il sistema intelligence e' attivo, costruisco un dict di
+        # penalita' extra che fa "girare attorno" ai player sospetti.
+        extra_penalties = None
+        if (getattr(self, '_avoid_suspects', False)
+                and getattr(self, '_intelligence_enabled', False)):
+            try:
+                from ..intelligence import build_avoidance_cost_map
+                scores = self._intelligence_suspicion.analyze_all(
+                    self._intelligence_tracker,
+                    self._intelligence_activity,
+                    self._intelligence_proximity,
+                    self._intelligence_task_inf,
+                )
+                extra_penalties = build_avoidance_cost_map(
+                    scores, self._intelligence_tracker,
+                    min_score=40.0, radius=3.0, max_penalty=15.0,
+                )
+            except Exception as e:
+                print(f"[Intelligence] Errore build cost map: {e}",
+                      flush=True)
+                extra_penalties = None
+
         # Calcola il percorso verso il punto "snappato"
-        path = self.pathfinder.astar(start, actual_goal, max_nodes=GPSConfig.ASTAR_MAX_NODES)
+        path = self.pathfinder.astar(
+            start, actual_goal,
+            max_nodes=GPSConfig.ASTAR_MAX_NODES,
+            extra_penalties=extra_penalties,
+        )
         elapsed_ms = (time.time() - t0) * 1000
 
         if not path:

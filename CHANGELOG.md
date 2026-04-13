@@ -1,5 +1,272 @@
 # Changelog
 
+## v2.2.48 — Intelligence: fix player fermo al 100% + smoothing score + alone_with robusto
+
+### Richieste utente
+
+> Sembra che se un player e' fermo mette sospettoso al 100%.
+> Non cresce subito ma a step.
+> Poi cerca di migliorare la rilevazione delle statistiche.
+
+### Causa del bug "player fermo al 100%"
+
+Tre bug distinti combinati:
+
+#### Bug 1: Cache anti-duplicato con set NON ordinato
+
+`_recent_event_keys` era un `set()`. Quando si superava il cap (200
+chiavi), il codice faceva `set(keys[-100:])` dove `keys = list(set)`.
+Ma **un set Python non ha ordine deterministico**: l'eviction era
+casuale, non LRU.
+
+Effetto: una chiave anti-duplicato per `SUDDEN_DISAPPEAR` poteva essere
+scartata casualmente -> stesso evento ri-generato -> +25 al score, +25,
++25... fino al 100%.
+
+#### Bug 2: alone_with_safe si resettava troppo facilmente
+
+Il `_alone_with_last_t.clear()` veniva chiamato OGNI tick in cui non
+eravamo 1v1 (es. quando un altro player passava per 1 secondo). Cosi'
+il bonus negativo `-0.5/s` non si accumulava mai abbastanza per
+scagionare un player crewmate -> score non scendeva mai.
+
+#### Bug 3: nessun smoothing dello score
+
+Lo score cambiava istantaneamente ad ogni nuovo evento o ad ogni
+aggiornamento del follow time. Un evento +25 portava una salita brusca
+visibile come "step".
+
+### Fix applicati
+
+#### Fix 1: Cache LRU corretta con dict insertion-ordered
+
+```python
+# Prima:
+self._recent_event_keys = set()
+# eviction: set(keys[-N:])  -> CASUALE!
+
+# Ora:
+self._recent_event_keys = {}  # dict insertion-ordered
+# eviction: while len > max: del next(iter(...))  -> LRU corretto
+```
+
+In piu' aggiunto `self._reported_disappear_sessions` (set DEDICATO,
+mai evettato) come anti-duplicato STRONG per SUDDEN_DISAPPEAR: una
+sessione di sparizione genera UN solo evento per partita.
+
+#### Fix 2: alone_with non si resetta mai
+
+Rimosso `_alone_with_last_t.clear()`. Adesso quando non e' 1v1 il
+timer non viene cancellato: smette di aggiornarsi naturalmente.
+Al prossimo 1v1, se il delta e' troppo grande (>5s) non aggiungo
+quel delta, ma riparto pulito dal tick successivo. Il bonus gia'
+accumulato resta intatto.
+
+Test: player crewmate 1v1 col bot interrotto da Verde per 5s -
+ora accumula **290s** di alone_with (era 23s prima del fix).
+
+#### Fix 3: smoothing dello score
+
+Aggiunto parametro `smoothing=0.5` al SuspicionAnalyzer:
+
+```python
+# Il nuovo score e' una media pesata col vecchio
+score = old * smoothing + new * (1 - smoothing)
+```
+
+Effetto: la barra di sospettosita' si muove dolcemente, no piu'
+salti improvvisi. smoothing=0.5 e' un buon compromesso fra
+reattivita' e stabilita'.
+
+### Test post-fix
+
+Player Rosso fermo per 5 minuti vicino al bot, con Verde che passa
+brevemente a t=100s (simulazione 1v1 interrotto):
+
+```
+Evoluzione score Rosso:
+  t=0s:   0.0%
+  t=30s:  0.0%
+  t=60s:  0.0%
+  t=90s:  5.2%   <- arrivo dolce, non a step
+  t=120s: 5.9%
+  t=150s: 6.0%
+  t=180s: 6.0%
+  ...
+```
+
+Finale: **Rosso fermo 6%** (prima del fix poteva arrivare al 100%).
+Score evoluzione liscia, niente salti. Bonus alone_with accumulato
+correttamente (290s, era 23s).
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `intelligence/activity_detector.py` | Cache: `set()` -> `dict()`. Eviction LRU corretta con `next(iter())`. Nuovo `_reported_disappear_sessions` per anti-duplicato STRONG di SUDDEN_DISAPPEAR. Cap cache aumentato 200 -> 500. |
+| `intelligence/proximity_analyzer.py` | Rimosso `_alone_with_last_t.clear()` nel ramo "non 1v1". Il timer smette di aggiornarsi naturalmente quando non siamo soli; il bonus accumulato resta. |
+| `intelligence/suspicion_analyzer.py` | Aggiunto parametro costruttore `smoothing=0.5`. Aggiunta cache `_last_scores`. In `analyze()`, dopo il clamp 0-100, applico la media pesata col valore precedente. |
+
+### Verifica
+
+- Syntax check OK su tutti i file modificati
+- Import package OK
+- Test funzionale 5 minuti con player fermo: 6% (non 100%)
+- Test eventi rigenerati: 0 (prima ne generava decine)
+- Test evoluzione score: smooth (no step)
+
+### Cosa NON e' cambiato
+
+- Pesi default dello score (W_VENT_USE=35, ecc.)
+- Logica dei detector (vent, near_body, sudden_disappear, stop)
+- API motore / TaskPlanner / preview F1 / Simon Says: invariati
+- Tutte le altre feature v2.2.47 (anti-AFK F3, evita sospetti, ecc.): invariate
+
+
+## v2.2.47 — Intelligence avanzata: sparizioni, 1v1 safe, evita sospetti, anti-AFK (F3)
+
+### Richieste utente
+
+> 1. Se un utente sei sicuro che scompaia velocemente potrebbe essere
+>    un impostore (basato su scomparsa improvvisa, deve differire dal
+>    "lo perdo dal raggio di vista")
+> 2. Se sono SOLO con un player (nessun altro intorno) e non muoio,
+>    abbassa il suo score (sarebbe impostore -> avrebbe killato)
+> 3. Evita di passare SOPRA i player sospetti, ma accanto (sorpasso)
+> 4. Se il bot e' fermo, lancia un giro automatico delle task. Attivabile
+>    con F3, opzione evita sospetti checkbox.
+
+### 1. SUDDEN_DISAPPEAR: sparizione improvvisa dal raggio di vista
+
+Nuovo evento `EV_SUDDEN_DISAPPEAR` rilevato quando:
+- Player visto entro `NEAR_BOT_RADIUS` (5u) dal bot recentemente
+- Sono passati >`DISAPPEAR_GAP_SEC` (2s) senza piu' vederlo
+- Ma <`DISAPPEAR_MAX_GAP_SEC` (8s) - sennò "vecchio fatto"
+- La velocita' media nei suoi ultimi snapshot era bassa
+  (<`DISAPPEAR_MAX_SPEED`, 1.5u/s) -> NON si stava allontanando
+  con movimento normale
+
+Distingue "kill+vent" da "lo perdo perche' corre via dal mio raggio
+di vista". Peso nello score: **+25 per sparizione**.
+
+### 2. ALONE_WITH_SAFE: 1v1 vivi col bot scagiona
+
+Nuovo tracking in `ProximityAnalyzer`: per ogni player, secondi
+cumulati passati 1v1 col bot (= solo lui vicino, nessun altro).
+
+Ogni tick:
+- Se esattamente UN player e' entro radius * 1.5 dal bot: e' 1v1
+- Accumulo `_alone_with_safe_time[player]`
+- Se piu' di 1 player vicino: reset del marker (non e' piu' 1v1)
+
+Peso nello score: **-0.5 per secondo (cap -20)**. Logica: se fosse
+impostore, in 1v1 avrebbe killato. Quindi piu' tempo passo vivo con
+lui, piu' e' probabile che sia crewmate.
+
+### 3. EVITA SOSPETTI: cost map nel path A*
+
+Aggiunto parametro **opzionale** `extra_penalties` al `pathfinder.astar()`:
+dict {(cx, cy): penalty} con penalita' addizionali per cella.
+
+Nuovo helper `build_avoidance_cost_map(scores, tracker, ...)` in
+`suspicion_analyzer.py`: costruisce automaticamente la cost map
+dai player sospetti (score >= min_score). Penalita' decrescente
+dalla cella centrale (max_penalty) ai bordi del raggio.
+
+Risultato: A* trova un path che "gira attorno" ai super_sus invece
+di passargli sopra. Sorpasso laterale come una macchina.
+
+Integrazione in `_plan_path` (auto_move): quando il flag
+`self._avoid_suspects` e' True, costruisce la cost map al volo e la
+passa ad astar. Niente quando il flag e' False (zero overhead).
+
+Toggle: **checkbox "Evita player sospetti"** nella sidebar F2.
+Soglia: `min_score=40`, `radius=3.0`, `max_penalty=15.0`.
+
+### 4. ANTI-AFK: lancia Auto-All se fermo (F3)
+
+Nuovo mixin `AntiAfkMixin` in `ui/mixins/anti_afk.py`. Toggle con
+F3 (o voce menu "Anti-AFK on/off"). Quando attivo:
+- Misura `_anti_afk_idle_since` ad ogni tick
+- "Occupato" = path attivo OR task in esecuzione OR launch in corso
+  OR Auto-All gia' attivo
+- Se non occupato per `ANTI_AFK_THRESHOLD_SEC` (30s) -> lancia
+  `_toggle_auto_all()` automaticamente
+
+L'utente vede nella status bar: `"Anti-AFK ATTIVO (F3 per disattivare)"`
+e log `[AntiAFK]` in console.
+
+### Architettura modulare mantenuta
+
+Tutto separato:
+- `intelligence/activity_detector.py` -> EV_SUDDEN_DISAPPEAR
+- `intelligence/proximity_analyzer.py` -> alone_with_safe_time
+- `intelligence/suspicion_analyzer.py` -> nuovi pesi + build_avoidance_cost_map
+- `pathfinding/pathfinder.py` -> parametro extra_penalties (opzionale)
+- `ui/mixins/auto_move.py` -> integrazione cost map condizionale
+- `ui/mixins/intelligence_sidebar.py` -> checkbox toggle
+- `ui/mixins/anti_afk.py` -> NUOVO mixin (totalmente separato)
+- `core/config.py` -> 4 nuove costanti
+
+### Tasti / UI
+
+| Tasto / UI | Funzione |
+|---|---|
+| **F1** | Preview giro Auto-All (esistente) |
+| **F2** | Sidebar Intelligence (esistente, v2.2.45) |
+| **F3** | **Anti-AFK toggle (NUOVO)** |
+| Checkbox "Evita player sospetti" | nella sidebar F2 (NUOVO) |
+| Menu Strumenti -> "Anti-AFK on/off (F3)" | alias del tasto F3 |
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `intelligence/activity_detector.py` | +4 costanti (NEAR_BOT_RADIUS, DISAPPEAR_GAP_SEC, DISAPPEAR_MAX_GAP_SEC, DISAPPEAR_MAX_SPEED), +EV_SUDDEN_DISAPPEAR, +parametro bot_pos al update(), +metodo `_check_sudden_disappear` |
+| `intelligence/proximity_analyzer.py` | +stato `_alone_with_safe_time` e `_alone_with_last_t`, +tracking 1v1 nel update(), +metodo `alone_with_safe_score()`, reset() aggiornato |
+| `intelligence/suspicion_analyzer.py` | +pesi `W_SUDDEN_DISAPPEAR`, `W_ALONE_WITH_SAFE`, `W_ALONE_WITH_CAP`, +parametri costruttore corrispondenti, +sezioni 2 e 6 nel `analyze()`, +funzione modulo `build_avoidance_cost_map()` |
+| `intelligence/__init__.py` | Export `EV_SUDDEN_DISAPPEAR` + `build_avoidance_cost_map` |
+| `pathfinding/pathfinder.py` | +parametro `extra_penalties` (default None) a `astar()`, somma alle penalty di base nel calcolo del costo |
+| `ui/mixins/auto_move.py` | `_plan_path` costruisce cost map da intelligence se `_avoid_suspects=True`, la passa ad astar |
+| `ui/mixins/intelligence_sidebar.py` | +checkbox "Evita player sospetti" nel build, +nuovi human_factor labels, passa `bot_pos` a `activity.update()` |
+| `ui/mixins/anti_afk.py` | NUOVO mixin con `_toggle_anti_afk` e `_update_anti_afk` |
+| `ui/mixins/__init__.py` | Export `AntiAfkMixin` |
+| `ui/mixins/ui_setup.py` | +voce menu "Anti-AFK on/off (F3)", +`add_key_press_handler(F3, ...)` |
+| `ui/app.py` | Inheritance `AntiAfkMixin`, init `_avoid_suspects` + `_anti_afk_enabled` + `_anti_afk_idle_since`, chiamata `_update_anti_afk(dt)` nel render loop |
+| `core/config.py` | +`AVOID_SUSPECTS_DEFAULT`, +`ANTI_AFK_DEFAULT`, +`ANTI_AFK_THRESHOLD_SEC` |
+
+### Verifica fatta
+
+Test funzionale end-to-end con scenario realistico:
+- **Verde**: 1 vent_use (teletrasporto) -> 35% sus, factor `vent_use +35`
+- **Rosso**: vicino al bot, fermo, sparito improvvisamente -> 27%, factor `sudden_disappear +25`
+- **Blu**: 1v1 col bot per 4s -> 1% safe, factor `alone_with_safe -2`
+
+Test cost map:
+- Verde a 70% super_sus -> 25 celle penalizzate intorno alla sua posizione
+- Cella centrale (10, 40): penalita' 10.5 (max)
+- Celle bordo: penalita' 7.0 (decrescente)
+- A* preferira' aggirare quella zona
+
+Syntax + import: OK su tutti i file modificati.
+
+### Cosa NON e' cambiato
+
+- API motore: invariata
+- Simon Says: invariato
+- TaskPlanner / preview F1 / popup pesi: invariati
+- Tutti i fix precedenti: intatti
+
+### Comportamento di default (sicuro)
+
+Tutte le nuove feature sono **OFF di default** per non sorprendere
+l'utente:
+- `AVOID_SUSPECTS_DEFAULT = False` -> il path A* normale come prima
+- `ANTI_AFK_DEFAULT = False` -> nessun auto-launch all'avvio
+
+L'utente li attiva quando vuole (checkbox F2 / tasto F3).
+
+
 ## v2.2.46 — Intelligence: rimosso "near_vent" detector
 
 ### Richiesta utente

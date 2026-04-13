@@ -43,6 +43,15 @@ class ProximityAnalyzer:
         # update. Memorizziamo l'ultimo tempo per ciascun player.
         self._last_seen_near_t = {}
 
+        # === SOLO CON LUI (tracking 1v1 sicuro) ===
+        # Se sono SOLO con un player (nessun altro nelle vicinanze) e
+        # NON muoio, ogni secondo passato cosi' abbassa il suo
+        # sospetto: probabilmente non e' l'impostore (avrebbe killato).
+        # player_name -> secondi cumulati di "1v1 vivo"
+        self._alone_with_safe_time = {}
+        # Ultima volta che abbiamo visto "io + lui da soli"
+        self._alone_with_last_t = {}
+
     # ============================================================
     # ALIMENTAZIONE
     # ============================================================
@@ -96,6 +105,39 @@ class ProximityAnalyzer:
                 # Player NON e' piu' vicino: reset del marker
                 self._last_seen_near_t.pop(player.name, None)
 
+        # === ALONE WITH (1v1 sicuro) ===
+        # Per ogni player vicino al bot: se non c'e' nessun ALTRO player
+        # vicino (entro radius * 1.5 dal bot), siamo "soli" -> ogni
+        # secondo che passo cosi' e' un punto a suo favore.
+        # Se invece ci sono altri, NON conta come "alone" - MA non
+        # cancello il bonus gia' accumulato per quel player: solo non
+        # accumulo nuovi secondi finche' siamo di nuovo soli.
+        nearby_alive = [
+            p for p in tracker.all_players()
+            if (not p.is_dead) and p.last_snapshot is not None
+            and p.seconds_since_last_seen(now) <= 3.0
+            and math.hypot(p.last_snapshot.x - bx,
+                            p.last_snapshot.y - by) <= self.radius * 1.5
+        ]
+        if len(nearby_alive) == 1:
+            # Esattamente un player con me: 1v1.
+            solo = nearby_alive[0]
+            last_t = self._alone_with_last_t.get(solo.name)
+            if last_t is not None:
+                delta = now - last_t
+                # delta plausibile (<5s) = accumulo. Delta troppo grande
+                # significa che il 1v1 e' stato interrotto in mezzo -
+                # non accumulo questa fetta ma riparto dal prossimo tick.
+                if 0.0 < delta < 5.0:
+                    self._alone_with_safe_time[solo.name] = (
+                        self._alone_with_safe_time.get(solo.name, 0.0)
+                        + delta
+                    )
+            self._alone_with_last_t[solo.name] = now
+        # NB: niente .clear() qui. Se ora non e' 1v1, il timer del player
+        # smette di aggiornarsi: il prossimo tick 1v1 vedra' un delta
+        # grande e non lo conteggera' (ma il bonus accumulato resta).
+
     # ============================================================
     # API DI QUERY
     # ============================================================
@@ -106,6 +148,14 @@ class ProximityAnalyzer:
         Piu' alto = piu' segue.
         """
         return self._cumulative_near_time.get(player_name, 0.0)
+
+    def alone_with_safe_score(self, player_name):
+        """
+        Secondi cumulati passati 1v1 col player SENZA morire.
+        Piu' alto = piu' probabile che sia crewmate (altrimenti
+        avrebbe killato in 1v1).
+        """
+        return self._alone_with_safe_time.get(player_name, 0.0)
 
     def follow_ranking(self):
         """
@@ -171,3 +221,5 @@ class ProximityAnalyzer:
         self._proximity_log.clear()
         self._cumulative_near_time.clear()
         self._last_seen_near_t.clear()
+        self._alone_with_safe_time.clear()
+        self._alone_with_last_t.clear()

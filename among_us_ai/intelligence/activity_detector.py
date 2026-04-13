@@ -7,6 +7,8 @@ Lavora sopra `PlayerTracker` per produrre EVENTI (non solo dati):
    conoscere le posizioni delle vent: si basa solo sul gap di moto.)
 - STOP: player fermo per >N secondi in un punto
 - NEAR_BODY: player visto vicino a un cadavere
+- SUDDEN_DISAPPEAR: player era visibile vicino al bot, e' sparito
+  all'improvviso senza muoversi via (sospetto: kill+vent)
 - ERRATIC_MOVE: movimento strano (es. avanti-indietro)
 
 Ogni evento ha timestamp, tipo, player, posizione e "evidence"
@@ -24,11 +26,21 @@ VENT_TELEPORT_MAX_TIME = 3.0   # se sparisce > ricompare entro N s = vent
 NEAR_BODY_RADIUS = 3.0          # entro N unita' dal cadavere
 STOP_MIN_DURATION = 1.5         # fermo per almeno N s = "stop event"
 
+# Parametri per SUDDEN_DISAPPEAR (sparizione improvvisa).
+# Il player era visibile e vicino al bot, poi all'improvviso non lo
+# vedo piu', SENZA che si stesse muovendo verso il bordo del raggio
+# di vista (cioe' non e' "lo perdo perche' si e' allontanato").
+NEAR_BOT_RADIUS = 5.0          # distanza max dal bot per dire "era vicino"
+DISAPPEAR_GAP_SEC = 2.0        # non visto da >N s = sparito
+DISAPPEAR_MAX_GAP_SEC = 8.0    # se non lo vedo da troppo, non e' piu' "improvviso"
+DISAPPEAR_MAX_SPEED = 1.5      # velocita' media bassa (u/s) prima della sparizione
+
 # Tipi di eventi
-EV_VENT_USE     = 'VENT_USE'
-EV_STOP         = 'STOP'
-EV_NEAR_BODY    = 'NEAR_BODY'
-EV_ERRATIC_MOVE = 'ERRATIC_MOVE'
+EV_VENT_USE         = 'VENT_USE'
+EV_STOP             = 'STOP'
+EV_NEAR_BODY        = 'NEAR_BODY'
+EV_SUDDEN_DISAPPEAR = 'SUDDEN_DISAPPEAR'
+EV_ERRATIC_MOVE     = 'ERRATIC_MOVE'
 
 
 class ActivityEvent:
@@ -59,23 +71,37 @@ class ActivityDetector:
         self.events = []  # lista di ActivityEvent (rolling, max 500)
         self.events_max = 500
 
-        # Stato per evitare di registrare lo stesso evento piu' volte:
-        # set di chiavi (event_type, player, timestamp_grosso, ...)
-        self._recent_event_keys = set()
-        self._recent_keys_max = 200
+        # Cache LRU per evitare di registrare lo stesso evento piu' volte.
+        # USO UN DICT (insertion-ordered in Python 3.7+) cosi' quando faccio
+        # l'eviction posso tenere gli N piu' RECENTI in modo deterministico.
+        # Un set Python non garantirebbe l'ordine -> eviction casuale -> stessi
+        # eventi rigenerati piu' volte (BUG osservato: score sale a step
+        # quando un player resta troppo a lungo nel tracker).
+        self._recent_event_keys = {}
+        self._recent_keys_max = 500
+
+        # Stato persistente per SUDDEN_DISAPPEAR: tiene traccia di quali
+        # "sessioni di sparizione" (identificate dal timestamp dell'ultimo
+        # avvistamento del player) abbiamo gia' segnalato. Resta in memoria
+        # finche' il tracker stesso non viene resettato: quindi l'evento
+        # viene generato UNA SOLA VOLTA per sparizione, anche se la cache
+        # generica viene compattata.
+        self._reported_disappear_sessions = set()
 
     # ============================================================
     # PUBLIC API
     # ============================================================
 
-    def update(self, tracker, dead_bodies=None, now=None):
+    def update(self, tracker, dead_bodies=None, bot_pos=None, now=None):
         """
         Analizza lo stato del tracker e genera nuovi eventi.
 
         :param tracker: istanza di PlayerTracker
         :param dead_bodies: lista di (x, y) di cadaveri noti.
-            Se None, sviluppato in modo che `tracker.dead_players()`
-            sia usato come sorgente alternativa.
+            Se None, viene preso da `tracker.dead_players()`.
+        :param bot_pos: tupla (x, y) del bot. Necessario per il detector
+            SUDDEN_DISAPPEAR (serve sapere se il player era "vicino a me"
+            prima di sparire). Se None, quel detector e' saltato.
         :param now: timestamp corrente (default: time.time())
         """
         if now is None:
@@ -92,6 +118,8 @@ class ActivityDetector:
             self._check_vent_use(player, now)
             self._check_stop(player, now)
             self._check_near_body(player, dead_bodies, now)
+            if bot_pos is not None:
+                self._check_sudden_disappear(player, bot_pos, now)
 
     def get_events(self, player_name=None, type_=None, since=None):
         """
@@ -118,6 +146,7 @@ class ActivityDetector:
         """Cancella tutti gli eventi. A inizio nuova partita."""
         self.events.clear()
         self._recent_event_keys.clear()
+        self._reported_disappear_sessions.clear()
 
     # ============================================================
     # DETECTOR INTERNI
@@ -149,7 +178,7 @@ class ActivityDetector:
             key = (EV_VENT_USE, player.name, int(b.t))
             if key in self._recent_event_keys:
                 continue
-            self._recent_event_keys.add(key)
+            self._recent_event_keys[key] = True
             self._add_event(ActivityEvent(
                 t=b.t, type_=EV_VENT_USE,
                 player_name=player.name, pos=(b.x, b.y),
@@ -174,7 +203,7 @@ class ActivityDetector:
                int(lp.y * 2) / 2)
         if key in self._recent_event_keys:
             return
-        self._recent_event_keys.add(key)
+        self._recent_event_keys[key] = True
         self._add_event(ActivityEvent(
             t=lp.t, type_=EV_STOP,
             player_name=player.name, pos=(lp.x, lp.y),
@@ -198,13 +227,86 @@ class ActivityDetector:
                    int(lp.t))
             if key in self._recent_event_keys:
                 continue
-            self._recent_event_keys.add(key)
+            self._recent_event_keys[key] = True
             self._add_event(ActivityEvent(
                 t=lp.t, type_=EV_NEAR_BODY,
                 player_name=player.name, pos=(lp.x, lp.y),
                 evidence={'body_pos': body_pos, 'dist': dist},
             ))
             break
+
+    def _check_sudden_disappear(self, player, bot_pos, now):
+        """
+        Rileva "sparizione improvvisa": il player era visibile e vicino
+        al bot, poi all'improvviso non lo vedo piu' SENZA che si stesse
+        allontanando con movimento normale (= non e' "uscito dalla mia
+        vista").
+
+        Logica:
+        1. Ultimo avvistamento entro NEAR_BOT_RADIUS dal bot
+        2. Sono passati >DISAPPEAR_GAP_SEC senza piu' vederlo
+        3. Sono passati <DISAPPEAR_MAX_GAP_SEC (sennò non e' "improvviso",
+           magari era fuori vista da troppo)
+        4. La velocita' media negli ultimi snapshot era bassa (<DISAPPEAR_MAX_SPEED).
+           Cosi' distinguiamo "sparizione improvvisa" da "lo perdo perche'
+           sta correndo via dal mio raggio".
+        """
+        if not player.last_snapshot:
+            return
+        # Tempo trascorso dall'ultimo avvistamento
+        gap = now - player._last_observation_t
+        if gap < DISAPPEAR_GAP_SEC:
+            return  # ancora "visibile" o appena uscito
+        if gap > DISAPPEAR_MAX_GAP_SEC:
+            return  # troppo tempo passato, non e' piu' "improvviso"
+
+        # Ultima posizione vista
+        lp = player.last_snapshot
+        dist_da_bot = math.hypot(lp.x - bot_pos[0], lp.y - bot_pos[1])
+        if dist_da_bot > NEAR_BOT_RADIUS:
+            return  # non era vicino a me al momento dell'ultimo avvistamento
+
+        # Velocita' media ultimi snapshot: se si stava muovendo veloce,
+        # potrebbe essere semplicemente uscito dal raggio di vista.
+        snaps = list(player.history)
+        if len(snaps) >= 2:
+            recent = snaps[-3:]  # ultimi 2-3 snapshot
+            total_dist = 0.0
+            total_dt = 0.0
+            for i in range(1, len(recent)):
+                a = recent[i - 1]
+                b = recent[i]
+                dt = b.t - a.t
+                if dt <= 0:
+                    continue
+                total_dist += math.hypot(b.x - a.x, b.y - a.y)
+                total_dt += dt
+            avg_speed = (total_dist / total_dt) if total_dt > 0 else 0.0
+            if avg_speed > DISAPPEAR_MAX_SPEED:
+                # Si stava muovendo veloce: probabilmente uscito dal raggio
+                return
+
+        # Anti-duplicato STRONG: una "sessione di sparizione" e' identificata
+        # dal timestamp dell'ultimo avvistamento. Uso un set DEDICATO che
+        # NON viene mai evettato (a differenza della cache generica) cosi'
+        # ogni sparizione genera UN solo evento per tutta la durata della
+        # partita.
+        # Floor a 0.5s di granularita' per essere robusti a noise nei
+        # timestamp YOLO.
+        session_id = (player.name, round(lp.t * 2) / 2)
+        if session_id in self._reported_disappear_sessions:
+            return
+        self._reported_disappear_sessions.add(session_id)
+        self._add_event(ActivityEvent(
+            t=now, type_=EV_SUDDEN_DISAPPEAR,
+            player_name=player.name, pos=(lp.x, lp.y),
+            evidence={
+                'last_pos': (lp.x, lp.y),
+                'bot_pos': bot_pos,
+                'dist_da_bot': dist_da_bot,
+                'gap_sec': gap,
+            },
+        ))
 
     # ============================================================
     # HELPER
@@ -216,9 +318,13 @@ class ActivityDetector:
         if len(self.events) > self.events_max:
             # Rimuovo i piu' vecchi
             self.events = self.events[-self.events_max:]
-        # Manutenzione anti-duplicati: limita la cache
-        if len(self._recent_event_keys) > self._recent_keys_max:
-            # Mantieni solo gli ultimi (set non ha ordinamento, quindi
-            # ricreo svuotando il piu' vecchio - approssimazione)
-            keys = list(self._recent_event_keys)
-            self._recent_event_keys = set(keys[-self._recent_keys_max // 2:])
+        # Manutenzione anti-duplicati: limita la cache (LRU corretto).
+        # Il dict in Python 3.7+ garantisce insertion order, quindi quando
+        # supero il cap posso scartare le chiavi PIU' VECCHIE (non a caso
+        # come faceva il vecchio set, che causava la rigenerazione dello
+        # stesso evento a step).
+        while len(self._recent_event_keys) > self._recent_keys_max:
+            # popitem(last=False) toglie l'item piu' vecchio
+            # Equivalente per dict normale: iter + next
+            oldest_key = next(iter(self._recent_event_keys))
+            del self._recent_event_keys[oldest_key]
