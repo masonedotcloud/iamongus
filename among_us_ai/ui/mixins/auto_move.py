@@ -12,7 +12,22 @@ from ._imports import *
 class AutoMoveMixin:
     """Mixin con i metodi di auto move di GPSVisualizerPro."""
     def _plan_path(self, goal_xy):
-        """Calcola A* assicurandosi che il target sia su una cella calpestabile."""
+        """Calcola A* assicurandosi che il target sia su una cella calpestabile.
+
+        Modalita' GHOST (crewmate morto): bypassa A* e va in linea retta
+        attraverso i muri (i fantasmi possono).
+        """
+        # === GHOST MODE: linea retta che attraversa i muri ===
+        if (hasattr(self, '_is_ghost') and self._is_ghost()):
+            start = (self.pos_target[0], self.pos_target[1])
+            path = self.pathfinder.astar_straight(start, goal_xy)
+            self.auto_final_target = (float(goal_xy[0]), float(goal_xy[1]))
+            self.auto_path = path
+            self.auto_path_index = 0
+            print(f"[Ghost] Path retta verso {goal_xy} (fantasma, "
+                  f"attraversa i muri)", flush=True)
+            return
+
         # SNAP: Trova la cella calpestabile piu' vicina al click/centroide
         snapped_goal_key = self.pathfinder.nearest_walkable(goal_xy[0], goal_xy[1], GPSConfig.NEAREST_SEARCH_RADIUS)
         
@@ -160,6 +175,20 @@ class AutoMoveMixin:
 
     def _update_auto_move(self, dt):
         """Aggiorna a ogni frame auto move."""
+        # GUARD fase: se non in partita (lobby/voto/impostore) ferma la
+        # navigazione. Mantiene aggiornati gli ostacoli dinamici e il
+        # rendering, ma non muove il bot.
+        if hasattr(self, '_is_bot_active') and not self._is_bot_active():
+            if self.key_ctrl.pressed:
+                self.key_ctrl.release_all()
+            # Pulisco anche path/target attivi per non rimanere "in viaggio"
+            # con il bot fermo
+            if self.auto_path:
+                self.auto_path = []
+                self.auto_path_index = 0
+                self.auto_final_target = None
+            return
+
         # --- Aggiornamento ostacoli dinamici (Porte) ---
         if hasattr(self, 'pathfinder'):
             self.pathfinder.dynamic_obstacles.clear()

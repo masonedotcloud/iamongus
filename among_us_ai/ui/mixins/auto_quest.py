@@ -46,6 +46,11 @@ class AutoQuestMixin:
         if not self.auto_execute_all:
             return
 
+        # GUARD: se il bot non e' attivo (lobby, voto, impostore...)
+        # non scegliere nuove task. Il rendering della mappa continua.
+        if hasattr(self, '_is_bot_active') and not self._is_bot_active():
+            return
+
         # Se il bot sta viaggiando verso una task, eseguendo una task o gestendo popup: aspetta
         if self.auto_path or self._task_process is not None or getattr(self, '_task_launch_arrivo', False):
             return

@@ -17,6 +17,7 @@ from .dialogs import DialogsMixin
 from .input_callbacks import InputCallbacksMixin
 from .intelligence_sidebar import IntelligenceSidebarMixin
 from .anti_afk import AntiAfkMixin
+from .game_state_monitor import GameStateMonitorMixin
 from .map_loader import MapLoaderMixin
 from .memory_sync import MemorySyncMixin
 from .misc import MiscMixin
@@ -38,6 +39,7 @@ from .zones import ZonesMixin
 __all__ = [
     "AntiAfkMixin",
     "AutoMoveMixin", "AutoQuestMixin", "DialogsMixin",
+    "GameStateMonitorMixin",
     "InputCallbacksMixin", "IntelligenceSidebarMixin",
     "MapLoaderMixin", "MemorySyncMixin",
     "MiscMixin", "PlannerMixin", "PoiMixin",
