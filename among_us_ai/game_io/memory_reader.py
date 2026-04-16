@@ -210,3 +210,207 @@ class AmongUsTaskReader:
             self._connected = False
             # Goal irraggiungibile o limite nodi superato
             return None
+
+
+# =============================================================================
+# Lettore stato del gioco (in_game, voting, dead, impostor)
+# =============================================================================
+
+import os
+
+
+class AmongUsGameStateReader:
+    """
+    Legge lo stato corrente del gioco di Among Us:
+    - in_game        : True se siamo in partita (no menu, no lobby)
+    - game_status    : 0=menu, 1=lobby, 2=partita online
+    - is_voting      : True se siamo in fase di votazione/meeting
+    - is_dead        : True se il giocatore e' morto/fantasma
+    - is_impostor    : True se il giocatore e' impostore
+
+    Offsets caricati dinamicamente da `script.json` (file con la mappa
+    delle classi/indirizzi prodotto dal dumper). Se il file manca, il
+    reader rimane inattivo e ritorna None.
+
+    Architettura auto-rilevata (32/64 bit) dalla base address della DLL.
+    """
+
+    def __init__(self, script_json_path="script.json"):
+        self.process_name = "Among Us.exe"
+        self.module_name  = "GameAssembly.dll"
+        self.pm = None
+        self.game_assembly_base = None
+
+        # Auto-rilevati dopo connect()
+        self.is_64_bit    = False
+        self.STATIC_FIELDS = 0x5C
+
+        # Indirizzi delle classi (popolati da script.json)
+        self.PLAYER_CONTROL_CLASS  = 0
+        self.AMONG_US_CLIENT_CLASS = 0
+        self.MEETING_HUD_CLASS     = 0
+
+        # Offsets (verificati per la versione corrente; rivedere se Among
+        # Us aggiorna la build)
+        self.OFFSET_GAME_STATE   = 0x64
+        self.OFFSET_LOCAL_PLAYER = 0x0
+        self.OFFSET_PLAYER_DATA  = 0x58
+        self.OFFSET_IS_DEAD      = 0x54
+        self.OFFSET_ROLE         = 0x4C
+        self.OFFSET_TEAM_TYPE    = 0x4C
+
+        # Carico script.json
+        self._json_path = script_json_path
+        self._json_loaded = False
+        self._load_classes_from_json()
+
+    def _load_classes_from_json(self):
+        """Legge gli indirizzi di classe da script.json (formato dumper)."""
+        if not os.path.exists(self._json_path):
+            print(f"[MemoryReader] script.json non trovato in "
+                  f"'{self._json_path}'. Stato gioco disabilitato.",
+                  flush=True)
+            return
+        try:
+            with open(self._json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            metadata = data.get("ScriptMetadata", [])
+            if not metadata and isinstance(data, list):
+                metadata = data
+            for entry in metadata:
+                name = entry.get("Name", "")
+                address = entry.get("Address", 0)
+                if name in ("AmongUsClient__TypeInfo",
+                              "AmongUsClient_TypeInfo"):
+                    self.AMONG_US_CLIENT_CLASS = address
+                elif name in ("MeetingHud__TypeInfo",
+                                "MeetingHud_TypeInfo"):
+                    self.MEETING_HUD_CLASS = address
+                elif name in ("PlayerControl__TypeInfo",
+                                "PlayerControl_TypeInfo"):
+                    self.PLAYER_CONTROL_CLASS = address
+            self._json_loaded = (
+                self.AMONG_US_CLIENT_CLASS != 0
+                and self.PLAYER_CONTROL_CLASS != 0
+            )
+            if self._json_loaded:
+                print("[MemoryReader] script.json caricato OK", flush=True)
+        except Exception as e:
+            print(f"[MemoryReader] Errore lettura script.json: {e}",
+                  flush=True)
+
+    def connect(self):
+        """Connette al processo del gioco. Auto-rileva 32/64 bit."""
+        if not _PYMEM_OK:
+            return False
+        try:
+            self.pm = pymem.Pymem(self.process_name)
+            module = pymem.process.module_from_name(
+                self.pm.process_handle, self.module_name)
+            self.game_assembly_base = module.lpBaseOfDll
+            # Auto-rilevamento architettura
+            if self.game_assembly_base > 0xFFFFFFFF:
+                self.is_64_bit = True
+                self.STATIC_FIELDS = 0xB8
+            else:
+                self.is_64_bit = False
+                self.STATIC_FIELDS = 0x5C
+            return True
+        except pymem.exception.ProcessNotFound:
+            return False
+        except Exception:
+            return False
+
+    def _read_ptr(self, address):
+        """Legge un puntatore della dimensione corretta per l'arch."""
+        try:
+            if self.is_64_bit:
+                return self.pm.read_ulonglong(address)
+            return self.pm.read_uint(address)
+        except Exception:
+            return 0
+
+    def get_game_state(self):
+        """
+        Ritorna lo stato corrente del gioco come dict.
+        Ritorna None se non riesce a leggere (processo chiuso, json
+        mancante, ecc).
+        """
+        if not self._json_loaded:
+            return None
+        if not self.pm or not self.game_assembly_base:
+            if not self.connect():
+                return None
+
+        state = {
+            "in_game":     False,
+            "game_status": 0,     # 0=menu, 1=lobby, 2=partita
+            "is_voting":   False,
+            "is_dead":     False,
+            "is_impostor": False,
+        }
+
+        try:
+            # 1. STATO DEL GIOCO (menu / lobby / partita)
+            client_addr = self._read_ptr(
+                self.game_assembly_base + self.AMONG_US_CLIENT_CLASS)
+            if client_addr:
+                client_static = self._read_ptr(
+                    client_addr + self.STATIC_FIELDS)
+                if client_static:
+                    client_inst = self._read_ptr(client_static + 0x0)
+                    if client_inst:
+                        state["game_status"] = self.pm.read_int(
+                            client_inst + self.OFFSET_GAME_STATE)
+
+            # Offset Unity per "oggetto distrutto?"
+            native_offset = 0x10 if self.is_64_bit else 0x8
+
+            # 2. PLAYER LOCALE (in_game / is_dead / is_impostor)
+            pc_addr = self._read_ptr(
+                self.game_assembly_base + self.PLAYER_CONTROL_CLASS)
+            if pc_addr:
+                pc_static = self._read_ptr(pc_addr + self.STATIC_FIELDS)
+                if pc_static:
+                    local_player = self._read_ptr(
+                        pc_static + self.OFFSET_LOCAL_PLAYER)
+                    if local_player:
+                        # Trucco Unity: oggetto ancora "vivo" nel motore?
+                        player_native = self._read_ptr(
+                            local_player + native_offset)
+                        if player_native:
+                            state["in_game"] = True
+                            player_data = self._read_ptr(
+                                local_player + self.OFFSET_PLAYER_DATA)
+                            if player_data:
+                                state["is_dead"] = bool(
+                                    self.pm.read_bool(
+                                        player_data + self.OFFSET_IS_DEAD))
+                                role_addr = self._read_ptr(
+                                    player_data + self.OFFSET_ROLE)
+                                if role_addr:
+                                    team = self.pm.read_int(
+                                        role_addr + self.OFFSET_TEAM_TYPE)
+                                    state["is_impostor"] = (team == 1)
+
+            # 3. VOTAZIONE in corso
+            if state["in_game"]:
+                meeting_addr = self._read_ptr(
+                    self.game_assembly_base + self.MEETING_HUD_CLASS)
+                if meeting_addr:
+                    meeting_static = self._read_ptr(
+                        meeting_addr + self.STATIC_FIELDS)
+                    if meeting_static:
+                        meeting_inst = self._read_ptr(meeting_static + 0x0)
+                        if meeting_inst:
+                            meeting_native = self._read_ptr(
+                                meeting_inst + native_offset)
+                            if meeting_native:
+                                state["is_voting"] = True
+
+            return state
+        except Exception:
+            # Connessione persa: forza reconnect al prossimo tentativo
+            self.pm = None
+            self.game_assembly_base = None
+            return None

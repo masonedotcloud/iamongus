@@ -1,5 +1,171 @@
 # Changelog
 
+## v2.2.49 — GameStateMonitor: pausa intelligente in lobby/voto/impostore/morto
+
+### Richieste utente
+
+> - Quando e' impostore non serve che il software funzioni
+> - Neanche quando si e' nella sezione votazioni
+> - Neanche quando e' nella lobby
+> - Quando si e' in queste fasi metti un indicatore sulla dashboard
+>   ("NON IN PARTITA / IN VOTAZIONE")
+> - Dopo la votazione aspetta 10 secondi prima di riprendere
+> - Quando il bot e' fantasma (crewmate morto), puo' fare le task
+>   in linea retta (i fantasmi attraversano i muri)
+
+### Architettura
+
+Sistema MODULARE che legge la memoria del gioco e gestisce le fasi:
+
+```
+among_us_ai/
+  game_io/
+    memory_reader.py
+      AmongUsGameStateReader   # NUOVA classe (basata su main.py utente)
+  ui/mixins/
+    game_state_monitor.py      # NUOVO mixin
+  pathfinding/
+    pathfinder.py
+      .astar_straight()         # NUOVO metodo per modalita' fantasma
+```
+
+### 7 fasi del bot
+
+| Fase | Trigger | Comportamento |
+|---|---|---|
+| `MENU` | game_status=0, not in_game | Bot FERMO |
+| `LOBBY` | game_status=1 | Bot FERMO |
+| `IMPOSTOR` | in_game + is_impostor | Bot FERMO |
+| `VOTING` | in_game + is_voting | Bot FERMO |
+| `POST_VOTE` | dopo VOTING per 10s | Bot FERMO (grace) |
+| `GHOST` | in_game + is_dead (crew) | ATTIVO, ma in linea retta |
+| `ACTIVE` | in_game + crew vivo | Pienamente attivo |
+
+### Cosa succede in ogni fase di "stop"
+
+- Auto-Move e Auto-All bloccati (no nuovi path, nessuna task)
+- Intelligence in **pausa** (no update di tracker/activity/proximity/
+  suspicion). Lo stato accumulato resta intatto, non azzerato.
+- Rendering della mappa continua normalmente
+- Banner "Stato:" nella status bar mostra la fase corrente, colorato:
+  - rosso per IMPOSTOR
+  - giallo per VOTING/POST_VOTE
+  - arancione per LOBBY
+  - verde per ACTIVE
+  - azzurro per GHOST
+
+### Lettura memoria game state
+
+Nuova classe `AmongUsGameStateReader` (in `memory_reader.py`).
+Logica presa dal `main.py` fornito dall'utente:
+
+- Carica `script.json` con gli offset delle classi
+- Auto-rileva architettura 32/64 bit dalla base address
+- Legge in continuo (1 Hz) lo stato del gioco
+- Reconnect automatico se il processo si chiude/apre
+
+API:
+```python
+reader = AmongUsGameStateReader()
+state = reader.get_game_state()
+# {'in_game': bool, 'game_status': int, 'is_voting': bool,
+#  'is_dead': bool, 'is_impostor': bool}
+```
+
+### Modalita' fantasma (linea retta attraverso muri)
+
+Nuovo metodo `pathfinder.astar_straight(start, goal)`: bypassa A*
+e ritorna `[start, goal]` (linea retta). In Among Us i fantasmi
+attraversano i muri, quindi non serve pathfinding.
+
+Integrato in `_plan_path`:
+```python
+if self._is_ghost():
+    path = self.pathfinder.astar_straight(start, goal_xy)
+    # NB: niente snap a celle calpestabili - il fantasma va ovunque
+```
+
+### Banner nella status bar
+
+Aggiunto nuovo widget `status_phase` in fondo alla status bar
+(dopo "Auto: OFF"). Aggiornato ad ogni tick del polling con:
+- Testo descrittivo della fase ("IMPOSTORE - bot inattivo", ecc.)
+- Colore tematico in base alla fase
+
+Esempio status bar:
+```
+X: 12.3 | Y: 5.6 | FPS: 60 | Mode: follow | Zoom: 60 | Auto: OFF | IN PARTITA - bot attivo
+```
+
+### Grace period post-voto (10s)
+
+Quando termina la fase `VOTING` e tornerebbe `ACTIVE`/`GHOST`,
+l'ingresso in quella fase e' ritardato di 10s (`POST_VOTE_GRACE_SEC`).
+Per quei 10s la fase e' `POST_VOTE` e il bot resta fermo.
+
+Logica: dopo una votazione, ci sono 1-2s di animazione di
+"banishment" e qualche secondo per il rispawn, durante i quali
+il bot potrebbe tentare di muoversi mentre non vede ancora la
+mappa correttamente.
+
+### Guard nei loop
+
+Aggiunti check `_is_bot_active()` in:
+- `_update_auto_move`: se non attivo, libera tasti + pulisce path
+- `_update_auto_all`: se non attivo, salta scelta task
+- `_update_intelligence_sidebar`: pausa update moduli ma renderizza
+  comunque la sidebar (con i dati ultimi conosciuti)
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `game_io/memory_reader.py` | +classe `AmongUsGameStateReader` (~140 righe). Carica script.json, auto-detect 32/64 bit, get_game_state() ritorna dict completo |
+| `game_io/__init__.py` | Export `AmongUsGameStateReader` |
+| `ui/mixins/game_state_monitor.py` | NUOVO mixin con `_init_game_state_monitor`, `_update_game_state` (polling 1Hz), `_classify_phase`, `_on_phase_transition`, `_is_bot_active`, `_is_ghost`, `_intelligence_should_run`, `_get_phase_label`, `_get_phase_color`, `_refresh_phase_label_ui` |
+| `ui/mixins/__init__.py` | Export `GameStateMonitorMixin` |
+| `ui/app.py` | Eredita GameStateMonitorMixin, chiama `_init_game_state_monitor()` in init, chiama `_update_game_state(dt)` nel render loop |
+| `ui/mixins/ui_setup.py` | +widget `status_phase` in fondo alla status bar |
+| `ui/mixins/auto_move.py` | Guard `_is_bot_active()` in `_update_auto_move`. `_plan_path` usa `astar_straight()` se ghost |
+| `ui/mixins/auto_quest.py` | Guard `_is_bot_active()` in `_update_auto_all` |
+| `ui/mixins/intelligence_sidebar.py` | Pausa update moduli se `_intelligence_should_run()` False (rendering continua) |
+| `pathfinding/pathfinder.py` | +metodo `astar_straight()` per modalita' fantasma |
+
+### Verifica fatta
+
+Test funzionale `classify_phase` per tutti i 6 scenari + post-vote grace:
+- Menu, Lobby, Crewmate vivo, Crewmate fantasma, Impostore, Voto: OK
+- Post-vote grace pending -> POST_VOTE: OK
+- Post-vote grace finito -> ACTIVE: OK
+- `_is_bot_active`: False per MENU/LOBBY/IMPOSTOR/VOTING/POST_VOTE
+- `_is_bot_active`: True per ACTIVE/GHOST
+- `_is_ghost`: True solo per GHOST
+- `_intelligence_should_run`: True solo per ACTIVE
+
+Syntax + import: OK su tutti i file modificati.
+
+### Cosa NON e' cambiato
+
+- API del motore: invariata
+- Posizione del player (mapper trail): invariata - continua a girare
+- Intelligence sidebar UI: invariata (solo aggiunto guard pausa)
+- Simon Says / TaskPlanner / preview F1: invariati
+- File JSON delle task: invariati
+- Tutte le altre feature precedenti (anti-AFK F3, evita sospetti): invariate
+
+### Requisiti
+
+Per far funzionare la lettura della memoria:
+- File `script.json` nella root del bot (formato dumper)
+- Among Us deve essere in esecuzione
+- `pymem` installato (gia' tra i requirements)
+
+Se `script.json` manca o se il processo non e' rilevato,
+il `GameStateReader` si disattiva silenziosamente: il bot continua a
+funzionare come prima della v2.2.49 (nessuna fase rilevata =
+sempre "MENU" / nessuna restrizione). Niente regressioni.
+
+
 ## v2.2.48 — Intelligence: fix player fermo al 100% + smoothing score + alone_with robusto
 
 ### Richieste utente

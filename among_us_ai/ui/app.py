@@ -89,6 +89,7 @@ from .mixins.use_button_calib import UseButtonCalibMixin
 from .mixins.planner_ui import PlannerMixin
 from .mixins.intelligence_sidebar import IntelligenceSidebarMixin
 from .mixins.anti_afk import AntiAfkMixin
+from .mixins.game_state_monitor import GameStateMonitorMixin
 
 
 class GPSVisualizerPro(
@@ -119,6 +120,7 @@ class GPSVisualizerPro(
     PlannerMixin,
     IntelligenceSidebarMixin,
     AntiAfkMixin,
+    GameStateMonitorMixin,
 ):
     """Classe principale dell'applicazione: orchestra rendering, pathfinding, lettura RAM, scanner YOLO, esecuzione task."""
     def __init__(self):
@@ -261,6 +263,11 @@ class GPSVisualizerPro(
             getattr(GPSConfig, 'ANTI_AFK_DEFAULT', False))
         self._anti_afk_idle_since = 0.0
 
+        # GameStateMonitor: legge dalla RAM lo stato del gioco
+        # (in_game / lobby / voting / impostor / dead) e ferma il bot
+        # quando appropriato. Vedere `GameStateMonitorMixin`.
+        self._init_game_state_monitor()
+
         # --- Punti di Interesse ---
         self.poi_mgr  = PoiManager(GPSConfig.POI_FILE)
         self.show_poi = True
@@ -348,6 +355,7 @@ class GPSVisualizerPro(
         self._update_preview_giro(dt)
         self._update_intelligence_sidebar(dt)
         self._update_anti_afk(dt)
+        self._update_game_state(dt)
         
         pending_2p = getattr(self, '_pending_next_2p_task', None)
         if pending_2p is not None:

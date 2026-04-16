@@ -249,3 +249,20 @@ class Pathfinder:
             result.append(path[j])
             i = j
         return result
+
+    def astar_straight(self, start_xy, goal_xy):
+        """
+        Path "fantasma": linea retta che attraversa i muri.
+
+        Usato quando il bot e' crewmate morto (PHASE_GHOST): in Among Us
+        i fantasmi possono passare attraverso le pareti, quindi non serve
+        un vero pathfinding. Ritorna un path di 2 punti: [start, goal].
+
+        NB: non c'e' clamp alle celle walkable; il fantasma puo' andare
+        ovunque sulla mappa.
+        """
+        sx, sy = float(start_xy[0]), float(start_xy[1])
+        gx, gy = float(goal_xy[0]), float(goal_xy[1])
+        if sx == gx and sy == gy:
+            return [(sx, sy)]
+        return [(sx, sy), (gx, gy)]

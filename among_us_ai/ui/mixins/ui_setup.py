@@ -126,6 +126,12 @@ class UISetupMixin:
                     dpg.add_text("|", color=Colors.TEXT_DIM)
                     dpg.add_text("Auto: OFF", tag="status_auto",
                                  color=Colors.TEXT_DIM)
+                    dpg.add_text("|", color=Colors.TEXT_DIM)
+                    # Indicatore della fase del gioco (in_game, lobby,
+                    # impostore, voto, fantasma, ecc.). Colorato a runtime
+                    # in base allo stato. Vedere `GameStateMonitorMixin`.
+                    dpg.add_text("Stato: ...", tag="status_phase",
+                                 color=(150, 150, 150))
 
         with dpg.handler_registry():
             dpg.add_mouse_wheel_handler(callback=self._on_mouse_wheel)

@@ -125,6 +125,19 @@ class IntelligenceSidebarMixin:
             return
         self._intelligence_update_timer = 0.0
 
+        # GUARD fase: pausa il tracking durante lobby/voto/impostore/morto.
+        # NON azzero i dati accumulati: solo non aggiorno. Cosi' quando
+        # ritorniamo in partita la storia precedente e' intatta.
+        # Il rendering della sidebar (se aperta) continua mostrando gli
+        # ultimi dati conosciuti.
+        if hasattr(self, '_intelligence_should_run'):
+            if not self._intelligence_should_run():
+                # Aggiorno solo il rendering della sidebar se aperta
+                if (getattr(self, '_intelligence_sidebar_open', False)
+                        and dpg.does_item_exist(SIDEBAR_TAG)):
+                    self._render_intelligence_sidebar()
+                return
+
         # === Aggiornamento moduli intelligence ===
         try:
             self._intelligence_feed_tracker()
