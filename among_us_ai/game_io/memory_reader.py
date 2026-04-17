@@ -216,7 +216,35 @@ class AmongUsTaskReader:
 # Lettore stato del gioco (in_game, voting, dead, impostor)
 # =============================================================================
 
-import os
+# ----------------------------------------------------------------------------
+# INDIRIZZI DELLE CLASSI (offset rispetto a GameAssembly.dll)
+# ----------------------------------------------------------------------------
+# Specifici della versione di Among Us in uso. Se Among Us aggiorna la build,
+# questi 3 valori vanno ridumpati (es. con IDA o un dumper Il2Cpp) e
+# aggiornati qui.
+#
+# Valori estratti da script.json dell'utente (build corrente).
+# Per trovarli con un dumper Il2Cpp i nomi sono:
+#   - AmongUsClient_TypeInfo  (o AmongUsClient__TypeInfo)
+#   - MeetingHud_TypeInfo     (o MeetingHud__TypeInfo)
+#   - PlayerControl_TypeInfo  (o PlayerControl__TypeInfo)
+#
+# Lasciali a 0 per disabilitare il reader (il bot ignorera' la lettura
+# dello stato del gioco e si comportera' come prima).
+GAME_STATE_AMONG_US_CLIENT_CLASS = 0x29AB228
+GAME_STATE_MEETING_HUD_CLASS     = 0x29ACA80
+GAME_STATE_PLAYER_CONTROL_CLASS  = 0x29C081C
+
+# ----------------------------------------------------------------------------
+# OFFSETS INTERNI DELLE CLASSI (rispetto agli indirizzi sopra)
+# ----------------------------------------------------------------------------
+# Questi sono generalmente piu' stabili tra le versioni di Among Us.
+GAME_STATE_OFFSET_GAME_STATE   = 0x64
+GAME_STATE_OFFSET_LOCAL_PLAYER = 0x0
+GAME_STATE_OFFSET_PLAYER_DATA  = 0x58
+GAME_STATE_OFFSET_IS_DEAD      = 0x54
+GAME_STATE_OFFSET_ROLE         = 0x4C
+GAME_STATE_OFFSET_TEAM_TYPE    = 0x4C
 
 
 class AmongUsGameStateReader:
@@ -228,14 +256,16 @@ class AmongUsGameStateReader:
     - is_dead        : True se il giocatore e' morto/fantasma
     - is_impostor    : True se il giocatore e' impostore
 
-    Offsets caricati dinamicamente da `script.json` (file con la mappa
-    delle classi/indirizzi prodotto dal dumper). Se il file manca, il
-    reader rimane inattivo e ritorna None.
+    Indirizzi delle classi: hardcoded nelle costanti GAME_STATE_*_CLASS
+    in cima al file. Per cambiarli a runtime puoi passarli al costruttore.
 
     Architettura auto-rilevata (32/64 bit) dalla base address della DLL.
     """
 
-    def __init__(self, script_json_path="script.json"):
+    def __init__(self,
+                 among_us_client_class=None,
+                 meeting_hud_class=None,
+                 player_control_class=None):
         self.process_name = "Among Us.exe"
         self.module_name  = "GameAssembly.dll"
         self.pm = None
@@ -245,58 +275,46 @@ class AmongUsGameStateReader:
         self.is_64_bit    = False
         self.STATIC_FIELDS = 0x5C
 
-        # Indirizzi delle classi (popolati da script.json)
-        self.PLAYER_CONTROL_CLASS  = 0
-        self.AMONG_US_CLIENT_CLASS = 0
-        self.MEETING_HUD_CLASS     = 0
+        # Indirizzi delle classi: usa override del costruttore se passato,
+        # altrimenti le costanti hardcoded in cima al file
+        self.AMONG_US_CLIENT_CLASS = (
+            among_us_client_class
+            if among_us_client_class is not None
+            else GAME_STATE_AMONG_US_CLIENT_CLASS
+        )
+        self.MEETING_HUD_CLASS = (
+            meeting_hud_class
+            if meeting_hud_class is not None
+            else GAME_STATE_MEETING_HUD_CLASS
+        )
+        self.PLAYER_CONTROL_CLASS = (
+            player_control_class
+            if player_control_class is not None
+            else GAME_STATE_PLAYER_CONTROL_CLASS
+        )
 
-        # Offsets (verificati per la versione corrente; rivedere se Among
-        # Us aggiorna la build)
-        self.OFFSET_GAME_STATE   = 0x64
-        self.OFFSET_LOCAL_PLAYER = 0x0
-        self.OFFSET_PLAYER_DATA  = 0x58
-        self.OFFSET_IS_DEAD      = 0x54
-        self.OFFSET_ROLE         = 0x4C
-        self.OFFSET_TEAM_TYPE    = 0x4C
+        # Offsets interni delle classi
+        self.OFFSET_GAME_STATE   = GAME_STATE_OFFSET_GAME_STATE
+        self.OFFSET_LOCAL_PLAYER = GAME_STATE_OFFSET_LOCAL_PLAYER
+        self.OFFSET_PLAYER_DATA  = GAME_STATE_OFFSET_PLAYER_DATA
+        self.OFFSET_IS_DEAD      = GAME_STATE_OFFSET_IS_DEAD
+        self.OFFSET_ROLE         = GAME_STATE_OFFSET_ROLE
+        self.OFFSET_TEAM_TYPE    = GAME_STATE_OFFSET_TEAM_TYPE
 
-        # Carico script.json
-        self._json_path = script_json_path
-        self._json_loaded = False
-        self._load_classes_from_json()
-
-    def _load_classes_from_json(self):
-        """Legge gli indirizzi di classe da script.json (formato dumper)."""
-        if not os.path.exists(self._json_path):
-            print(f"[MemoryReader] script.json non trovato in "
-                  f"'{self._json_path}'. Stato gioco disabilitato.",
+        # Reader e' "valido" solo se almeno AmongUsClient e PlayerControl
+        # sono configurati. Se sono 0, il reader resta inattivo.
+        self._is_configured = (
+            self.AMONG_US_CLIENT_CLASS != 0
+            and self.PLAYER_CONTROL_CLASS != 0
+        )
+        if self._is_configured:
+            print("[GameStateReader] Indirizzi classi configurati OK",
                   flush=True)
-            return
-        try:
-            with open(self._json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            metadata = data.get("ScriptMetadata", [])
-            if not metadata and isinstance(data, list):
-                metadata = data
-            for entry in metadata:
-                name = entry.get("Name", "")
-                address = entry.get("Address", 0)
-                if name in ("AmongUsClient__TypeInfo",
-                              "AmongUsClient_TypeInfo"):
-                    self.AMONG_US_CLIENT_CLASS = address
-                elif name in ("MeetingHud__TypeInfo",
-                                "MeetingHud_TypeInfo"):
-                    self.MEETING_HUD_CLASS = address
-                elif name in ("PlayerControl__TypeInfo",
-                                "PlayerControl_TypeInfo"):
-                    self.PLAYER_CONTROL_CLASS = address
-            self._json_loaded = (
-                self.AMONG_US_CLIENT_CLASS != 0
-                and self.PLAYER_CONTROL_CLASS != 0
-            )
-            if self._json_loaded:
-                print("[MemoryReader] script.json caricato OK", flush=True)
-        except Exception as e:
-            print(f"[MemoryReader] Errore lettura script.json: {e}",
+        else:
+            print("[GameStateReader] Indirizzi classi non configurati. "
+                  "Modifica le costanti GAME_STATE_*_CLASS in "
+                  "memory_reader.py oppure passa gli indirizzi al "
+                  "costruttore. Stato gioco disabilitato.",
                   flush=True)
 
     def connect(self):
@@ -333,10 +351,10 @@ class AmongUsGameStateReader:
     def get_game_state(self):
         """
         Ritorna lo stato corrente del gioco come dict.
-        Ritorna None se non riesce a leggere (processo chiuso, json
-        mancante, ecc).
+        Ritorna None se non riesce a leggere (processo chiuso, classi
+        non configurate, ecc).
         """
-        if not self._json_loaded:
+        if not self._is_configured:
             return None
         if not self.pm or not self.game_assembly_base:
             if not self.connect():

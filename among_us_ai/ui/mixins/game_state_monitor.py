@@ -56,6 +56,8 @@ class GameStateMonitorMixin:
         Crea il reader e popola lo stato iniziale.
         """
         try:
+            # Path: siamo in among_us_ai/ui/mixins/ -> 3 dots per salire
+            # a among_us_ai/ e poi entrare in game_io
             from ...game_io import AmongUsGameStateReader
             self._game_state_reader = AmongUsGameStateReader()
         except Exception as e:
@@ -198,16 +200,17 @@ class GameStateMonitorMixin:
         True se il bot puo' muoversi/lanciare task. False altrimenti.
         Chiamato da auto_move e auto_quest per decidere se procedere.
 
-        IMPORTANTE: se il reader non e' disponibile (script.json
-        mancante, pymem non installato, gioco non rilevato),
-        il bot e' considerato ATTIVO per non rompere chi non usa
-        questa feature. Il monitor in quel caso resta in fase
-        UNKNOWN e l'etichetta in status bar mostra 'Stato: ...'.
+        IMPORTANTE: se il reader non e' disponibile (pymem non installato,
+        gioco non rilevato) o non e' configurato (classi non impostate),
+        il bot e' considerato ATTIVO per non rompere chi non usa questa
+        feature. Il monitor in quel caso resta in fase UNKNOWN e
+        l'etichetta in status bar mostra 'Stato: ...'.
         """
-        # Senza reader: bot sempre attivo (no regressione)
-        if not getattr(self, '_game_state_reader', None):
+        reader = getattr(self, '_game_state_reader', None)
+        # Senza reader o non configurato: bot sempre attivo (no regressione)
+        if reader is None or not getattr(reader, '_is_configured', False):
             return True
-        # Reader presente: dipende dalla fase
+        # Reader presente e configurato: dipende dalla fase
         return self._is_phase_bot_active(
             getattr(self, '_game_phase', PHASE_UNKNOWN))
 
@@ -225,17 +228,22 @@ class GameStateMonitorMixin:
         True se il sistema Intelligence deve continuare a girare.
         In lobby/voto/impostore/morto: pausa (ma non azzera).
 
-        Senza reader (no script.json): sempre True (no regressione).
+        Senza reader o non configurato: sempre True (no regressione).
         """
-        if not getattr(self, '_game_state_reader', None):
+        reader = getattr(self, '_game_state_reader', None)
+        if reader is None or not getattr(reader, '_is_configured', False):
             return True
         return getattr(self, '_game_phase', None) == PHASE_ACTIVE
 
     def _get_phase_label(self):
         """Stringa da mostrare in status bar."""
+        # Se il reader non e' configurato, mostro un messaggio chiaro
+        reader = getattr(self, '_game_state_reader', None)
+        if reader is None or not getattr(reader, '_is_configured', False):
+            return "Stato: monitor disabilitato (classi non config)"
         phase = getattr(self, '_game_phase', PHASE_UNKNOWN)
         return {
-            PHASE_UNKNOWN:   "Stato: ...",
+            PHASE_UNKNOWN:   "Stato: in attesa lettura...",
             PHASE_MENU:      "NON IN PARTITA (menu)",
             PHASE_LOBBY:     "NON IN PARTITA (lobby)",
             PHASE_IMPOSTOR:  "IMPOSTORE - bot inattivo",
