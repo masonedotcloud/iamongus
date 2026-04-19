@@ -122,6 +122,13 @@ class TasksProcessMixin:
             self.task_ram_step_at_launch = {}
         self.task_ram_step_at_launch[id_task] = ram_step
 
+        # Reset dei tracker dello StopWatcher per questa task (se la
+        # stessa task viene rilanciata, ripartiamo puliti).
+        if hasattr(self, 'task_missing_reads'):
+            self.task_missing_reads.pop(id_task, None)
+        if hasattr(self, 'task_seen_in_ram'):
+            self.task_seen_in_ram.discard(id_task)
+
         try:
             # In thread mode il file potrebbe essere None se la generazione
             # e' fallita; fallback a stringa descrittiva per i log.
@@ -409,6 +416,10 @@ class TasksProcessMixin:
                 # Cleanup state per riavvio pulito (STOP watcher, retry counts)
                 if hasattr(self, "task_stop_sent"):
                     self.task_stop_sent.discard(id_task)
+                if hasattr(self, "task_missing_reads"):
+                    self.task_missing_reads.pop(id_task, None)
+                if hasattr(self, "task_seen_in_ram"):
+                    self.task_seen_in_ram.discard(id_task)
                 # Pausa breve prima del rilancio (anti-loop frenetico)
                 time.sleep(0.3)
                 self._avvia_subprocess_task(id_task, start_from_action=start_from)
@@ -507,6 +518,10 @@ class TasksProcessMixin:
                             self._task_prewarm_id      = None
                             if hasattr(self, "task_stop_sent"):
                                 self.task_stop_sent.discard(id_task)
+                            if hasattr(self, "task_missing_reads"):
+                                self.task_missing_reads.pop(id_task, None)
+                            if hasattr(self, "task_seen_in_ram"):
+                                self.task_seen_in_ram.discard(id_task)
                             # Pausa breve dopo gli ESC per dare al gioco
                             # il tempo di chiudere i pannelli
                             time.sleep(0.3)
@@ -542,6 +557,10 @@ class TasksProcessMixin:
         # Cleanup state per riavvio pulito (STOP watcher, retry counts)
         if hasattr(self, "task_stop_sent"):
             self.task_stop_sent.discard(id_task)
+        if hasattr(self, "task_missing_reads"):
+            self.task_missing_reads.pop(id_task, None)
+        if hasattr(self, "task_seen_in_ram"):
+            self.task_seen_in_ram.discard(id_task)
 
     def _ferma_processo_task(self, success=False):
         """Termina il processo attivo (se presente) e aggiorna lo stato a idle."""
@@ -588,6 +607,10 @@ class TasksProcessMixin:
         # Cleanup state per riavvio pulito (STOP watcher, retry counts)
         if hasattr(self, "task_stop_sent"):
             self.task_stop_sent.discard(id_task)
+        if hasattr(self, "task_missing_reads"):
+            self.task_missing_reads.pop(id_task, None)
+        if hasattr(self, "task_seen_in_ram"):
+            self.task_seen_in_ram.discard(id_task)
 
     def _fase_corrente_e_ripeti(self, task):
         """
