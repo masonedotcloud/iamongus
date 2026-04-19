@@ -8,6 +8,13 @@ condividono lo stato self.* della classe principale.
 from ._imports import *
 
 
+# Numero di letture consecutive in cui una task deve essere ASSENTE dalla
+# RAM prima di considerarla "completata e quindi scomparsa".
+# A 50ms di polling RAM, 3 letture = ~150 ms di assenza confermata.
+# Anti-flicker: la RAM puo' "perdere" temporaneamente una task per timing,
+# quindi richiediamo conferma per non interrompere prematuramente.
+STOP_MISSING_READS = 3
+
 
 class MemorySyncMixin:
     """Mixin con i metodi di memory sync di GPSVisualizerPro."""
@@ -115,16 +122,40 @@ class MemorySyncMixin:
                 ram_match = mt
                 break
 
-        # Se la fase ha avanzato lo step in RAM, manda STOP.
-        # IMPORTANTE: NON mandiamo STOP se la task semplicemente non e'
-        # presente in RAM. La RAM puo' essere "vuota" o non riportare
-        # certe task per molti motivi (timing del polling, task non
-        # vitali, animazioni in corso, ecc.). Mandare STOP per assenza
-        # in RAM causa interruzione prematura per task come Clean O2
-        # Filter che hanno azioni lunghe e non sono sempre in RAM.
+        # Logica unificata: la task in esecuzione e' "conclusa" se la RAM
+        # mostra UNO dei tre segnali:
+        #   1. ram_match.done == True             (esplicitamente done)
+        #   2. ram_match.step > ram_step_launch   (step avanzato dal lancio)
+        #   3. ram_match assente                  (scomparsa = completata)
+        #
+        # Il caso 3 e' quello che gestisce task multi-azione come Divert
+        # Power: appena lo slider giusto e' azzeccato, la task scompare
+        # dalla lista RAM. Vogliamo fermarci subito invece di continuare
+        # con i drag rimanenti.
+        #
+        # Per evitare di fermare prematuramente task lunghe (es. Clean O2
+        # Filter che potrebbero non essere sempre in RAM durante esecuzione),
+        # applico due salvaguardie al caso 3:
+        #   a) Anti-flicker: serve assenza per STOP_MISSING_READS letture
+        #      consecutive (~150ms)
+        #   b) Sentinella "vista almeno una volta": se la task non e' mai
+        #      stata vista in RAM dal lancio del subprocess, NON mandiamo
+        #      STOP. Probabilmente la RAM non riporta quel tipo del tutto,
+        #      l'assenza non significa "completata".
         should_stop = False
         stop_reason = ""
+
+        # Inizializzo i tracker se mancanti (lazy init)
+        if not hasattr(self, 'task_missing_reads'):
+            self.task_missing_reads = {}
+        if not hasattr(self, 'task_seen_in_ram'):
+            self.task_seen_in_ram = set()
+
         if ram_match is not None:
+            # Task presente in RAM: marca come "vista", reset counter missing
+            self.task_seen_in_ram.add(proc_id)
+            self.task_missing_reads.pop(proc_id, None)
+
             if ram_match.get('done', False):
                 should_stop = True
                 stop_reason = "task done in RAM"
@@ -136,9 +167,28 @@ class MemorySyncMixin:
                     curr_step = int(str(prog).split('/')[0])
                     if curr_step > ram_step_launch:
                         should_stop = True
-                        stop_reason = f"step avanzato {ram_step_launch}->{curr_step}"
+                        stop_reason = (
+                            f"step avanzato {ram_step_launch}->{curr_step}"
+                        )
                 except (ValueError, AttributeError):
                     pass
+        else:
+            # Task NON presente in RAM.
+            # Mandiamo STOP solo se era stata vista almeno una volta dal
+            # lancio E l'assenza e' confermata su STOP_MISSING_READS letture
+            # consecutive.
+            if proc_id in self.task_seen_in_ram:
+                self.task_missing_reads[proc_id] = (
+                    self.task_missing_reads.get(proc_id, 0) + 1
+                )
+                if self.task_missing_reads[proc_id] >= STOP_MISSING_READS:
+                    should_stop = True
+                    stop_reason = (
+                        f"task scomparsa dalla RAM "
+                        f"(dopo {STOP_MISSING_READS} letture) = completata"
+                    )
+            # Se non e' mai stata vista in RAM dal lancio: NIENTE STOP.
+            # Probabilmente la RAM non supporta questo tipo di task.
 
         if should_stop:
             print(f"[StopWatcher] Task {proc_id} ({reg.get('nome','?')}): "
