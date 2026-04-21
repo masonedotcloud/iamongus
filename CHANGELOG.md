@@ -1,5 +1,116 @@
 # Changelog
 
+## v2.2.50 — StopWatcher: ferma il subprocess se la task scompare dalla RAM (qualunque tipo)
+
+### Richiesta utente
+
+> Mi servirebbe implementare per ogni task: se la task scompare dalla
+> RAM non ha senso continuare la task in corso, la puoi considerare
+> finita e passare alla prossima.
+
+### Cosa cambia
+
+Prima, lo `_stop_watcher_check` mandava STOP al subprocess solo se:
+- La task aveva `done=True` in RAM, oppure
+- Lo step in RAM era avanzato oltre quello al lancio
+
+NON mandava STOP se la task era semplicemente **assente** dalla lista
+RAM. Questo era un problema per task tipo Divert Power dove appena
+lo slider giusto e' azzeccato la task **scompare** (non setta `done`):
+il bot continuava a draggare gli slider rimanenti inutilmente.
+
+Adesso la regola e' **generica**: se la task in esecuzione **scompare**
+dalla RAM, il bot manda STOP al subprocess. Vale per qualsiasi task
+multi-azione (Divert Power, Reactor, Align Engines, custom).
+
+### Protezioni contro falsi positivi
+
+Per evitare di fermare prematuramente task lunghe che potrebbero non
+essere sempre in RAM (es. Clean O2 Filter durante animazioni):
+
+1. **Anti-flicker**: serve assenza per **3 letture consecutive**
+   (`STOP_MISSING_READS = 3`). A 50ms di polling RAM = ~150ms di
+   assenza confermata prima di mandare STOP. Se la RAM "perde" la
+   task per un solo tick, nessun problema.
+
+2. **Sentinella "vista almeno una volta"**: nuovo tracker
+   `self.task_seen_in_ram` (set). Se la task NON e' mai stata vista
+   in RAM dal lancio del subprocess, NON mandiamo STOP. Logica: la
+   RAM probabilmente non riporta affatto quel tipo di task, quindi
+   l'assenza non significa "completata".
+
+### Flusso completo
+
+Per ogni tick del polling RAM (ogni 50ms):
+
+```
+ram_match presente:
+  task_seen_in_ram.add(id)
+  task_missing_reads.pop(id)             # reset anti-flicker
+  Se ram_match.done == True:             -> STOP
+  Se ram_match.step > ram_step_launch:   -> STOP
+
+ram_match assente:
+  Se id in task_seen_in_ram:
+    task_missing_reads[id] += 1
+    Se task_missing_reads[id] >= 3:      -> STOP (scomparsa confermata)
+  Altrimenti:
+    Niente (la RAM probabilmente non supporta questo tipo)
+```
+
+### Esempio: Divert Power (5 slider)
+
+1. Bot fa drag #1 sullo slider giusto
+2. La RAM aggiorna: task passa da `prog="0/1"` a sparire
+3. Tick 1 polling (50ms dopo): task assente, `missing=1`
+4. Tick 2 (100ms): assente, `missing=2`
+5. Tick 3 (150ms): assente, `missing=3` -> **STOP inviato**
+6. Il dispatcher del subprocess legge STOP -> `break` tra le azioni
+7. Bot non esegue drag #2, #3, #4, #5 (inutili)
+8. Subprocess termina -> bot passa alla task successiva
+
+### Esempio: Clean O2 Filter (animazione lunga)
+
+1. Bot apre il pannello: la RAM mostra la task
+2. Bot inizia a cliccare le foglie
+3. Anche se la task scompare brevemente dalla RAM per 50-100ms
+   durante un'animazione, il counter `missing` non raggiunge 3
+4. Bot completa tutte le azioni regolarmente
+
+### Esempio: task con tipo non supportato dalla RAM
+
+1. Bot lancia una task con `tipo` che la RAM di Among Us non riporta
+2. `task_seen_in_ram` resta vuoto per quella task
+3. Anche se l'assenza dura tutta l'esecuzione, NESSUN STOP
+4. Bot esegue tutte le azioni come prima (no regressione)
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `ui/mixins/memory_sync.py` | +costante `STOP_MISSING_READS = 3`. `_stop_watcher_check`: ora gestisce anche il caso "task assente dalla RAM" con anti-flicker (3 letture consecutive) + sentinella "vista almeno una volta" (`self.task_seen_in_ram`) |
+| `ui/mixins/tasks_process.py` | +reset di `task_missing_reads` e `task_seen_in_ram` al lancio del subprocess e in tutti i 4 punti di cleanup |
+
+### Cosa NON e' cambiato
+
+- API motore: invariata
+- Il **dispatcher** del subprocess (gia' controlla `stop_flag` tra
+  azioni e dentro il drag): invariato
+- Il meccanismo di invio STOP via stdin: invariato
+- Tutti gli altri fix precedenti: intatti
+
+### Verifica fatta
+
+4 test funzionali con scenari realistici:
+
+| Scenario | Atteso | Risultato |
+|---|---|---|
+| Divert Power: vista poi scomparsa 3+ tick | STOP | OK |
+| Task mai vista in RAM (tipo non supportato) | NO stop | OK |
+| Anti-flicker: scompare 2 tick poi riappare | NO stop, counter reset | OK |
+| Step avanzato in RAM (Wires) | STOP immediato | OK |
+
+
 ## v2.2.49 — GameStateMonitor: pausa intelligente in lobby/voto/impostore/morto
 
 ### Richieste utente
