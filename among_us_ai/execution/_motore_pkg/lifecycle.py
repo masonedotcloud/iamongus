@@ -19,7 +19,12 @@ except Exception:
 from .dispatcher import esegui_azioni
 
 def setup(ctx):
-    # Hook chiamato prima di run_task. Vuoto di default.
+    """
+    Hook chiamato prima di :func:`run_task`. Vuoto di default.
+
+    Sovrascrivibile in test e custom task: il subprocess legge l'``__init__``
+    del modulo e puo' definirne uno proprio.
+    """
     pass
 
 
@@ -188,7 +193,11 @@ def run_task(task_meta, azioni, ctx=None):
 
 
 def teardown(ctx):
-    # Hook chiamato dopo run_task (anche in caso di errore). Vuoto di default.
+    """
+    Hook chiamato dopo :func:`run_task` (anche in caso di eccezione).
+    Vuoto di default. Sovrascrivibile per cleanup custom (es. release
+    risorse esterne).
+    """
     pass
 
 

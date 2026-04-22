@@ -231,7 +231,7 @@ class PlannerMixin:
                         pos=((vp_w - win_w) // 2, (vp_h - win_h) // 2)):
 
             # === SPIEGAZIONE INIZIALE ===
-            dpg.add_text("Imposta quanto e' importante ogni cosa per il bot",
+            dpg.add_text("Imposta quanto è importante ogni cosa per il bot",
                          color=Colors.ACCENT)
             dpg.add_text("quando deve scegliere quale task fare per prima.",
                          color=Colors.TEXT_DIM)
@@ -241,7 +241,7 @@ class PlannerMixin:
             with dpg.collapsing_header(
                     label="Quanto urgenti sono i sabotaggi",
                     default_open=True):
-                dpg.add_text("Quando c'e' un sabotaggio (es. ossigeno",
+                dpg.add_text("Quando c'è un sabotaggio (es. ossigeno",
                              color=Colors.TEXT_DIM)
                 dpg.add_text("che cala, reattore in fusione), il bot deve",
                              color=Colors.TEXT_DIM)
@@ -256,7 +256,7 @@ class PlannerMixin:
                     format="%.0f",
                     width=-1,
                 )
-                dpg.add_text("  Piu' alto = il bot li priorizza sempre",
+                dpg.add_text("  Più alto = il bot li priorizza sempre",
                               color=Colors.TEXT_DIM)
                 dpg.add_text("  Valore consigliato: 1000",
                               color=Colors.TEXT_DIM)
@@ -269,7 +269,7 @@ class PlannerMixin:
                              color=Colors.TEXT_DIM)
                 dpg.add_text("badge), altre sono lunghe (es. sistemare",
                              color=Colors.TEXT_DIM)
-                dpg.add_text("i cavi). Piu' alto il valore, piu' il bot",
+                dpg.add_text("i cavi). Più alto il valore, più il bot",
                              color=Colors.TEXT_DIM)
                 dpg.add_text("preferisce fare quel tipo per primo.",
                              color=Colors.TEXT_DIM)
@@ -338,7 +338,7 @@ class PlannerMixin:
                              color=Colors.TEXT_DIM)
                 dpg.add_text("(es. analizzare campioni in medbay).",
                              color=Colors.TEXT_DIM)
-                dpg.add_text("Conviene farle quando il bot e' nei paraggi,",
+                dpg.add_text("Conviene farle quando il bot è nei paraggi,",
                              color=Colors.TEXT_DIM)
                 dpg.add_text("per non sprecare il tempo di attesa.",
                              color=Colors.TEXT_DIM)
@@ -359,11 +359,11 @@ class PlannerMixin:
             with dpg.collapsing_header(
                     label="Quanto contano le distanze",
                     default_open=True):
-                dpg.add_text("Quanto e' importante per il bot che la",
+                dpg.add_text("Quanto è importante per il bot che la",
                              color=Colors.TEXT_DIM)
                 dpg.add_text("prossima task sia vicina (rispetto a una",
                              color=Colors.TEXT_DIM)
-                dpg.add_text("lontana ma piu' importante).",
+                dpg.add_text("lontana ma più importante).",
                              color=Colors.TEXT_DIM)
                 dpg.add_spacer(height=8)
                 dpg.add_text("Importanza della distanza:",
@@ -394,7 +394,7 @@ class PlannerMixin:
                 )
                 dpg.add_text("  Se spunto OFF: distanza in linea retta",
                               color=Colors.TEXT_DIM)
-                dpg.add_text("  (piu' veloce ma non considera i muri)",
+                dpg.add_text("  (più veloce ma non considera i muri)",
                               color=Colors.TEXT_DIM)
 
             # === BOTTONI ===

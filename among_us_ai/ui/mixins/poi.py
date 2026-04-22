@@ -10,24 +10,22 @@ from ._imports import *
 
 
 class PoiMixin:
-    """Mixin con i metodi di poi di GPSVisualizerPro."""
+    """Mixin per la gestione UI dei Punti di Interesse di :class:`GPSVisualizerPro`."""
     def _refresh_poi_listbox(self):
-        """Aggiorna poi listbox."""
+        """Ricostruisce la listbox dei POI dal `poi_mgr` (chiamare dopo CRUD)."""
         items = []
         # Itera tutti i POI
         for p in self.poi_mgr.poi_list:
             zona_str = f"  [{p['nome_zona']}]" if p.get('nome_zona') else ""
             items.append(f"[{p['id']:02d}] {p['nome']}{zona_str}")
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist("poi_listbox"):
             # Cambia le configurazioni di un widget gia' creato
             dpg.configure_item("poi_listbox", items=items)
 
     def _get_selected_poi(self):
-        """Ritorna selected poi."""
+        """Ritorna il dict del POI selezionato in listbox, oppure ``None``."""
         if not self.poi_mgr.poi_list:
             return None
-        # Verifica se l'elemento DPG e' gia' stato creato
         if not dpg.does_item_exist("poi_listbox"):
             return None
         sel = dpg.get_value("poi_listbox")
@@ -43,44 +41,36 @@ class PoiMixin:
         """Avvia la navigazione A* verso poi."""
         p = self._get_selected_poi()
         if p is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona un POI dalla lista"
             return
         if not self.auto_enabled:
             self.auto_enabled = True
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist("auto_checkbox"):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("auto_checkbox", True)
         self._plan_path((p['x'], p['y']))
-        # Messaggio di stato mostrato all'utente nel pannello
         self.auto_status_msg = f"Navigo verso POI '{p['nome']}'"
 
     def _elimina_poi(self):
-        """Elimina poi."""
+        """Apre il dialog di conferma e, se OK, rimuove il POI selezionato."""
         p = self._get_selected_poi()
         if p is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona un POI da eliminare"
             return
         nome  = p['nome']
         id_p  = p['id']
         def on_confirm(yes):
-            """Callback di conferma."""
+            """Callback del dialog: se ``yes``, rimuove davvero il POI dal manager."""
             if yes:
                 # Rimuove il POI dal registro
                 self.poi_mgr.rimuovi(id_p)
                 self._refresh_poi_listbox()
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"POI '{nome}' eliminato"
         self._show_confirm(f"Eliminare il POI '{nome}'?", on_confirm)
 
     def _apri_popup_nuovo_poi(self):
-        """Apre il popup nuovo poi."""
+        """Apre il popup di creazione di un nuovo POI nella posizione corrente."""
         tag = "popup_nuovo_poi"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
         px, py = self.pos_target
         vp_w   = dpg.get_viewport_client_width()
@@ -115,20 +105,15 @@ class PoiMixin:
                 nome_zona     = zona_s['nome'] if zona_s else None,
             )
             self._refresh_poi_listbox()
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"POI '{nome_v}' aggiunto"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         def do_usa_pos(*_):
             """Callback del bottone \"Usa posizione attuale\"."""
             nx = round(self.pos_target[0], 3)
             ny = round(self.pos_target[1], 3)
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("np_x", nx)
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("np_y", ny)
             z2 = self._zona_alla_posizione(nx, ny)
             if z2:
@@ -136,12 +121,8 @@ class PoiMixin:
                 info2 = f"[{z2['id']:02d}] {z2['nome']}" + (f"  GZ:{gz2}" if gz2 is not None else "")
             else:
                 info2 = "Fuori da qualsiasi zona"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist("np_zona_info"):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("np_zona_info", info2)
-
-        # Apre la finestra
         with dpg.window(label="Nuovo Punto di Interesse", tag=tag,
                         modal=True, no_resize=True, no_collapse=True,
                         width=400, height=220,
@@ -164,22 +145,17 @@ class PoiMixin:
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Salva", width=190, callback=do_salva)
                 dpg.add_button(label="Annulla", width=190,
-                               # Rimuove l'elemento DPG (cleanup)
                                callback=lambda *a: dpg.delete_item(tag)
-                               # Verifica se l'elemento DPG e' gia' stato creato
                                if dpg.does_item_exist(tag) else None)
 
     def _apri_popup_modifica_poi(self):
-        """Apre il popup modifica poi."""
+        """Apre il popup di modifica del POI selezionato."""
         p = self._get_selected_poi()
         if p is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona un POI da modificare"
             return
         tag  = "popup_modifica_poi"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
         id_p = p['id']
         vp_w = dpg.get_viewport_client_width()
@@ -212,20 +188,15 @@ class PoiMixin:
                 nome_zona     = zona_s['nome'] if zona_s else None,
             )
             self._refresh_poi_listbox()
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"POI [{id_p}] aggiornato"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         def do_usa_pos(*_):
             """Callback del bottone \"Usa posizione attuale\"."""
             nx = round(self.pos_target[0], 3)
             ny = round(self.pos_target[1], 3)
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("mp_x", nx)
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("mp_y", ny)
             z2 = self._zona_alla_posizione(nx, ny)
             if z2:
@@ -233,9 +204,7 @@ class PoiMixin:
                 info2 = f"[{z2['id']:02d}] {z2['nome']}" + (f"  GZ:{gz2}" if gz2 is not None else "")
             else:
                 info2 = "Fuori da qualsiasi zona"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist("mp_zona_info"):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("mp_zona_info", info2)
 
         with dpg.window(label=f"Modifica POI [{id_p}]", tag=tag,
@@ -260,7 +229,5 @@ class PoiMixin:
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Salva", width=190, callback=do_salva)
                 dpg.add_button(label="Annulla", width=190,
-                               # Rimuove l'elemento DPG (cleanup)
                                callback=lambda *a: dpg.delete_item(tag)
-                               # Verifica se l'elemento DPG e' gia' stato creato
                                if dpg.does_item_exist(tag) else None)

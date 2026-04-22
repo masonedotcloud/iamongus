@@ -109,10 +109,19 @@ class TaskThreadProcess:
         pipe_writer_bin = self._write_file
 
         class _PipeTextIO(_io.TextIOBase):
+            """
+            Wrapper TextIO -> file binario pipe.
+
+            ``redirect_stdout`` / ``sys.stdout = X`` si aspetta un oggetto
+            text-mode (``str``), ma la pipe ``os.pipe()`` lavora in binary
+            (``bytes``). Questa classe fa il bridge: write(str) -> encode
+            UTF-8 -> scrittura su FD binario. Thread-safe via lock.
+            """
             def __init__(self, fd_file):
                 self._fd = fd_file
                 self._lock = threading.Lock()
             def write(self, s):
+                """Scrive una stringa o bytes nella pipe. Ritorna i char scritti."""
                 if not s:
                     return 0
                 if isinstance(s, bytes):
@@ -124,21 +133,26 @@ class TaskThreadProcess:
                         self._fd.write(data)
                         self._fd.flush()
                     except (OSError, ValueError):
-                        # Pipe chiusa (terminate() chiamato); ignora.
+                        # Pipe chiusa (terminate() chiamato): ignora.
                         return 0
                 return len(s)
             def flush(self):
+                """Flush della pipe sottostante (tollera errori se chiusa)."""
                 try:
                     self._fd.flush()
                 except (OSError, ValueError):
                     pass
             def writable(self):
+                """Sempre ``True``: la pipe e' un sink."""
                 return True
             def isatty(self):
+                """``False``: una pipe non e' un terminale interattivo."""
                 return False
             def fileno(self):
-                # Alcune librerie chiamano fileno(): ritorna l'fd reale
-                # del lato write della pipe.
+                """
+                Ritorna l'FD del lato write della pipe.
+                Alcune lib chiamano fileno() per ottimizzazioni (es. dup2).
+                """
                 return self._fd.fileno()
 
         pipe_writer = _PipeTextIO(pipe_writer_bin)

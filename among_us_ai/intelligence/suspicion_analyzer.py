@@ -86,14 +86,13 @@ class SuspicionAnalyzer:
         self.w_no_tasks = w_no_tasks
         self.w_no_tasks_time = w_no_tasks_time
 
-        # Smoothing: il nuovo score e' una media pesata fra quello vecchio
-        # e quello appena calcolato:
-        #   smoothed = old * smoothing + new * (1 - smoothing)
-        # smoothing=0   -> nessun smoothing (vecchio comportamento)
-        # smoothing=0.5 -> dolce: lo score si muove ma senza saltare
-        # smoothing=0.9 -> molto pigro
+        # Fix v2.2.48: smoothing introdotto per attenuare i salti di score.
+        # Il nuovo score = old*smoothing + new*(1-smoothing).
+        #   smoothing=0   -> nessun smoothing (comportamento pre-fix, scatti)
+        #   smoothing=0.5 -> dolce: lo score si muove ma senza saltare a step
+        #   smoothing=0.9 -> molto pigro (cambia lentamente)
         self.smoothing = smoothing
-        # Cache degli score precedenti per smoothing
+        # Cache degli score precedenti (uno per player) per applicare smoothing.
         self._last_scores = {}
 
     def analyze(self, player, activity, proximity, task_inf, now=None):
@@ -166,8 +165,8 @@ class SuspicionAnalyzer:
                     factors['no_tasks_seen'] = (round(age, 0), contrib)
                     score += contrib
 
-        # Clampa fra 0 e 100
-        # Clamp grezzo fra 0 e 100
+        # Clamp finale fra 0 e 100 (la somma poteva andare oltre i limiti
+        # in entrambe le direzioni a causa dei bonus 1v1 negativi).
         score = max(0.0, min(100.0, score))
 
         # === SMOOTHING ===

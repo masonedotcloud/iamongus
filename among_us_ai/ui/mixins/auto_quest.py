@@ -22,7 +22,6 @@ class AutoQuestMixin:
             dpg.bind_item_theme("btn_auto_all", th)
             # Cambia le configurazioni di un widget gia' creato
             dpg.configure_item("btn_auto_all", label="[X] Ferma Esecuzione Totale")
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Auto-All attivato: cerco task..."
             self._auto_all_timer = 1.0 # Forza il check immediato
         else:
@@ -85,13 +84,10 @@ class AutoQuestMixin:
 
         if not candidati:
             if non_registrate > 0:
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"Auto-All in attesa: {non_registrate} task non registrate"
             elif in_cooldown > 0:
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"Auto-All in attesa: {in_cooldown} task in cooldown..."
             else:
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Tutte le task completate! Vittoria!"
                 self._toggle_auto_all()
             return

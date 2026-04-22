@@ -21,7 +21,9 @@ class ZoneManager:
     """
 
     def __init__(self, file_path):
-        """Inizializza l'istanza con i valori di default."""
+        """
+        :param file_path: path del file JSON delle zone (es. ``zone_skeld.json``).
+        """
         self.file_path = file_path
         self.zone = []
         self.prossimo_id = 1
@@ -32,20 +34,23 @@ class ZoneManager:
     # ------------------------------------------------------------------
 
     def carica(self):
-        """Carica da file."""
+        """Carica la lista zone dal JSON. Se assente o malformato, ignora."""
         if not os.path.exists(self.file_path):
             return
         try:
             with open(self.file_path, 'r') as f:
-                # Carica e deserializza JSON da file
                 data = json.load(f)
             raw = data.get('zone', [])
+            # Filtra zone valide: dict con 'punti' lista >=3 elementi.
+            # Float-cast esplicito per robustezza (i JSON producono float
+            # ma alcuni vecchi salvati potrebbero avere int).
             self.zone = []
             for z in raw:
                 if (isinstance(z, dict) and 'punti' in z
                         and isinstance(z['punti'], list) and len(z['punti']) >= 3):
                     z['punti'] = [[float(p[0]), float(p[1])] for p in z['punti']]
                     self.zone.append(z)
+            # prossimo_id: dal JSON se presente, altrimenti max id + 1.
             self.prossimo_id = data.get(
                 'prossimo_id',
                 max([z['id'] for z in self.zone], default=0) + 1,
@@ -55,10 +60,9 @@ class ZoneManager:
             print(f"Errore caricamento zone ({e}).")
 
     def salva(self):
-        """Salva su file."""
+        """Serializza zone + prossimo_id su disco."""
         try:
             with open(self.file_path, 'w') as f:
-                # Serializza in JSON e scrive su file
                 json.dump({
                     'zone': self.zone,
                     'prossimo_id': self.prossimo_id,
@@ -71,8 +75,10 @@ class ZoneManager:
     # ------------------------------------------------------------------
 
     def aggiungi(self, nome, punti, colore=None):
-        """Aggiunge."""
+        """Crea una nuova zona; colore auto-ciclato se non specificato."""
         if colore is None:
+            # Ciclo nella palette COLORI_ZONE: idx = (id-1) % len_palette.
+            # Cosi' zone consecutive hanno colori diversi.
             idx = (self.prossimo_id - 1) % len(GPSConfig.COLORI_ZONE)
             colore = GPSConfig.COLORI_ZONE[idx]
         zona = {
@@ -87,12 +93,12 @@ class ZoneManager:
         return zona
 
     def rimuovi(self, id_zona):
-        """Rimuove."""
+        """Rimuove la zona con l'id dato (no-op se non trovata)."""
         self.zone = [z for z in self.zone if z['id'] != id_zona]
         self.salva()
 
     def rinomina(self, id_zona, nuovo_nome):
-        """Rinomina l'elemento."""
+        """Rinomina la zona con l'id dato."""
         for z in self.zone:
             if z['id'] == id_zona:
                 z['nome'] = nuovo_nome
@@ -100,7 +106,7 @@ class ZoneManager:
         self.salva()
 
     def aggiorna_forma(self, id_zona, punti):
-        """Aggiorna forma."""
+        """Sostituisce i punti del poligono di una zona esistente."""
         for z in self.zone:
             if z['id'] == id_zona:
                 z['punti'] = [[float(p[0]), float(p[1])] for p in punti]
@@ -108,7 +114,7 @@ class ZoneManager:
         self.salva()
 
     def cambia_colore(self, id_zona, colore):
-        """Cambia il colore dell'elemento."""
+        """Cambia il colore (stringa hex) di una zona esistente."""
         for z in self.zone:
             if z['id'] == id_zona:
                 z['colore'] = colore
@@ -116,11 +122,15 @@ class ZoneManager:
         self.salva()
 
     # ------------------------------------------------------------------
-    # Mapping con le zone del gioco
+    # Mapping con le zone del gioco (room id della RAM)
     # ------------------------------------------------------------------
 
     def set_game_zone_id(self, id_zona, game_zone_id):
-        """Imposta l'ID di zona del gioco su una zona esistente."""
+        """
+        Imposta (o rimuove se ``None``/``""``) l'ID di stanza del gioco
+        su una zona disegnata. Serve per matchare ``mt.id_stanza`` letto
+        dalla RAM con un poligono visivo nella UI.
+        """
         for z in self.zone:
             if z['id'] == id_zona:
                 if game_zone_id is None or game_zone_id == "":
@@ -131,19 +141,22 @@ class ZoneManager:
         self.salva()
 
     def get_by_game_zone_id(self, game_zone_id):
-        """Ritorna la zona con il dato `game_zone_id`, oppure None."""
+        """Ritorna la zona con il ``game_zone_id`` indicato, oppure ``None``."""
         for z in self.zone:
             if z.get('game_zone_id') == game_zone_id:
                 return z
         return None
 
     # ------------------------------------------------------------------
-    # Helper geometrici
+    # Helper geometrici (statici: non dipendono dalla persistenza)
     # ------------------------------------------------------------------
 
     @staticmethod
     def centroide(zona):
-        """Calcola il centroide di un poligono."""
+        """
+        Centroide approssimato (media aritmetica dei vertici) di un poligono.
+        Non e' il baricentro vero, ma sufficiente per le label sulla mappa.
+        """
         pts = zona.get('punti', [])
         if not pts:
             return (0.0, 0.0)
@@ -153,7 +166,11 @@ class ZoneManager:
 
     @staticmethod
     def bbox(zona):
-        """Calcola il bounding box di un poligono."""
+        """
+        Bounding box assi-allineato del poligono.
+
+        :return: tupla ``(min_x, min_y, max_x, max_y)``.
+        """
         pts = zona.get('punti', [])
         if not pts:
             return (0.0, 0.0, 0.0, 0.0)

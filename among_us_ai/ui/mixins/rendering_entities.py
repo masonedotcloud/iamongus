@@ -11,7 +11,6 @@ class RenderingEntitiesMixin:
     """Mixin con i metodi di rendering entities di GPSVisualizerPro."""
     def _render_tasks(self, cam_x, cam_y, half_w, half_h, scale):
         """Disegna le task con colori dinamici: Arancione (da fare), Verde (completata), Rosso (vitale)."""
-        # Rimuove l'elemento DPG (cleanup)
         dpg.delete_item("task_node", children_only=True)
         if not self.task_mgr.task_list:
             return
@@ -288,8 +287,7 @@ class RenderingEntitiesMixin:
             dpg.pop_container_stack()
 
     def _render_other_players(self, cam_x, cam_y, half_w, half_h, scale):
-        """Disegna su DPG other players."""
-        # Rimuove l'elemento DPG (cleanup)
+        """Disegna gli altri player rilevati con YOLO: cerchio col loro colore + nome + score di sospettosita'."""
         dpg.delete_item("other_players_node", children_only=True)
         if not self.show_other_players: 
             return
@@ -340,8 +338,7 @@ class RenderingEntitiesMixin:
         dpg.pop_container_stack()
 
     def _render_player(self, cam_x, cam_y, half_w, half_h, scale):
-        """Disegna su DPG player."""
-        # Rimuove l'elemento DPG (cleanup)
+        """Disegna il marker del giocatore locale: cerchio verde con alone (\"glow\") e crocino centrale."""
         dpg.delete_item("player_node", children_only=True)
         dpg.push_container_stack("player_node")
 
@@ -380,63 +377,44 @@ class RenderingEntitiesMixin:
         dpg.pop_container_stack()
 
     def _render_hud(self):
-        """Disegna su DPG hud."""
-        # Aggiorna il valore di un widget DPG
+        """Disegna l'HUD (testi sovraimpressi): stato auto-move, debug, status_msg."""
         dpg.set_value("status_x",    f"X: {self.pos_target[0]:.3f}")
-        # Aggiorna il valore di un widget DPG
         dpg.set_value("status_y",    f"Y: {self.pos_target[1]:.3f}")
-        # Aggiorna il valore di un widget DPG
         dpg.set_value("status_fps",  f"FPS: {dpg.get_frame_rate()}")
-        # Aggiorna il valore di un widget DPG
         dpg.set_value("status_mode", f"Mode: {self.camera_mode}")
-        # Aggiorna il valore di un widget DPG
         dpg.set_value("status_zoom", f"Zoom: {self.scale:.0f}")
 
         if self.auto_enabled:
             if self.auto_path:
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("status_auto", color=Colors.TARGET)
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("status_auto", f"Auto: ON ({self.auto_status_msg})")
             else:
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("status_auto", color=Colors.ACCENT)
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("status_auto", "Auto: ARMATO (click mappa)")
         else:
             # Cambia le configurazioni di un widget gia' creato
             dpg.configure_item("status_auto", color=Colors.TEXT_DIM)
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("status_auto", "Auto: OFF")
-
-        # Aggiorna il valore di un widget DPG
         dpg.set_value("stat_dist", f"{self.total_distance:.2f} u")
         elapsed = int(time.time() - self.session_start)
         m, s = divmod(elapsed, 60); h, m = divmod(m, 60)
-        # Aggiorna il valore di un widget DPG
         dpg.set_value("stat_time",
                       f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}")
-        # Aggiorna il valore di un widget DPG
         dpg.set_value("stat_trail", f"{len(self.trail)}")
-        # Aggiorna il valore di un widget DPG
         dpg.set_value("auto_state_label",
                       self.auto_status_msg if self.auto_status_msg else "inattivo")
         if self.auto_final_target is not None:
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("auto_target_label",
                 f"X={self.auto_final_target[0]:.2f}  Y={self.auto_final_target[1]:.2f}")
         else:
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("auto_target_label", "-")
         if self.auto_path:
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("auto_path_label",
                 f"{self.auto_path_index+1} / {len(self.auto_path)} waypoint")
         else:
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("auto_path_label", "0 waypoint")
-
-        # Rimuove l'elemento DPG (cleanup)
         dpg.delete_item("hud_node", children_only=True)
         if self.show_hud:
             dpg.push_container_stack("hud_node")

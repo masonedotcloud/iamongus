@@ -116,7 +116,7 @@ class TaskActionEditor(
     TAG_EDIT_HOLD    = "tae_edit_hold"
 
     def __init__(self, task_mgr):
-        """Inizializza l'istanza con i valori di default."""
+        """Costruttore: inizializza lo stato a valori default."""
         self.task_mgr          = task_mgr
         self.id_task           = None
         self.on_save_cb        = None
@@ -204,7 +204,6 @@ class TaskActionEditor(
 
     def e_aperto(self):
         """Ritorna True se la finestra dell'editor e' aperta."""
-        # Verifica se l'elemento DPG e' gia' stato creato
         return self._aperto and dpg.does_item_exist(self.TAG_WIN)
 
     def tick(self):
@@ -234,9 +233,7 @@ class TaskActionEditor(
     def chiudi(self):
         """Chiude la finestra dell'editor di azioni."""
         self._aperto = False
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(self.TAG_WIN):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(self.TAG_WIN)
 
     def aggiorna_frame(self, forza=False):
@@ -273,9 +270,7 @@ class TaskActionEditor(
 
         if self.texture_width != w or self.texture_height != h:
             self.texture_width, self.texture_height = w, h
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(self.TAG_BG_TEX):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(self.TAG_BG_TEX)
             dpg.add_dynamic_texture(width=w, height=h, default_value=texture_data,
                                     tag=self.TAG_BG_TEX, parent=self.TAG_TEX_REG)
@@ -283,24 +278,20 @@ class TaskActionEditor(
             self._ricalcola_dimensioni_preview()
             self.aggiorna_preview()
         else:
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(self.TAG_BG_TEX):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value(self.TAG_BG_TEX, texture_data)
 
     # Callback per l'evento
     def _on_resize(self, sender, app_data, user_data):
-        """Callback per l'evento resize."""
+        """Callback del DPG su resize della finestra: ricalcola le dimensioni della preview."""
         if not self.e_aperto():
             return
         if self._ricalcola_dimensioni_preview():
             self.aggiorna_preview()
 
     def _imposta_istruzioni(self, testo, color=(150, 150, 150)):
-        """Imposta istruzioni."""
-        # Verifica se l'elemento DPG e' gia' stato creato
+        """Aggiorna il messaggio guida in alto nell'editor (colore + testo). No-op se il widget non esiste."""
         if dpg.does_item_exist(self.TAG_IST):
-            # Aggiorna il valore di un widget DPG
             dpg.set_value(self.TAG_IST, testo)
             # Cambia le configurazioni di un widget gia' creato
             dpg.configure_item(self.TAG_IST, color=color)

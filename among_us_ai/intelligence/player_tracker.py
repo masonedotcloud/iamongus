@@ -27,15 +27,21 @@ STATIONARY_TIME_DELTA_SEC = 0.3   # solo confronti snapshot con questo gap min
 
 
 class PlayerSnapshot:
-    """Un singolo osservazione di un player in un momento dato."""
+    """Singola osservazione di un player in un istante."""
 
     __slots__ = ('t', 'x', 'y', 'stanza', 'is_dead')
 
     def __init__(self, t, x, y, stanza=None, is_dead=False):
-        self.t = t                # timestamp (time.time())
+        """
+        :param t:       timestamp (``time.time()``)
+        :param x, y:    posizione in coordinate di gioco
+        :param stanza:  nome della stanza (oppure ``None``)
+        :param is_dead: ``True`` se al momento dell'osservazione era marcato morto
+        """
+        self.t = t
         self.x = x
         self.y = y
-        self.stanza = stanza      # nome della stanza (o None se non noto)
+        self.stanza = stanza
         self.is_dead = is_dead
 
     def __repr__(self):
@@ -45,27 +51,30 @@ class PlayerSnapshot:
 
 
 class PlayerInfo:
-    """Tutto cio' che sappiamo su un singolo player."""
+    """Tutto cio' che sappiamo su un singolo player nel tempo."""
 
     def __init__(self, name, color):
         self.name = name              # nome identificativo (es. "Rosso")
-        self.color = color            # (r, g, b) per UI
+        self.color = color            # tupla (r, g, b) per UI
 
-        # Storia rolling (deque per O(1) append/popleft)
+        # Storia rolling (deque con maxlen per O(1) append + auto-discard
+        # quando si supera la capacita').
         self.history = deque(maxlen=HISTORY_MAX_SNAPSHOTS)
 
-        # Snapshot piu' recente per accesso O(1)
+        # Snapshot piu' recente per accesso O(1) senza scansionare history.
         self.last_snapshot = None
 
-        # Flag: e' attualmente visibile (rilevato negli ultimi 2s)?
+        # Timestamp dell'ultima osservazione, per is_visible_now() etc.
         self._last_observation_t = None
 
-        # Stato morte (sticky: una volta morto, resta morto)
+        # Stato morte: sticky (una volta morto, resta morto in eternita').
+        # Salviamo dove e quando per inferenze del SuspicionAnalyzer.
         self.is_dead = False
         self.died_at = None      # timestamp di prima rilevazione "is_dead=True"
         self.died_pos = None     # (x, y) dove e' stato visto morto
 
-        # Cache: invalidata ad ogni `observe()`. Per metriche derivate.
+        # Flag invalidazione cache: per ora non c'e' ancora caching di
+        # metriche derivate, ma e' predisposto.
         self._cache_invalidated = True
 
     # ============================================================
@@ -279,6 +288,7 @@ class PlayerTracker:
         return [p for p in self._players.values() if p.is_dead]
 
     def count(self):
+        """Numero totale di player tracciati (vivi+morti, visibili+no)."""
         return len(self._players)
 
     # ============================================================

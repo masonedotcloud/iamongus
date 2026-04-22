@@ -10,8 +10,7 @@ from ._imports import *
 class RenderingWorldMixin:
     """Mixin con i metodi di rendering world di GPSVisualizerPro."""
     def _render_grid(self, cam_x, cam_y, half_w, half_h, scale):
-        """Disegna su DPG grid."""
-        # Rimuove l'elemento DPG (cleanup)
+        """Disegna la griglia di sfondo (ortogonale, centrata sull'origine del gioco)."""
         dpg.delete_item("grid_node", children_only=True)
         if not self.show_grid: return
         dpg.push_container_stack("grid_node")
@@ -45,8 +44,7 @@ class RenderingWorldMixin:
         dpg.pop_container_stack()
 
     def _render_zones(self, cam_x, cam_y, half_w, half_h, scale):
-        """Disegna su DPG zones."""
-        # Rimuove l'elemento DPG (cleanup)
+        """Disegna i poligoni delle zone disegnate dall'utente, con riempimento semi-trasparente."""
         dpg.delete_item("zone_node", children_only=True)
         dpg.push_container_stack("zone_node")
 
@@ -159,8 +157,7 @@ class RenderingWorldMixin:
         dpg.pop_container_stack()
 
     def _render_doors(self, cam_x, cam_y, half_w, half_h, scale):
-        """Disegna su DPG doors."""
-        # Rimuove l'elemento DPG (cleanup)
+        """Disegna gli ostacoli dinamici (porte chiuse) come piccoli quadrati rossi."""
         dpg.delete_item("doors_node", children_only=True)
         if not getattr(self, 'show_detected_doors', True) or not hasattr(self, 'detected_doors') or not self.detected_doors:
             return
@@ -181,8 +178,7 @@ class RenderingWorldMixin:
         dpg.pop_container_stack()
 
     def _render_trail(self, cam_x, cam_y, half_w, half_h, scale):
-        """Disegna su DPG trail."""
-        # Rimuove l'elemento DPG (cleanup)
+        """Disegna il trail (storico delle posizioni) come polilinea giallo-fading."""
         dpg.delete_item("trail_node", children_only=True)
         if not self.show_trail or len(self.trail) < 2: return
         dpg.push_container_stack("trail_node")
@@ -199,8 +195,7 @@ class RenderingWorldMixin:
         dpg.pop_container_stack()
 
     def _render_path(self, cam_x, cam_y, half_w, half_h, scale):
-        """Disegna su DPG path."""
-        # Rimuove l'elemento DPG (cleanup)
+        """Disegna il path A* corrente: linea piena per il tratto da percorrere, tratteggiata per quello gia' fatto."""
         dpg.delete_item("path_node", children_only=True)
         if not self.show_path or not self.auto_path: return
         dpg.push_container_stack("path_node")
@@ -242,8 +237,7 @@ class RenderingWorldMixin:
         dpg.pop_container_stack()
 
     def _render_target(self, cam_x, cam_y, half_w, half_h, scale):
-        """Disegna su DPG target."""
-        # Rimuove l'elemento DPG (cleanup)
+        """Disegna il marker del target (pos_target) come crocino rosa con alone."""
         dpg.delete_item("target_node", children_only=True)
         if self.auto_final_target is None: return
         dpg.push_container_stack("target_node")
@@ -264,8 +258,7 @@ class RenderingWorldMixin:
         dpg.pop_container_stack()
 
     def _render_poi(self, cam_x, cam_y, half_w, half_h, scale):
-        """Disegna su DPG poi."""
-        # Rimuove l'elemento DPG (cleanup)
+        """Disegna i Punti di Interesse (POI) come stelle blu con etichetta."""
         dpg.delete_item("poi_node", children_only=True)
         if not self.show_poi or not self.poi_mgr.poi_list:
             return

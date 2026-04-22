@@ -25,6 +25,14 @@ from .geometria import _point_in_polygon
 from .input_mouse import _drag_umano, _click_hold, _drag_seq_tappe, _drag_snap
 
 def _h_yolo_drag(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    """
+    Handler ``yolo_drag``: drag verso il SINGOLO oggetto rilevato con
+    confidence piu' alta dentro la ROI.
+
+    Cerca per 3s; se trova l'oggetto, fa drag dalla sua posizione al
+    target (end_rx, end_ry) usando :func:`_drag_umano`. Se l'oggetto cade
+    fuori dal poligono ROI, viene scartato (no falsi positivi al bordo).
+    """
     import os as _os
     try:
         from ultralytics import YOLO as _YOLO
@@ -292,6 +300,10 @@ def _h_yolo_drag_all(az, cx, cy, cw, ch, hwnd, durata, attesa):
 
 
 def _h_yolo_click(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    """
+    Handler ``yolo_click``: click sul SINGOLO oggetto rilevato con
+    confidence piu' alta dentro la ROI. Cerca per 3s.
+    """
     import os as _os
     try:
         from ultralytics import YOLO as _YOLO
@@ -358,6 +370,11 @@ def _h_yolo_click(az, cx, cy, cw, ch, hwnd, durata, attesa):
 
 
 def _h_yolo_click_all(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    """
+    Handler ``yolo_click_all``: click su TUTTI gli oggetti rilevati dentro
+    la ROI, uno alla volta con re-detection. Loop con stop dopo N iter
+    senza nuovi rilevamenti.
+    """
     import os as _os
     try:
         from ultralytics import YOLO as _YOLO
@@ -433,6 +450,13 @@ def _h_yolo_click_all(az, cx, cy, cw, ch, hwnd, durata, attesa):
 
 
 def _h_yolo_drag_seq(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    """
+    Handler ``yolo_drag_seq``: drag in sequenza guidata su tappe predefinite.
+
+    Trova l'oggetto con YOLO, poi lo trascina seguendo una sequenza di
+    waypoint registrati dall'utente (tipo "drag in poligono" complesso ma
+    con punto di partenza dinamico determinato dall'AI).
+    """
     import os as _os
     try:
         from ultralytics import YOLO as _YOLO

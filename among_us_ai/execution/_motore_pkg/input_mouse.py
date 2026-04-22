@@ -19,9 +19,12 @@ except Exception as _e:
     _OK = False
 
 def _click_hold(x, y, durata):
-    # Click in (x, y) con eventuale "hold" del tasto sinistro.
-    # durata=0  -> click istantaneo (mouseDown+mouseUp immediato)
-    # durata>0  -> tieni premuto per `durata` secondi prima di rilasciare
+    """
+    Click in ``(x, y)`` con eventuale "hold" del tasto sinistro.
+
+    :param durata: 0 = click istantaneo (mouseDown + mouseUp consecutivi).
+                   >0 = tieni premuto per ``durata`` secondi prima di rilasciare.
+    """
     _pag.moveTo(x, y, duration=0.1)
     if durata > 0:
         _pag.mouseDown(); _time.sleep(durata); _pag.mouseUp()
@@ -30,16 +33,18 @@ def _click_hold(x, y, durata):
 
 
 def _drag_umano(sx, sy, ex, ey, durata):
-    # Drag "umano" dal punto (sx, sy) al punto (ex, ey) in `durata` secondi.
-    # NON e' una linea retta: usa una curva di Bezier quadratica con un
-    # punto di controllo offset random, per simulare il movimento naturale
-    # della mano. Il timing usa easeInOutSine per accelerare/decelerare.
-    #
-    # Reattivita' a STOP: se il bot principale richiede stop durante il
-    # drag (es. RAM segnala fase completata), interrompiamo subito,
-    # rilasciamo il mouse pulito ed usciamo.
+    """
+    Drag "umano" dal punto ``(sx, sy)`` al punto ``(ex, ey)`` in ``durata`` sec.
+
+    NON e' una linea retta: usa una curva di Bezier quadratica con un punto
+    di controllo offset random, per simulare il movimento naturale della
+    mano. Il timing usa easeInOutSine per accelerare/decelerare.
+
+    Reattivita' a STOP: se il bot principale richiede stop durante il drag
+    (es. la RAM segnala fase completata), interrompiamo subito, rilasciamo
+    il mouse pulito ed usciamo.
+    """
     from . import stop_flag as _stop_flag
-    #
     # 1) Move to start con tween easeOutQuad
     _pag.moveTo(sx, sy, duration=_random.uniform(0.15, 0.25),
                 tween=_pag.easeOutQuad)
@@ -142,10 +147,13 @@ def _drag_snap(sx, sy, ex, ey, durata):
 
 
 def _drag_multi(punti_abs, durata_totale):
-    # Drag che passa per N punti in sequenza, in tempo `durata_totale`.
-    # Usato per minigiochi tipo "drag in poligono" dove il giocatore
-    # deve seguire un percorso prestabilito (es. wiring complesso).
-    # Ogni segmento riceve un tempo proporzionale alla sua lunghezza.
+    """
+    Drag che passa per N punti in sequenza in tempo ``durata_totale``.
+
+    Usato per minigiochi tipo "drag in poligono" dove il giocatore deve
+    seguire un percorso prestabilito (es. wiring complesso). Ogni segmento
+    riceve un tempo proporzionale alla sua lunghezza sul totale.
+    """
     from . import stop_flag as _stop_flag
     if len(punti_abs) < 2:
         # Non si puo' fare drag con < 2 punti
@@ -194,10 +202,13 @@ def _drag_multi(punti_abs, durata_totale):
 
 
 def _drag_seq_tappe(punti_abs, durata_segmento):
-    # Drag a "tappe" tra N punti: tra una tappa e l'altra usa il
-    # tween di pyautogui (easeInOutQuad) invece della Bezier.
-    # Piu' rigido di `_drag_multi` ma piu' preciso per minigiochi che
-    # richiedono di passare ESATTAMENTE per i punti (es. wiring sequenziale).
+    """
+    Drag a "tappe" tra N punti: fra una tappa e l'altra usa il tween di
+    pyautogui (easeInOutQuad) invece della Bezier.
+
+    Piu' rigido di :func:`_drag_multi` ma piu' preciso per minigiochi che
+    richiedono di passare ESATTAMENTE per i punti (es. wiring sequenziale).
+    """
     from . import stop_flag as _stop_flag
     if len(punti_abs) < 2:
         return
@@ -224,9 +235,12 @@ def _drag_seq_tappe(punti_abs, durata_segmento):
 
 
 def _drag_e_tieni(sx, sy, ex, ey, durata, hold):
-    # Drag normale + hold finale del tasto premuto.
-    # Usato per minigiochi che richiedono di "tenere premuto al target"
-    # come le leve di Reactor.
+    """
+    Drag normale + hold finale del tasto premuto per ``hold`` secondi.
+
+    Usato per minigiochi che richiedono di "tenere premuto al target",
+    es. le leve di Reactor.
+    """
     _drag_umano(sx, sy, ex, ey, durata)
     if hold > 0:
         # NB: _drag_umano fa giA' mouseUp. Qui rifacciamo down/up
@@ -236,17 +250,20 @@ def _drag_e_tieni(sx, sy, ex, ey, durata, hold):
 
 
 def _extract_pure_shape(roi_image):
-    # Estrae la "forma pura" da un'immagine ROI (Region Of Interest).
-    # Usata dai minigiochi tipo `click_anomaly` (Detect Anomaly) e
-    # `simon_says` per confrontare due immagini ignorando posizione,
-    # dimensione e antialiasing.
-    #
-    # Pipeline:
-    #   1) Converti in grayscale
-    #   2) Threshold (binarizza: nero/bianco)
-    #   3) Trova bbox dei pixel non-bianchi
-    #   4) Centra la forma in un quadrato (padding nero)
-    #   5) Resize a 40x40 + leggero blur per smoothing
+    """
+    Estrae la "forma pura" da un'immagine ROI (Region Of Interest).
+
+    Usata dai minigiochi ``click_anomaly`` (Detect Anomaly) e ``simon_says``
+    per confrontare due immagini ignorando posizione, dimensione e
+    antialiasing.
+
+    Pipeline:
+      1. Grayscale (gestisce sia BGRA che BGR)
+      2. Threshold inverso: pixel scuri -> bianco
+      3. Bounding box dei pixel non-zero
+      4. Padding a quadrato + resize 40x40
+      5. Leggero blur per smoothing dei jitter di antialiasing
+    """
     import cv2
     import numpy as np
     # 1) Grayscale (gestisce sia BGRA che BGR)

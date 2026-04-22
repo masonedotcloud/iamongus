@@ -10,16 +10,20 @@ from ._imports import *
 class TasksPopupsSubitemMixin:
     """Mixin con i metodi di tasks popups subitem di GPSVisualizerPro."""
     def _apri_popup_nuova_fase(self):
-        """Apre il popup nuova fase."""
+        """
+        Apre il popup di creazione di una nuova fase per la task selezionata.
+
+        Una "fase" e' un waypoint intermedio del percorso della task: un
+        punto della mappa dove il bot si ferma per eseguire un sotto-step
+        (es. un button da premere) prima del minigioco vero. La fase
+        viene aggiunta in coda alla lista ``fasi`` della task.
+        """
         t = self._get_selected_reg_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task a cui aggiungere una fase"
             return
         tag = "popup_nuova_fase"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
         px, py = self.pos_target
         vp_w = dpg.get_viewport_client_width()
@@ -36,18 +40,13 @@ class TasksPopupsSubitemMixin:
             # Aggiunge una fase intermedia alla task
             self.task_mgr.aggiungi_fase(id_t, nome_v, x_v, y_v)
             self._refresh_reg_task_listbox()
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Fase '{nome_v}' aggiunta a [{id_t}]"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         def do_usa_pos(*_):
             """Callback del bottone \"Usa posizione attuale\"."""
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("nf_x", round(self.pos_target[0], 3))
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("nf_y", round(self.pos_target[1], 3))
 
         with dpg.window(label=f"Nuova Fase per [{id_t}] {t['nome']}", tag=tag,
@@ -64,22 +63,18 @@ class TasksPopupsSubitemMixin:
             dpg.add_button(label="Usa posizione attuale", width=-1, callback=do_usa_pos)
             dpg.add_spacer(height=6)
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Aggiungi Fase", width=170, callback=do_salva)
+                dpg.add_button(label="Aggiungi fase", width=170, callback=do_salva)
                 dpg.add_button(label="Annulla", width=170,
-                               # Rimuove l'elemento DPG (cleanup)
                                callback=lambda *a: dpg.delete_item(tag) if dpg.does_item_exist(tag) else None)
 
     def _apri_popup_nuovo_alternativo(self):
         """Apre il popup nuovo alternativo."""
         t = self._get_selected_reg_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task a cui aggiungere un alternativo"
             return
         tag = "popup_nuovo_alternativo"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
         px, py = self.pos_target
         vp_w = dpg.get_viewport_client_width()
@@ -93,18 +88,13 @@ class TasksPopupsSubitemMixin:
             # Aggiunge un punto alternativo alla task
             self.task_mgr.aggiungi_alternativo(id_t, x_v, y_v)
             self._refresh_reg_task_listbox()
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Alternativo aggiunto a [{id_t}]"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         def do_usa_pos(*_):
             """Callback del bottone \"Usa posizione attuale\"."""
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("nfr_x", round(self.pos_target[0], 3))
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("nfr_y", round(self.pos_target[1], 3))
 
         with dpg.window(label=f"Nuovo Alternativo per [{id_t}] {t['nome']}", tag=tag,
@@ -118,23 +108,19 @@ class TasksPopupsSubitemMixin:
             dpg.add_button(label="Usa posizione attuale", width=-1, callback=do_usa_pos)
             dpg.add_spacer(height=6)
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Aggiungi Alternativo", width=170, callback=do_salva)
+                dpg.add_button(label="Aggiungi alternativo", width=170, callback=do_salva)
                 dpg.add_button(label="Annulla", width=170,
-                               # Rimuove l'elemento DPG (cleanup)
                                callback=lambda *a: dpg.delete_item(tag) if dpg.does_item_exist(tag) else None)
 
     def _imposta_game_zone_id(self):
         """Popup per inserire manualmente il game_zone_id sulla zona selezionata."""
         z = self._get_selected_zone()
         if z is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una zona dalla lista"
             return
 
         tag = "popup_game_zone_id"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
 
         vp_w = dpg.get_viewport_client_width()
@@ -148,7 +134,6 @@ class TasksPopupsSubitemMixin:
             raw = dpg.get_value("gzid_input").strip()
             if raw == "":
                 self.zone_mgr.set_game_zone_id(id_zona, None)
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"ID rimosso da '{nome_zona}'"
             else:
                 try:
@@ -156,24 +141,19 @@ class TasksPopupsSubitemMixin:
                     # Controlla unicita'
                     esistente = self.zone_mgr.get_by_game_zone_id(gzid)
                     if esistente and esistente['id'] != id_zona:
-                        # Messaggio di stato mostrato all'utente nel pannello
-                        self.auto_status_msg = (f"GZ:{gzid} gia' usato da "
+                        self.auto_status_msg = (f"GZ:{gzid} già usato da "
                                                 f"'{esistente['nome']}' - scegli un altro")
                         return
                     self.zone_mgr.set_game_zone_id(id_zona, gzid)
                     self._refresh_zone_list()
                     self._refresh_reg_task_listbox()   # aggiorna label zone nei task
-                    # Messaggio di stato mostrato all'utente nel pannello
                     self.auto_status_msg = f"'{nome_zona}' -> GZ:{gzid}"
                 except ValueError:
-                    # Messaggio di stato mostrato all'utente nel pannello
                     self.auto_status_msg = "Inserisci un numero intero"
                     return
             self._refresh_zone_list()
             self._refresh_reg_task_listbox()
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         default_txt = str(curr_gzid) if curr_gzid is not None else ""
@@ -191,23 +171,18 @@ class TasksPopupsSubitemMixin:
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Salva", width=170, callback=do_salva)
                 dpg.add_button(label="Annulla", width=170,
-                               # Rimuove l'elemento DPG (cleanup)
                                callback=lambda *a: dpg.delete_item(tag)
-                               # Verifica se l'elemento DPG e' gia' stato creato
                                if dpg.does_item_exist(tag) else None)
 
     def _apri_popup_collegamento_zona(self):
         """Popup per linkare/slinkare una task registrata a una zona tramite game_zone_id."""
         t = self._get_selected_reg_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task registrata"
             return
 
         tag = "popup_link_zona"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
 
         vp_w    = dpg.get_viewport_client_width()
@@ -227,7 +202,6 @@ class TasksPopupsSubitemMixin:
             if raw == "" or raw.lower() == "nessuna":
                 # Collega la task alla zona di gioco selezionata
                 self.task_mgr.imposta_collegamento_zona(id_task, None)
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"Link zona rimosso da '{nome_t}'"
             else:
                 try:
@@ -236,16 +210,12 @@ class TasksPopupsSubitemMixin:
                     self.task_mgr.imposta_collegamento_zona(id_task, gzid)
                     z = self.zone_mgr.get_by_game_zone_id(gzid)
                     z_nome = z['nome'] if z else "?"
-                    # Messaggio di stato mostrato all'utente nel pannello
                     self.auto_status_msg = f"'{nome_t}' -> zona '{z_nome}' (GZ:{gzid})"
                 except ValueError:
-                    # Messaggio di stato mostrato all'utente nel pannello
                     self.auto_status_msg = "Inserisci un numero intero o lascia vuoto"
                     return
             self._refresh_reg_task_listbox()
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         curr_str  = f"GZ:{curr_zid}" if curr_zid is not None else "Nessuna"
@@ -281,7 +251,5 @@ class TasksPopupsSubitemMixin:
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Salva", width=185, callback=do_salva)
                 dpg.add_button(label="Annulla", width=185,
-                               # Rimuove l'elemento DPG (cleanup)
                                callback=lambda *a: dpg.delete_item(tag)
-                               # Verifica se l'elemento DPG e' gia' stato creato
                                if dpg.does_item_exist(tag) else None)

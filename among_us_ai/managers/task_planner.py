@@ -20,7 +20,6 @@ I pesi sono configurabili (vedi `core/config.py` PLANNER_*).
 """
 
 import math
-import time
 
 
 class TaskPlanner:

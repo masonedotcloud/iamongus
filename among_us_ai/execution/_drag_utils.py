@@ -30,7 +30,6 @@ def trascinamento_umano(sx, sy, ex, ey, durata):
     # Fase 2: premi il tasto sinistro e attendi un attimo (umano: non
     # rilascia subito)
     pyautogui.mouseDown(button='left')
-    # Pausa il thread per il tempo specificato (secondi)
     time.sleep(random.uniform(0.05, 0.1))
 
     if durata > 0:
@@ -59,9 +58,7 @@ def trascinamento_umano(sx, sy, ex, ey, durata):
             # Jitter random (1-2 px) per simulare imprecisione umana
             x += random.uniform(-1, 1)
             y += random.uniform(-1, 1)
-            # Sposta il mouse alle coordinate target
             pyautogui.moveTo(int(x), int(y))
-            # Pausa il thread per il tempo specificato (secondi)
             time.sleep(sleep_time)
 
     # Fase 3: rilascia il tasto
@@ -88,11 +85,8 @@ def trascinamento_multi(punti, durata_totale):
     tot_dist = sum(distanze) or 1.0
 
     sx, sy = punti[0]
-    # Sposta il mouse alle coordinate target
     pyautogui.moveTo(sx, sy, duration=0.2, tween=pyautogui.easeOutQuad)
-    # Premi e tieni premuto il tasto sinistro
     pyautogui.mouseDown(button='left')
-    # Pausa il thread per il tempo specificato (secondi)
     time.sleep(random.uniform(0.05, 0.1))
 
     # Per ogni segmento esegue un piccolo drag interno
@@ -109,12 +103,8 @@ def trascinamento_multi(punti, durata_totale):
             y = y1 + (y2 - y1) * t
             x += random.uniform(-1, 1)
             y += random.uniform(-1, 1)
-            # Sposta il mouse alle coordinate target
             pyautogui.moveTo(int(x), int(y))
-            # Pausa il thread per il tempo specificato (secondi)
             time.sleep(sleep_time)
-
-    # Rilascia il tasto sinistro del mouse
     pyautogui.mouseUp(button='left')
 
 
@@ -124,14 +114,10 @@ def esegui_click_hold(x, y, durata):
     ``durata`` secondi (utile per pulsanti che richiedono una pressione
     prolungata, es. il bottone "Hold" di Reactor).
     """
-    # Sposta il mouse alle coordinate target
     pyautogui.moveTo(x, y, duration=random.uniform(0.1, 0.2),
                      tween=pyautogui.easeOutQuad)
-    # Premi e tieni premuto il tasto sinistro
     pyautogui.mouseDown(button='left')
-    # Pausa il thread per il tempo specificato (secondi)
     time.sleep(durata)
-    # Rilascia il tasto sinistro del mouse
     pyautogui.mouseUp(button='left')
 
 
@@ -144,12 +130,9 @@ def trascinamento_e_tieni(sx, sy, ex, ey, durata, hold_at_end):
     qualcosa fino a una posizione e poi tenerla ferma (es. allineamenti
     di Engine Output, calibrazione del Distributor).
     """
-    # Sposta il mouse alle coordinate target
     pyautogui.moveTo(sx, sy, duration=random.uniform(0.15, 0.25),
                      tween=pyautogui.easeOutQuad)
-    # Premi e tieni premuto il tasto sinistro
     pyautogui.mouseDown(button='left')
-    # Pausa il thread per il tempo specificato (secondi)
     time.sleep(random.uniform(0.05, 0.1))
 
     if durata > 0:
@@ -159,14 +142,11 @@ def trascinamento_e_tieni(sx, sy, ex, ey, durata, hold_at_end):
             t = i / steps
             x = sx + (ex - sx) * t + random.uniform(-1, 1)
             y = sy + (ey - sy) * t + random.uniform(-1, 1)
-            # Sposta il mouse alle coordinate target
             pyautogui.moveTo(int(x), int(y))
-            # Pausa il thread per il tempo specificato (secondi)
             time.sleep(sleep_time)
 
     # MANTIENE il tasto premuto sull'ultimo punto
     time.sleep(hold_at_end)
-    # Rilascia il tasto sinistro del mouse
     pyautogui.mouseUp(button='left')
 
 
@@ -180,5 +160,4 @@ def trascinamento_seq_tappe(tappe, durata_per_tappa):
     """
     for sx, sy, ex, ey in tappe:
         trascinamento_umano(sx, sy, ex, ey, durata_per_tappa)
-        # Pausa il thread per il tempo specificato (secondi)
         time.sleep(random.uniform(0.1, 0.2))

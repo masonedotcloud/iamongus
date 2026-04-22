@@ -68,24 +68,25 @@ class ActivityDetector:
     """
 
     def __init__(self):
-        self.events = []  # lista di ActivityEvent (rolling, max 500)
+        self.events = []  # lista di ActivityEvent (rolling, max events_max)
         self.events_max = 500
 
-        # Cache LRU per evitare di registrare lo stesso evento piu' volte.
-        # USO UN DICT (insertion-ordered in Python 3.7+) cosi' quando faccio
-        # l'eviction posso tenere gli N piu' RECENTI in modo deterministico.
-        # Un set Python non garantirebbe l'ordine -> eviction casuale -> stessi
-        # eventi rigenerati piu' volte (BUG osservato: score sale a step
-        # quando un player resta troppo a lungo nel tracker).
+        # Fix v2.2.48: cache LRU dict-based (era un set).
+        # Anti-duplicato per evento: stessa chiave nello stesso bucket
+        # temporale -> skip. Uso un DICT (insertion-ordered in Python 3.7+)
+        # cosi' l'eviction puo' togliere gli N piu' VECCHI in modo
+        # deterministico. Con il vecchio set Python l'iterazione era
+        # unordered -> eviction casuale -> stessi eventi rigenerati piu'
+        # volte (bug: lo score di sospettosita' "saliva a scalini").
         self._recent_event_keys = {}
         self._recent_keys_max = 500
 
-        # Stato persistente per SUDDEN_DISAPPEAR: tiene traccia di quali
-        # "sessioni di sparizione" (identificate dal timestamp dell'ultimo
-        # avvistamento del player) abbiamo gia' segnalato. Resta in memoria
-        # finche' il tracker stesso non viene resettato: quindi l'evento
-        # viene generato UNA SOLA VOLTA per sparizione, anche se la cache
-        # generica viene compattata.
+        # Fix v2.2.47: set DEDICATO per SUDDEN_DISAPPEAR.
+        # Tiene traccia di quali "sessioni di sparizione" abbiamo gia'
+        # segnalato (identificate dal timestamp dell'ultimo avvistamento).
+        # Resta in memoria finche' il tracker non viene resettato: cosi'
+        # ogni sparizione genera UN solo evento, anche se la cache generica
+        # (sopra) viene compattata via LRU.
         self._reported_disappear_sessions = set()
 
     # ============================================================

@@ -10,22 +10,21 @@ from ._imports import *
 
 
 class MiscMixin:
-    """Mixin con i metodi di misc di GPSVisualizerPro."""
+    """Mixin con utility varie (trail, export, distanza percorsa) di :class:`GPSVisualizerPro`."""
     def _clear_trail(self):
-        """Cancella trail."""
+        """Cancella il trail (storico delle posizioni) per ricominciare da capo."""
         self.trail = []
 
     def _reset_distance(self):
-        """Resetta distance."""
+        """Azzera contatore distanza totale e tempo di sessione."""
         self.total_distance = 0.0
         self.last_pos_for_dist = None
         self.session_start = time.time()
 
     def _esporta_trail(self):
-        """Esporta trail."""
+        """Salva il trail corrente in `trail_export.json` per riuso o debug."""
         try:
             with open("trail_export.json", "w") as f:
-                # Serializza in JSON e scrive su file
                 json.dump({"trail": [[p[0], p[1]] for p in self.trail]}, f)
             print("Trail esportato in trail_export.json")
         except Exception as e:
@@ -46,7 +45,6 @@ class MiscMixin:
         # --- 1. Cartella di destinazione con timestamp ---
         ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_dir   = f"export_{ts}"
-        # Crea la directory (e i parent) se non esiste
         os.makedirs(out_dir, exist_ok=True)
 
         # --- 2. Copia JSON ---
@@ -76,7 +74,6 @@ class MiscMixin:
 
         # --- 5. Feedback ---
         png_msg = "+ 5x PNG (512->8192px)" if ok_png else "(Pillow non installato: PNG saltati)"
-        # Messaggio di stato mostrato all'utente nel pannello
         self.auto_status_msg = f"Esportato -> {zip_path}  ({', '.join(copiati)} {png_msg})"
         print(f"[EXPORT] {zip_path}  |  cartella: {out_dir}")
 
@@ -259,7 +256,7 @@ class MiscMixin:
         return True
 
     def _update_trail_and_distance(self):
-        """Aggiorna a ogni frame trail and distance."""
+        """Aggiunge un punto al trail (a ritmo `TRAIL_INTERVAL`) e accumula la distanza percorsa."""
         now = time.time()
         if now - self.last_trail_time >= GPSConfig.TRAIL_INTERVAL:
             self.trail.append((self.pos_target[0], self.pos_target[1]))

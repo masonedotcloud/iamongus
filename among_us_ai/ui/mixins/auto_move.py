@@ -34,7 +34,6 @@ class AutoMoveMixin:
         if snapped_goal_key is None:
             self.auto_path = []
             self.auto_path_index = 0
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Punto irraggiungibile (non mappato)"
             self.key_ctrl.release_all()
             return
@@ -81,7 +80,6 @@ class AutoMoveMixin:
         if not path:
             self.auto_path = []
             self.auto_path_index = 0
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "In attesa (percorso bloccato)..."
             self.key_ctrl.release_all()
             return
@@ -101,7 +99,6 @@ class AutoMoveMixin:
         self.auto_path_index = 0
         self.auto_stuck_pos = tuple(self.pos_target)
         self.auto_stuck_timer = 0.0
-        # Messaggio di stato mostrato all'utente nel pannello
         self.auto_status_msg = f"Path: {len(path)} wp ({elapsed_ms:.0f}ms)"
 
     def _toggle_auto_enabled(self):
@@ -109,16 +106,23 @@ class AutoMoveMixin:
         self.auto_enabled = not self.auto_enabled
         # Se il widget esiste gia', lo rimuovo prima di ricrearlo
         if dpg.does_item_exist("auto_checkbox"):
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("auto_checkbox", self.auto_enabled)
         if not self.auto_enabled:
             self._cancel_auto_move(silent=True)
         else:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Pronto: clicca sulla mappa"
 
     def _cancel_auto_move(self, silent=False, stop_auto_all=True):
-        """Annulla auto move."""
+        """
+        Interrompe la navigazione corrente e rilascia i tasti WASD.
+
+        :param silent:        se ``True`` non aggiorna l'`auto_status_msg`
+                              (utile per cancellazioni interne automatiche).
+        :param stop_auto_all: se ``True`` ferma anche Auto-All; se ``False``
+                              cancella solo il path corrente lasciando
+                              Auto-All in vita (per passare alla task
+                              successiva).
+        """
         self.auto_final_target = None
         self.auto_path = []
         self.auto_path_index = 0
@@ -154,7 +158,6 @@ class AutoMoveMixin:
                 dpg.configure_item("btn_auto_all", label="> Esegui TUTTE le Task")
 
         if not silent:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Annullato"
 
     def _cancel_all(self):
@@ -169,7 +172,6 @@ class AutoMoveMixin:
             self.door_rect_end = None
             self.zone_last_pixel = None
             self.zona_in_modifica = None
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Disegno zona annullato"
         self._cancel_auto_move()
 
@@ -222,7 +224,6 @@ class AutoMoveMixin:
             if hwnd_au and win32gui.GetForegroundWindow() != hwnd_au:
                 if self.key_ctrl.pressed:
                     self.key_ctrl.release_all()
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "In pausa (Focus su altra finestra)"
                 return
 
@@ -240,19 +241,16 @@ class AutoMoveMixin:
                 start_point = wp
             
             if path_blocked:
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Percorso bloccato da porta, ricalcolo..."
                 self._plan_path(self.auto_final_target)
                 if not self.auto_path:
                     if getattr(self, 'auto_execute_all', False) and getattr(self, '_current_auto_all_task_id', None):
                         tid = self._current_auto_all_task_id
                         self.task_cooldowns[tid] = time.time() + 15.0
-                        # Messaggio di stato mostrato all'utente nel pannello
                         self.auto_status_msg = "Task isolata da porte chiuse, cambio task..."
                         self._cancel_auto_move(silent=True, stop_auto_all=False)
                         # Se il widget esiste gia', lo rimuovo prima di ricrearlo
                         if dpg.does_item_exist("task_launch_popup"):
-                            # Rimuove l'elemento DPG (cleanup)
                             dpg.delete_item("task_launch_popup")
                     return
 
@@ -286,7 +284,6 @@ class AutoMoveMixin:
                                 self.auto_2p_current_step = step
                                 self._2p_last_switch_time = time.time()
                                 self._plan_path(loc)
-                                # Messaggio di stato mostrato all'utente nel pannello
                                 self.auto_status_msg = f"Player al pannello! Cambio a tappa {step}."
                                 return
 
@@ -295,7 +292,6 @@ class AutoMoveMixin:
         if pendenti and len(pendenti) > 1:
             lock_target = self._cerca_glow_alternativi(pendenti)
             if lock_target:
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Task individuata visivamente! Lock acquisito."
                 print(f"[VisualLock] Alone giallo rilevato a {lock_target}! Aggiorno il path.")
                 self._current_nav_target = lock_target
@@ -346,8 +342,6 @@ class AutoMoveMixin:
                 #      tentativi -> fai il nudge fisso classico
                 #      (AUTO_FINAL_NUDGE_SEC) e lancia la task comunque.
                 self._do_arrival_nudge(cx, cy)
-
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Arrivato OK"
                 self._cancel_auto_move(silent=True, stop_auto_all=False)
                 # Esegui callback di arrivo (es. avvio subprocess task)
@@ -373,12 +367,10 @@ class AutoMoveMixin:
             self.auto_stuck_timer += dt
             if self.auto_stuck_timer > GPSConfig.AUTO_STUCK_TIME:
                 if GPSConfig.AUTO_REPLAN_ON_STUCK and self.auto_final_target:
-                    # Messaggio di stato mostrato all'utente nel pannello
                     self.auto_status_msg = "Bloccato - replan"
                     self.key_ctrl.release_all()
                     self._plan_path(self.auto_final_target)
                     return
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Bloccato - stop"
                 self._cancel_auto_move(silent=True)
                 return
@@ -428,7 +420,11 @@ class AutoMoveMixin:
 
         # ================= 3. SCIVOLAMENTO SUI MURI =================
         def is_safe(offset_x, offset_y):
-            """Ritorna se safe."""
+            """
+            ``True`` se il movimento di offset (in coordinate mondo)
+            atterra in una cella calpestabile rispettando l'hitbox del bot
+            (ampliata per non tagliare i muri).
+            """
             test_x = cx + offset_x
             test_y = cy + offset_y
             key = self.pathfinder._key(test_x, test_y)
@@ -464,7 +460,6 @@ class AutoMoveMixin:
         for k in current - want:  self.key_ctrl.release(k)
 
         total_wp = len(self.auto_path)
-        # Messaggio di stato mostrato all'utente nel pannello
         self.auto_status_msg = (f"wp {self.auto_path_index+1}/{total_wp}  "
                                 f"d={dist:.2f}")
 
@@ -497,6 +492,7 @@ class AutoMoveMixin:
 
         # Direzione corrente verso il target (in coordinate mondo)
         def _calc_nudge_keys(_cx, _cy):
+            """Calcola i tasti WASD da premere per andare verso `target` da `(_cx, _cy)`."""
             tx, ty = target
             dx, dy = tx - _cx, ty - _cy
             keys = set()
@@ -509,6 +505,7 @@ class AutoMoveMixin:
         # Helper per cattura del client rect del gioco (in coordinate
         # schermo). Necessaria per il check del pulsante Use.
         def _client_rect():
+            """Cattura il rect del client di Among Us; ``None`` se la finestra non esiste."""
             try:
                 hwnd = win32gui.FindWindow(None, "Among Us")
                 if not hwnd:

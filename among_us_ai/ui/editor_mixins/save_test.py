@@ -8,12 +8,13 @@ from ._imports import *
 
 
 class EditorSaveTestMixin:
-    """Mixin con i metodi di editor save test di GPSVisualizerPro."""
+    """Mixin per le azioni "Salva" e "Test" di :class:`TaskActionEditor`."""
+
     def _salva_e_chiudi(self, *_):
-        """Salva su file e chiudi."""
+        """Salva la sequenza azioni nel file di esecuzione della task e chiude l'editor."""
         if self.id_task is None:
-            self.chiudi(); return
-        # Salva le azioni nel file di esecuzione della task
+            self.chiudi()
+            return
         self.task_mgr.imposta_azioni(self.id_task, self.azioni)
         if self.on_save_cb:
             try:
@@ -23,30 +24,37 @@ class EditorSaveTestMixin:
         self.chiudi()
 
     def _avvia_test(self, *_):
-        """Avvia test."""
-        # Flag globale di stop (True quando F4 o FINE viene premuto)
+        """
+        Lancia la sequenza di azioni in modalita' TEST in un thread daemon.
+
+        In test mode il dispatcher esegue TUTTE le azioni (non solo il
+        chunk corrente). Lo stop si richiede col tasto F4/END (vedi
+        ``stop_flag``).
+        """
         stop_flag.requested = False
-        # Senza ambiente Windows non si fa nulla
         if not _WIN_OK:
-            self._imposta_istruzioni("pyautogui/win32 non disponibili.", (255, 100, 100))
+            self._imposta_istruzioni(
+                "pyautogui/win32 non disponibili.", (255, 100, 100))
             return
         if not self.azioni:
-            self._imposta_istruzioni("Nessuna azione da testare.", (255, 100, 100))
+            self._imposta_istruzioni(
+                "Nessuna azione da testare.", (255, 100, 100))
             return
-        # Avvia un thread separato
         threading.Thread(target=self._esegui_test_thread, daemon=True).start()
 
     def _esegui_test_thread(self):
-        """Esegue test thread."""
+        """
+        Body del thread di test: porta la finestra del gioco in foreground,
+        attende ~500ms per dare al gioco il tempo di "ricevere il focus",
+        poi esegue la sequenza completa via :func:`esegui_azioni` con
+        ``is_test=True``.
+        """
         nome_finestra = dpg.get_value(self.TAG_IN_WIN_NAME)
-        # Cerca la finestra del gioco per nome
         hwnd = win32gui.FindWindow(None, nome_finestra)
         if not hwnd:
             return
         try:
-            # Porta la finestra del gioco in primo piano
             win32gui.SetForegroundWindow(hwnd)
-            # Pausa il thread per il tempo specificato (secondi)
             time.sleep(0.5)
         except Exception:
             pass
