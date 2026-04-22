@@ -62,7 +62,12 @@ class TaskManager:
                  esecuzione_dir="tasks_esecuzione",
                  tasks_def_file="tasks.json",
                  legacy_file="task_registrate.json"):
-        """Inizializza l'istanza con i valori di default."""
+        """
+        :param dettagli_file:  path JSON dettagli (struttura task)
+        :param esecuzione_dir: directory dei file .json di esecuzione (uno per task)
+        :param tasks_def_file: path JSON con le definizioni statiche di Among Us
+        :param legacy_file:    vecchio file monolitico; se presente, parte la migrazione
+        """
         self.dettagli_file  = dettagli_file
         self.esecuzione_dir = esecuzione_dir
         self.tasks_def_file = tasks_def_file
@@ -96,7 +101,6 @@ class TaskManager:
             return  # gia' migrato in passato
         try:
             with open(legacy_file, 'r', encoding='utf-8') as f:
-                # Carica e deserializza JSON da file
                 data = json.load(f)
         except Exception as e:
             print(f"[Migrazione] Impossibile leggere {legacy_file}: {e}")
@@ -108,7 +112,6 @@ class TaskManager:
 
         print(f"[Migrazione] Splitto {len(old_list)} task da {legacy_file}...")
 
-        # Crea la directory (e i parent) se non esiste
         os.makedirs(self.esecuzione_dir, exist_ok=True)
 
         dettagli_list = []
@@ -117,7 +120,7 @@ class TaskManager:
             # cosi' la migrazione funziona sia da un task_registrate.json
             # del nuovo formato che da uno del vecchio formato.
             def _get(*keys, default=None):
-                """Ritorna."""
+                """Helper di lookup retro-compatibile: ritorna il primo match in `keys`."""
                 for k in keys:
                     if k in t:
                         return t[k]
@@ -164,7 +167,6 @@ class TaskManager:
                               f"task_{int(t['id']):03d}.json")
             try:
                 with open(ep, 'w', encoding='utf-8') as f:
-                    # Serializza su file in formato JSON
                     json.dump(e, f, indent=2, ensure_ascii=False)
             except Exception as ex:
                 print(f"[Migrazione] Errore scrittura {ep}: {ex}")
@@ -172,7 +174,6 @@ class TaskManager:
         # Scrivo il file dei dettagli
         try:
             with open(self.dettagli_file, 'w', encoding='utf-8') as f:
-                # Serializza su file in formato JSON
                 json.dump(
                     {'task_list': dettagli_list},
                     f, indent=2, ensure_ascii=False,
@@ -185,7 +186,6 @@ class TaskManager:
         backup = legacy_file + '.bak'
         try:
             if os.path.exists(backup):
-                # Cancella il file dal disco
                 os.remove(backup)
             os.rename(legacy_file, backup)
             print(f"[Migrazione] Completata. Backup: {backup}")
@@ -198,7 +198,6 @@ class TaskManager:
             return
         try:
             with open(self.tasks_def_file, 'r', encoding='utf-8') as f:
-                # Carica e deserializza JSON da file
                 raw = json.load(f)
             self.tasks_def = {int(k): v for k, v in raw.items()}
             print(f"Definizioni task caricate: {len(self.tasks_def)}")
@@ -254,7 +253,7 @@ class TaskManager:
                  id_zona=None, id_zona_locale=None, nome_zona=None,
                  vitale=False, due_giocatori=False,
                  cooldown=0.0, lunghezza="N/A"):
-        """Aggiunge."""
+        """Crea una nuova task: registra i dettagli E inizializza il file di esecuzione."""
         d = self.dettagli.aggiungi(
             nome=nome, x=x, y=y,
             fasi=fasi, alternativi=alternativi,
@@ -272,7 +271,7 @@ class TaskManager:
                  codice_personalizzato=None, cooldown=None, lunghezza=None,
                  delay_avvio=None,
                  loop_guard_retry=None):
-        """Aggiorna."""
+        """Aggiorna i dettagli (e il flag codice_personalizzato in esecuzione)."""
         self.dettagli.aggiorna(
             id_task, nome, x, y,
             vitale=vitale, due_giocatori=due_giocatori,
@@ -284,24 +283,23 @@ class TaskManager:
             self.esecuzione.set_codice_personalizzato(id_task, codice_personalizzato)
 
     def rimuovi(self, id_task):
-        """Rimuove."""
+        """Rimuove la task da entrambi i sub-manager (dettagli + esecuzione)."""
         self.dettagli.rimuovi(id_task)
         self.esecuzione.rimuovi(id_task)
 
     def get_by_id(self, id_task):
-        """Ritorna by id."""
+        """Cerca per id e ritorna la task "completa" (dettagli + esec fusi). ``None`` se assente."""
         d = self.dettagli.get_by_id(id_task)
         if d is None:
-            # Goal irraggiungibile o limite nodi superato
             return None
         return self._merge(d)
 
     def is_registered(self, task_nome):
-        """Ritorna se registered."""
+        """``True`` se esiste gia' una task con quel nome (case-insensitive)."""
         return self.dettagli.is_registered(task_nome)
 
     def find_registered(self, tipo=None, id_stanza=None):
-        """Cerca registered."""
+        """Trova la task registrata che corrisponde a (tipo, id_stanza) dalla RAM."""
         d = self.dettagli.find_registered(tipo=tipo, id_stanza=id_stanza)
         return self._merge(d) if d else None
 
@@ -310,7 +308,7 @@ class TaskManager:
     # ==================================================================
 
     def imposta_padre(self, id_task, id_padre):
-        """Imposta padre."""
+        """Setta/scollega il padre, invalidando il file .py se cambia ereditarieta'."""
         d = self.dettagli.get_by_id(id_task)
         old_parent = d.get('id_padre') if d else None
         ok = self.dettagli.imposta_padre(id_task, id_padre)
@@ -321,7 +319,7 @@ class TaskManager:
         return ok
 
     def get_figli(self, id_task):
-        """Ritorna figli."""
+        """Lista delle task figlie (merged dettagli + esecuzione)."""
         return [self._merge(d) for d in self.dettagli.get_figli(id_task)]
 
     # ==================================================================
@@ -451,19 +449,19 @@ class TaskManager:
         self.dettagli.aggiungi_fase(id_task, nome_fase, x, y)
 
     def rimuovi_fase(self, id_task, idx_fase):
-        """Rimuove fase."""
+        """Rimuove la fase all'indice indicato della task."""
         self.dettagli.rimuovi_fase(id_task, idx_fase)
 
     def aggiungi_alternativo(self, id_task, x, y):
-        """Aggiunge alternativo."""
+        """Aggiunge un punto alternativo (fallback) alla task."""
         self.dettagli.aggiungi_alternativo(id_task, x, y)
 
     def rimuovi_alternativo(self, id_task, idx_alternativo):
-        """Rimuove alternativo."""
+        """Rimuove l'alternativo all'indice indicato."""
         self.dettagli.rimuovi_alternativo(id_task, idx_alternativo)
 
     def imposta_collegamento_zona(self, id_task, game_zone_id):
-        """Imposta collegamento zona."""
+        """Collega/scollega la task a una zona di gioco (``id_stanza`` RAM)."""
         self.dettagli.imposta_collegamento_zona(id_task, game_zone_id)
 
     # ==================================================================
@@ -484,7 +482,6 @@ class TaskManager:
 
         d = self.dettagli.get_by_id(id_task)
         if d is None:
-            # Goal irraggiungibile o limite nodi superato
             return None
 
         # Custom code: non sovrascrivere mai un file esistente
@@ -566,7 +563,7 @@ class TaskManager:
         return filepath, log
 
     def imposta_stato_esecuzione(self, id_task, stato, params=None):
-        """Imposta stato esecuzione."""
+        """Aggiorna lo stato di esecuzione (idle/ready/running/done/error)."""
         self.esecuzione.imposta_stato(id_task, stato, params=params)
 
     # ==================================================================

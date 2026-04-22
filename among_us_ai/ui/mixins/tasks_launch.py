@@ -24,7 +24,6 @@ class TasksLaunchMixin:
         """
         t = task_to_run if task_to_run is not None else self._get_selected_mem_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task da avviare"
             return
 
@@ -33,7 +32,6 @@ class TasksLaunchMixin:
         id_task = reg['id'] if reg else None
 
         if reg is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"'{nome}' non registrata - aggiungila prima"
             return
             
@@ -42,14 +40,12 @@ class TasksLaunchMixin:
         # Controllo Cooldown
         rem = self.task_cooldowns.get(id_task, 0) - time.time()
         if rem > 0:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Task in cooldown. Riprova tra {int(rem)}s"
             return
 
         tag = "task_launch_popup"
         # Se il widget esiste gia', lo rimuovo prima di ricrearlo
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
 
         # ── FASE 1: predisposizione (sincrona, prima di aprire il popup) ──
@@ -60,7 +56,6 @@ class TasksLaunchMixin:
             self.auto_enabled = True
             # Se il widget esiste gia', lo rimuovo prima di ricrearlo
             if dpg.does_item_exist("auto_checkbox"):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("auto_checkbox", True)
         
         target_2p, step_2p = self._imposta_navigazione_2p(reg)
@@ -138,7 +133,6 @@ class TasksLaunchMixin:
         # ── FASE 2->3: callback all'arrivo ──
         def on_arrivo():
             """Chiamato da _update_auto_move quando il player raggiunge la task."""
-            # Verifica se l'elemento DPG e' gia' stato creato
             if not dpg.does_item_exist("task_launch_popup_text"):
                 self._avvia_subprocess_task(id_task)
                 return
@@ -165,7 +159,6 @@ class TasksLaunchMixin:
                 is_tempo_critico = False
 
             if not is_tempo_critico:
-                # Pausa il thread per il tempo specificato (secondi)
                 time.sleep(0.3) # pausa per stabilita' visiva (frame capture screen)
 
                 # --- CHECK VISUALE (Use Button / Alone Giallo) ---
@@ -176,7 +169,6 @@ class TasksLaunchMixin:
                     if curr_alternativo < len(alternativi):
                         next_target = (alternativi[curr_alternativo]['x'], alternativi[curr_alternativo]['y'])
                         self._task_alternativo_idx = curr_alternativo + 1
-                        # Messaggio di stato mostrato all'utente nel pannello
                         self.auto_status_msg = f"Task non attiva qui, navigo all'alternativo {self._task_alternativo_idx}..."
                         print(f"[VisualCheck] Niente USE o alone giallo. Navigo a alternativo: {next_target}")
                         self._current_nav_target = next_target
@@ -196,7 +188,6 @@ class TasksLaunchMixin:
             self._task_launch_arrivo    = True  # flag: siamo in fase 3
             # Cambia le configurazioni di un widget gia' creato
             dpg.configure_item("task_launch_popup_text", color=(0, 220, 120, 255))
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Arrivato a '{nome}' - avvio in corso..."
 
         self._current_nav_target = target_2p if target_2p else (tx, ty)
@@ -204,7 +195,6 @@ class TasksLaunchMixin:
         self._on_arrival_callback   = on_arrivo
         self._task_launch_arrivo    = False
         self._task_launch_timer_arr = 0.0
-        # Messaggio di stato mostrato all'utente nel pannello
         self.auto_status_msg        = f"In viaggio verso '{nome}'..."
 
     def _update_task_launch(self, dt):
@@ -230,7 +220,6 @@ class TasksLaunchMixin:
         log_text = "\n".join(steps[:idx])
         # Se il widget esiste gia', lo rimuovo prima di ricrearlo
         if dpg.does_item_exist("task_launch_popup_text"):
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("task_launch_popup_text", log_text)
 
         # Dopo aver mostrato tutti gli step + 1s di pausa: avvia subprocess e chiudi.
@@ -243,7 +232,6 @@ class TasksLaunchMixin:
             self._task_launch_arrivo = False
             # Se il widget esiste gia', lo rimuovo prima di ricrearlo
             if dpg.does_item_exist("task_launch_popup"):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item("task_launch_popup")
 
             # --- ORDINE OTTIMIZZATO CON PRE-WARMING ---
@@ -278,7 +266,6 @@ class TasksLaunchMixin:
             try:
                 # Invia un evento tastiera a livello scan-code (DirectInput)
                 _send_scan(SCAN_CODES['SPACE'], keyup=False)
-                # Pausa il thread per il tempo specificato (secondi)
                 time.sleep(0.05)
                 # Invia un evento tastiera a livello scan-code (DirectInput)
                 _send_scan(SCAN_CODES['SPACE'], keyup=True)
@@ -293,19 +280,25 @@ class TasksLaunchMixin:
             # ---------------------------------------
 
     def _esegui_generazione_py(self, t):
-        """Esegue generazione py."""
+        """
+        Genera (o rigenera) il file ``.py`` autonomo della task ``t`` e
+        aggiorna l'etichetta di stato nella UI.
+
+        Chiamato dal bottone "Genera/Rigenera codice .py" del popup task.
+        Per task con ``codice_personalizzato=True``, la chiamata e' gia'
+        stata filtrata da un dialog di conferma (lo richiama il callback
+        :func:`on_confirm`).
+        """
         # Genera (o ri-genera) il file .py autonomo della task
         filepath = self.task_mgr.crea_file_esecuzione(t['id'])
 
         if filepath:
             filename = os.path.basename(filepath)
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"File creato: {filename}"
             # Se il widget esiste gia', lo rimuovo prima di ricrearlo
             if dpg.does_item_exist("genera_py_status"):
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("genera_py_status", color=(0, 220, 120, 255))
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("genera_py_status", f"OK {filename}")
             # Aggiorna anche il riferimento nel JSON (exec_info['file'])
             exec_info = t.setdefault('esecuzione', {
@@ -315,13 +308,11 @@ class TasksLaunchMixin:
             # Salva il registro delle task su disco
             self.task_mgr.salva()
         else:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Errore creazione file .py"
             # Se il widget esiste gia', lo rimuovo prima di ricrearlo
             if dpg.does_item_exist("genera_py_status"):
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("genera_py_status", color=(255, 80, 80, 255))
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("genera_py_status", "X errore")
 
     def _genera_file_esecuzione(self):
@@ -331,31 +322,27 @@ class TasksLaunchMixin:
         """
         t = self._get_selected_reg_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task registrata"
             # Se il widget esiste gia', lo rimuovo prima di ricrearlo
             if dpg.does_item_exist("genera_py_status"):
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("genera_py_status", color=(255, 100, 80, 255))
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("genera_py_status", "<- seleziona prima")
             return
 
         azioni_eff, src_id = self.task_mgr.get_azioni_effettive(t['id'])
         if src_id is not None and src_id != t['id']:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"La task eredita il file dal padre [{src_id}]"
             # Se il widget esiste gia', lo rimuovo prima di ricrearlo
             if dpg.does_item_exist("genera_py_status"):
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("genera_py_status", color=(255, 180, 100, 255))
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("genera_py_status", f"Eredita dal padre [{src_id}]")
             return
 
         if t.get('codice_personalizzato', False):
             def on_confirm(yes):
-                """Callback di conferma."""
+                """Callback del dialog: se ``yes``, sovrascrive il file custom rigenerandolo."""
                 if yes:
                     self._esegui_generazione_py(t)
             self._show_confirm(f"La task '{t['nome']}' usa 'Codice Custom'.\nSovrascrivere il suo file .py?", on_confirm)
@@ -370,7 +357,6 @@ class TasksLaunchMixin:
             import mss
             import numpy as np
         except ImportError:
-            # Goal irraggiungibile o limite nodi superato
             return None
 
         # Cerca la finestra del gioco per nome
@@ -387,7 +373,6 @@ class TasksLaunchMixin:
             try:
                 img = np.array(sct.grab(monitor))[:, :, :3] # BGR
             except Exception:
-                # Goal irraggiungibile o limite nodi superato
                 return None
                 
         cam_x, cam_y = self.pos_target
@@ -407,5 +392,119 @@ class TasksLaunchMixin:
                 if target_region.size > 0:
                     yellow_pixels = np.sum((target_region[:,:,0] < 150) & (target_region[:,:,1] > 200) & (target_region[:,:,2] > 200))
                     if yellow_pixels > 20: return (px, py)
-        # Goal irraggiungibile o limite nodi superato
         return None
+
+    # ============================================================
+    # RIGENERA TUTTI I .PY NON CUSTOM
+    # ============================================================
+
+    def _rigenera_tutti_py_non_custom(self):
+        """
+        Rigenera tutti i file .py di esecuzione delle task registrate,
+        escludendo quelle con `codice_personalizzato=True`.
+
+        Utile quando:
+        - Il task_writer e' stato aggiornato (es. nuovi marker, nuovi campi
+          in TASK_META) e i file esistenti sono diventati obsoleti
+        - Hai modificato i parametri di config (es. SIMON_PANEL_TIMEOUT_SEC)
+          e vuoi propagarli a tutti i file
+        - Vuoi forzare una pulizia globale dei .py
+
+        Mostra un popup con un sommario alla fine.
+        """
+        try:
+            registrate = self.task_mgr.task_list
+        except Exception as e:
+            print(f"[Rigenera] Errore lettura task: {e}", flush=True)
+            return
+
+        total = len(registrate)
+        rigenerate = 0
+        saltate_custom = 0
+        errori = 0
+        errori_dettagli = []
+
+        for t in registrate:
+            id_task = t.get('id')
+            nome = t.get('nome', '?')
+            if t.get('codice_personalizzato', False):
+                saltate_custom += 1
+                continue
+            try:
+                fp = self.task_mgr.crea_file_esecuzione(id_task)
+                if fp:
+                    rigenerate += 1
+                else:
+                    errori += 1
+                    errori_dettagli.append(
+                        f"  - {nome} (id={id_task}): nessun file generato"
+                    )
+            except Exception as e:
+                errori += 1
+                errori_dettagli.append(
+                    f"  - {nome} (id={id_task}): {e}"
+                )
+
+        # Salva il registro (per propagare eventuali aggiornamenti dei
+        # campi 'esecuzione.file' nelle task).
+        try:
+            self.task_mgr.salva()
+        except Exception as e:
+            print(f"[Rigenera] Errore salva registro: {e}", flush=True)
+
+        # Log a console
+        print(f"[Rigenera] Totale: {total}, rigenerate: {rigenerate}, "
+              f"saltate custom: {saltate_custom}, errori: {errori}",
+              flush=True)
+        for line in errori_dettagli[:10]:
+            print(f"[Rigenera] {line}", flush=True)
+
+        # Popup riassuntivo
+        self._mostra_popup_rigenera(
+            total=total,
+            rigenerate=rigenerate,
+            saltate_custom=saltate_custom,
+            errori=errori,
+            errori_dettagli=errori_dettagli,
+        )
+
+    def _mostra_popup_rigenera(self, total, rigenerate, saltate_custom,
+                                 errori, errori_dettagli):
+        """Popup riassuntivo dopo la rigenerazione bulk."""
+        tag = "popup_rigenera_bulk"
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        w, h = 480, 320
+        with dpg.window(label="Rigenerazione file .py",
+                          tag=tag,
+                          modal=True,
+                          width=w, height=h,
+                          pos=((vp_w - w) // 2, (vp_h - h) // 2),
+                          no_close=False,
+                          on_close=lambda *a: dpg.delete_item(tag)):
+            dpg.add_text("Operazione completata.",
+                          color=(120, 220, 120))
+            dpg.add_separator()
+            dpg.add_text(f"Task totali registrate :  {total}")
+            dpg.add_text(f"File .py rigenerati    :  {rigenerate}",
+                          color=(120, 200, 220))
+            dpg.add_text(f"Saltate (codice custom):  {saltate_custom}",
+                          color=(180, 180, 100))
+            err_color = (220, 80, 80) if errori > 0 else Colors.TEXT_DIM
+            dpg.add_text(f"Errori                 :  {errori}",
+                          color=err_color)
+            if errori > 0:
+                dpg.add_separator()
+                dpg.add_text("Errori:", color=(220, 80, 80))
+                for line in errori_dettagli[:10]:
+                    dpg.add_text(line, color=Colors.TEXT_DIM, wrap=440)
+                if len(errori_dettagli) > 10:
+                    dpg.add_text(f"...e altri {len(errori_dettagli) - 10}",
+                                  color=Colors.TEXT_DIM)
+            dpg.add_separator()
+            dpg.add_button(label="Chiudi",
+                            callback=lambda *a: dpg.delete_item(tag))
+
