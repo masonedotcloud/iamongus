@@ -1,5 +1,115 @@
 # Changelog
 
+## v2.2.51 — Fix check obsoleto + tasto "Rigenera tutti i .py non custom"
+
+### Richiesta utente
+
+> Ci sono delle specie di anomalie a volte risulta il codice obsoleto
+> di alcune task, quindi se puoi ricontrollare il codice e magari
+> aggiungere un tasto che "rigenera" tutti i py non custom delle task
+> e magari controlli anche il codice inerente a queste task per capire
+> perche' alcuni risultano obsoleti.
+
+### Diagnosi del bug "codice obsoleto"
+
+Il check di obsolescenza in `tasks_process.py` cercava 4 stringhe nei
+file .py generati:
+- `current_step=TASK_META`
+- `sys.exit(1)`
+- `GetForegroundWindow() != hwnd`
+- `WAIT_TRIGGER`
+
+Verifica fatta sui 24 file in `tasks_exec/`: **nessun file conteneva
+3 dei 4 marker** (solo `WAIT_TRIGGER` era presente). Quelle stringhe
+erano marker del **vecchio formato monolitico** del file, prima del
+refactoring "thin wrapper + `_motore.py` package".
+
+Risultato: **i file venivano sempre considerati obsoleti** e rigenerati
+ad ogni avvio, anche quando non serviva. Da qui le "anomalie" segnalate.
+
+### Fix: versionamento esplicito del writer
+
+Soluzione robusta basata su versionamento:
+
+1. **Nuove costanti in `task_writer.py`**:
+   ```python
+   WRITER_VERSION = 2  # incrementa quando cambi la struttura
+   WRITER_VERSION_MARKER = "# generated_by_task_writer_v"
+   ```
+
+2. **Header dei file generati** include ora il marker:
+   ```
+   # =============================================================
+   # generated_by_task_writer_v2     <-- NUOVO
+   # FILE ESECUZIONE TASK - generato automaticamente dal bot
+   ...
+   ```
+
+3. **Check in `tasks_process.py`** parsa la versione dal marker:
+   - Se marker assente -> versione 0 -> rigenera
+   - Se versione < WRITER_VERSION corrente -> rigenera
+   - Se versione >= corrente -> NIENTE rigenerazione (file ok)
+
+4. **Skip per codice_personalizzato=True**: l'utente puo' modificare
+   il codice a mano e il bot non lo sovrascrive (comportamento gia'
+   presente, mantenuto).
+
+In futuro, quando modifichi la struttura dei file (aggiungi un campo
+a TASK_META, cambi il parsing argomenti CLI, refactori main block,
+ecc.), basta incrementare `WRITER_VERSION = 3` e tutti i file vengono
+rigenerati alla prossima esecuzione. Niente piu' marker stringhe a
+caso.
+
+### Nuovo: tasto "Rigenera tutti i .py non custom"
+
+Aggiunto nel menu **Strumenti** (sotto "Anti-AFK on/off"):
+- Itera su tutte le task registrate
+- Salta quelle con `codice_personalizzato=True`
+- Chiama `task_mgr.crea_file_esecuzione(id_task)` per ognuna
+- Mostra un popup riassuntivo:
+  ```
+  Operazione completata.
+
+  Task totali registrate :  24
+  File .py rigenerati    :  21
+  Saltate (codice custom):   3
+  Errori                 :   0
+  ```
+- In caso di errori, elenca i primi 10
+
+Usi tipici:
+- Dopo aver aggiornato il task_writer
+- Dopo aver modificato la config (es. `SIMON_PANEL_TIMEOUT_SEC`)
+- Per forzare una pulizia globale dei .py
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `execution/task_writer.py` | +costanti `WRITER_VERSION = 2`, `WRITER_VERSION_MARKER`. `_build_header` ora inserisce il marker nell'header del file generato. |
+| `ui/mixins/tasks_process.py` | `_avvia_subprocess_task`: check obsolescenza riscritto. Parsa il marker dall'header e confronta con `WRITER_VERSION`. Skip per `codice_personalizzato=True`. Stampa il motivo della rigenerazione nel log. |
+| `ui/mixins/tasks_launch.py` | +metodo `_rigenera_tutti_py_non_custom`: itera e rigenera. +metodo `_mostra_popup_rigenera`: popup di riepilogo. |
+| `ui/mixins/ui_setup.py` | +voce menu "Rigenera tutti i .py non custom" sotto "Anti-AFK". |
+
+### Verifica fatta
+
+Test funzionale:
+- Generato file di prova con `genera_file_esecuzione()`
+- File contiene il marker `# generated_by_task_writer_v2` come atteso
+- Parser estrae correttamente la versione `2`
+- File senza marker -> versione 0 -> verrebbe rigenerato (corretto)
+- File con versione corrente -> niente rigenerazione (corretto)
+
+Syntax + import: OK su tutti i 4 file modificati.
+
+### Cosa NON e' cambiato
+
+- API del motore: invariata
+- I file .py generati hanno la stessa struttura (solo +1 riga marker)
+- `codice_personalizzato=True` continua a non essere mai sovrascritto
+- Tutti gli altri fix precedenti: intatti
+
+
 ## v2.2.50 — StopWatcher: ferma il subprocess se la task scompare dalla RAM (qualunque tipo)
 
 ### Richiesta utente
