@@ -64,7 +64,7 @@ class EditorCanvasInputMixin:
         self.aggiorna_lista()
 
     def _piazza_punto_rel(self, rx, ry):
-        """Piazza un punto rel."""
+        """Piazza un punto in coordinate relative `[0,1]` nel buffer corrente e ridisegna le maniglie."""
         durata = dpg.get_value(self.TAG_IN_DUR)
         attesa = dpg.get_value(self.TAG_IN_PAUSE)
 
@@ -233,12 +233,11 @@ class EditorCanvasInputMixin:
         self.aggiorna_preview()
 
     def _segui_mouse_vertex(self):
-        """Segue il mouse vertex."""
+        """Hover sui vertici: evidenzia quello sotto al cursore per drag/eliminazione precisa."""
         # Senza ambiente Windows non possiamo procedere
         if not _WIN_OK:
             self._dragging_vertex = False
             return
-        # Pausa il thread per il tempo specificato (secondi)
         time.sleep(0.02)
         while self._dragging_vertex:
             lmb = (win32api.GetAsyncKeyState(win32con.VK_LBUTTON) & 0x8000) != 0
@@ -252,7 +251,6 @@ class EditorCanvasInputMixin:
                 self.aggiorna_preview()
             except Exception:
                 pass
-            # Pausa il thread per il tempo specificato (secondi)
             time.sleep(0.015)
 
         self._dragging_vertex = False
@@ -266,11 +264,10 @@ class EditorCanvasInputMixin:
             pass
 
     def _segui_mouse_rect(self):
-        """Segue il mouse rect."""
+        """Hover durante il trascinamento di un rettangolo: aggiorna l'estremo `rect_end` con la posizione corrente."""
         # Senza ambiente Windows non possiamo procedere
         if not _WIN_OK:
             return
-        # Pausa il thread per il tempo specificato (secondi)
         time.sleep(0.02)
         while self.rect_drag_active:
             lmb = (win32api.GetAsyncKeyState(win32con.VK_LBUTTON) & 0x8000) != 0
@@ -283,7 +280,6 @@ class EditorCanvasInputMixin:
                 self.rect_end = (rx, ry)
             except Exception:
                 pass
-            # Pausa il thread per il tempo specificato (secondi)
             time.sleep(0.015)
 
         if self.rect_start and self.rect_end:
@@ -342,7 +338,7 @@ class EditorCanvasInputMixin:
             pass
 
     def _hit_test(self, rx, ry, tol_click=0.015, tol_line=0.012):
-        """Test di collisione con."""
+        """Hit-test: ritorna l'indice del vertice sotto al cursore, oppure ``-1`` se nessuno entro la soglia."""
         for i in range(len(self.azioni) - 1, -1, -1):
             a = self.azioni[i]
             t = a.get("tipo")
@@ -454,7 +450,7 @@ class EditorCanvasInputMixin:
             t = a.get("tipo")
 
             def check(px, py, key):
-                """Verifica una condizione."""
+                """Predicato di hit-test (vedi closure padre per il contesto specifico)."""
                 nonlocal best
                 d = math.hypot(rx - px, ry - py)
                 if d <= tol and d < best[2]:
@@ -530,7 +526,7 @@ class EditorCanvasInputMixin:
         return best[0], best[1]
 
     def _muovi_vertice(self, idx, key, rx, ry):
-        """Muove vertice."""
+        """Aggiorna la posizione del vertice trascinato (in corso di drag) nel buffer corrente."""
         if idx < 0 or idx >= len(self.azioni):
             return
         a = self.azioni[idx]

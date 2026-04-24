@@ -42,6 +42,26 @@ import shutil
 from .task_template import get_motore_modulo
 
 
+# ---------------------------------------------------------------------------
+# Versionamento del formato dei file generati.
+# ---------------------------------------------------------------------------
+# Incrementa WRITER_VERSION quando cambi la struttura dei file delle task
+# (es. aggiungi un campo a TASK_META, cambi come parsano gli argomenti CLI,
+# refactoring di _build_main_block, ecc.). Il bot usa questa versione per
+# rilevare i file obsoleti: se un file e' stato generato con una versione
+# minore, viene RIGENERATO al lancio (vedi `tasks_process.py`).
+#
+# Storia:
+#   v1: vecchio formato monolitico (tutto in un file, no _motore.py)
+#   v2: thin wrapper + _motore.py package (formato corrente)
+WRITER_VERSION = 2
+
+# Marker inserito nel file generato per identificare la versione. Il check
+# di obsolescenza in tasks_process.py cerca questa stringa nel file e ne
+# estrae l'intero. Se manca o e' < WRITER_VERSION, il file viene rigenerato.
+WRITER_VERSION_MARKER = "# generated_by_task_writer_v"
+
+
 # Nome della cartella del package motore in tasks_exec/
 NOME_DIR_MOTORE = "_motore"
 
@@ -215,6 +235,7 @@ def _build_header(t_id, t_nome, t_x, t_y, t_zona, t_tipo, t_id_stanza,
 
     return (
         "# =============================================================\n"
+        f"{WRITER_VERSION_MARKER}{WRITER_VERSION}\n"
         "# FILE ESECUZIONE TASK - generato automaticamente dal bot\n"
         "# =============================================================\n"
         f"# Task ID         : {t_id}\n"

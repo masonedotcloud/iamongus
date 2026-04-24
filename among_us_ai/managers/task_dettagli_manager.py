@@ -48,7 +48,9 @@ class TaskDettagliManager:
     """CRUD + persistenza dei dettagli strutturali delle task."""
 
     def __init__(self, file_path):
-        """Inizializza l'istanza con i valori di default."""
+        """
+        :param file_path: path del file JSON dettagli (es. ``tasks_dettagli.json``).
+        """
         self.file_path  = file_path
         self.task_list  = []   # lista di dict "dettagli"
         self.prossimo_id = 1
@@ -59,12 +61,11 @@ class TaskDettagliManager:
     # ------------------------------------------------------------------
 
     def carica(self):
-        """Carica da file."""
+        """Carica la lista task dal JSON dettagli. Se assente, parte vuota."""
         if not os.path.exists(self.file_path):
             return
         try:
             with open(self.file_path, 'r', encoding='utf-8') as f:
-                # Carica e deserializza JSON da file
                 data = json.load(f)
             self.task_list = data.get('task_list', [])
             self.prossimo_id = max(
@@ -75,10 +76,9 @@ class TaskDettagliManager:
             print(f"Errore caricamento dettagli task ({e}).")
 
     def salva(self):
-        """Salva su file."""
+        """Serializza l'intera ``task_list`` su disco (overwrite atomico)."""
         try:
             with open(self.file_path, 'w', encoding='utf-8') as f:
-                # Serializza su file in formato JSON
                 json.dump(
                     {'task_list': self.task_list},
                     f, indent=2, ensure_ascii=False,
@@ -129,7 +129,10 @@ class TaskDettagliManager:
                  cooldown=None, lunghezza=None,
                  delay_avvio=None,
                  loop_guard_retry=None):
-        """Aggiorna."""
+        """
+        Aggiorna i campi della task con id ``id_task``.
+        Solo i parametri non-``None`` vengono modificati (update parziale).
+        """
         for t in self.task_list:
             if t['id'] == id_task:
                 t['nome'] = nome
@@ -151,28 +154,29 @@ class TaskDettagliManager:
                 if loop_guard_retry is not None:
                     # Se True, quando il subprocess termina ma la task non
                     # risulta done in RAM, il bot tenta automaticamente
-                    # fino a N retry (premi ESC + rilancia) prima di
-                    # applicare il cooldown di sicurezza.
-                    # Se False, applica subito il cooldown senza retry
-                    # (comportamento di default: cooldown immediato).
+                    # fino a N retry (ESC + rilancia) prima di applicare
+                    # il cooldown di sicurezza. Vedi LOOP_GUARD_* in config.
                     t['loop_guard_retry'] = bool(loop_guard_retry)
                 break
         self.salva()
 
     def rimuovi(self, id_task):
-        """Rimuove."""
+        """Rimuove la task con l'id dato (no-op se non trovata)."""
         self.task_list = [t for t in self.task_list if t['id'] != id_task]
         self.salva()
 
     # ------------------------------------------------------------------
-    # Parent / figli
+    # Parent / figli (gerarchia padre-figlia per task multi-fase)
     # ------------------------------------------------------------------
 
     def imposta_padre(self, id_task, id_padre):
         """
-        Collega una task a un padre (o scollega passando None).
-        Ritorna True se ok, False se rifiutato (self-loop, padre inesistente,
-        catena di profondita' > 1).
+        Collega una task a un padre (oppure scollega con ``id_padre=None``).
+
+        :return: ``True`` se ok, ``False`` se rifiutato per:
+                 - self-loop (id_padre == id_task)
+                 - padre inesistente
+                 - catena di profondita' > 1 (nessun "nipote")
         """
         if id_padre is not None:
             if id_padre == id_task:
@@ -180,7 +184,8 @@ class TaskDettagliManager:
             padre = self.get_by_id(id_padre)
             if padre is None:
                 return False
-            # Niente catene padre -> figlia -> nipote
+            # Niente catene padre -> figlia -> nipote: il padre non puo'
+            # essere a sua volta figlia di un'altra task.
             if padre.get('id_padre') is not None:
                 return False
         for t in self.task_list:
@@ -191,7 +196,7 @@ class TaskDettagliManager:
         return True
 
     def get_figli(self, id_task):
-        """Lista delle task figlie di id_task."""
+        """Ritorna la lista delle task figlie (id_padre == id_task)."""
         return [t for t in self.task_list if t.get('id_padre') == id_task]
 
     # ------------------------------------------------------------------
@@ -200,11 +205,15 @@ class TaskDettagliManager:
 
     def aggiungi_fase(self, id_task, nome_fase, x, y):
         """
-        Aggiunge una fase intermedia alla task.
+        Aggiunge una fase intermedia (waypoint) alla task.
 
-        NB: la flag 'ripeti' NON e' un attributo della fase ma
-        dell'azione cooldown che la chiude. Vedi `aggiorna_lista` in
-        editor_mixins/list_panel.py per la UI di selezione.
+        Una "fase" e' un punto della mappa dove il bot si ferma per
+        eseguire un sotto-step prima della task vera (es. un button da
+        premere lungo il percorso).
+
+        NB: la flag ``ripeti`` NON e' un attributo della fase ma
+        dell'azione ``cooldown`` che la chiude. Vedi `aggiorna_lista` in
+        ``editor_mixins/list_panel.py`` per la UI di selezione.
         """
         for t in self.task_list:
             if t['id'] == id_task:
@@ -217,7 +226,7 @@ class TaskDettagliManager:
         self.salva()
 
     def rimuovi_fase(self, id_task, idx_fase):
-        """Rimuove fase."""
+        """Rimuove la fase all'indice ``idx_fase`` della task indicata."""
         for t in self.task_list:
             if t['id'] == id_task:
                 fasi = t.get('fasi', [])
@@ -227,7 +236,12 @@ class TaskDettagliManager:
         self.salva()
 
     def aggiungi_alternativo(self, id_task, x, y):
-        """Aggiunge alternativo."""
+        """
+        Aggiunge un punto alternativo alla task.
+
+        Gli "alternativi" sono fallback: se l'arrivo alla pos principale
+        fallisce (es. task non si apre), il bot prova questi punti.
+        """
         for t in self.task_list:
             if t['id'] == id_task:
                 t.setdefault('alternativi', []).append(
@@ -237,7 +251,7 @@ class TaskDettagliManager:
         self.salva()
 
     def rimuovi_alternativo(self, id_task, idx_alternativo):
-        """Rimuove alternativo."""
+        """Rimuove l'alternativo all'indice ``idx_alternativo``."""
         for t in self.task_list:
             if t['id'] == id_task:
                 alternativi = t.get('alternativi', [])
@@ -247,11 +261,16 @@ class TaskDettagliManager:
         self.salva()
 
     # ------------------------------------------------------------------
-    # Zone link
+    # Zone link (mapping task -> id_stanza del gioco)
     # ------------------------------------------------------------------
 
     def imposta_collegamento_zona(self, id_task, game_zone_id):
-        """Collega/scollega la task a una zona di gioco (None per scollegare)."""
+        """
+        Collega/scollega la task a una zona di gioco.
+
+        :param game_zone_id: id_stanza letto dalla RAM, oppure ``None``
+                             per scollegare.
+        """
         for t in self.task_list:
             if t['id'] == id_task:
                 if game_zone_id is None:
@@ -266,28 +285,28 @@ class TaskDettagliManager:
     # ------------------------------------------------------------------
 
     def get_by_id(self, id_task):
-        """Ritorna by id."""
+        """Cerca una task per id. Ritorna il dict oppure ``None``."""
         for t in self.task_list:
             if t['id'] == id_task:
                 return t
-        # Goal irraggiungibile o limite nodi superato
         return None
 
     def is_registered(self, task_nome):
-        """True se esiste una task con quel nome (case-insensitive)."""
+        """``True`` se esiste una task con quel nome (case-insensitive)."""
         nome_lower = task_nome.lower()
         return any(t['nome'].lower() == nome_lower for t in self.task_list)
 
     def find_registered(self, tipo=None, id_stanza=None):
         """
-        Cerca la task corrispondente incrociando Task Type (tipo) +
-        id_stanza. Entrambi devono coincidere.
+        Cerca la task corrispondente incrociando ``tipo`` (Task Type ID)
+        + ``id_stanza``: entrambi devono coincidere.
+
+        :return: il dict task oppure ``None`` se non trovata o se uno
+                 dei due parametri e' ``None``.
         """
         if tipo is None or id_stanza is None:
-            # Goal irraggiungibile o limite nodi superato
             return None
         for t in self.task_list:
             if t.get('tipo') == tipo and t.get('id_stanza') == id_stanza:
                 return t
-        # Goal irraggiungibile o limite nodi superato
         return None

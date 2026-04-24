@@ -12,9 +12,10 @@ from ._imports import *
 class UISetupMixin:
     """Mixin con i metodi di u i setup di GPSVisualizerPro."""
     def _setup_interfaccia(self):
-        """Inizializza interfaccia."""
+        """Costruisce l'intero layout DPG: viewport, menu bar, pannello laterale, drawlist mappa, status bar e hotkey handlers."""
         dpg.create_context()
         self._setup_theme()
+        self._setup_font()
 
         with dpg.window(tag="main_win", no_title_bar=True, no_resize=True,
                         no_move=True,
@@ -62,15 +63,18 @@ class UISetupMixin:
                     dpg.add_menu_item(label="Calibra pulsante 'Use'...",
                         callback=lambda *a: self._apri_popup_calibra_use_button())
                     dpg.add_separator()
-                    dpg.add_menu_item(label="Preview giro Auto-All (F1)",
+                    dpg.add_menu_item(label="Preview giro Auto-All [F1]",
                         callback=lambda *a: self._toggle_preview_giro())
                     dpg.add_menu_item(label="Come scegliere le task...",
                         callback=lambda *a: self._apri_popup_pesi_pianificatore())
                     dpg.add_separator()
-                    dpg.add_menu_item(label="Intelligence (F2)",
+                    dpg.add_menu_item(label="Intelligence [F2]",
                         callback=lambda *a: self._toggle_intelligence_sidebar())
-                    dpg.add_menu_item(label="Anti-AFK on/off (F3)",
+                    dpg.add_menu_item(label="Anti-AFK on/off [F3]",
                         callback=lambda *a: self._toggle_anti_afk())
+                    dpg.add_separator()
+                    dpg.add_menu_item(label="Rigenera tutti i .py non custom",
+                        callback=lambda *a: self._rigenera_tutti_py_non_custom())
                 # Menu
                 with dpg.menu(label="?"):
                     dpg.add_menu_item(label="Info e scorciatoie",
@@ -277,7 +281,7 @@ class UISetupMixin:
                 dpg.add_text("0 waypoint", tag="auto_path_label")
 
         dpg.add_spacer(height=6)
-        dpg.add_button(label="Annulla movimento (ESC)", width=-1,
+        dpg.add_button(label="Annulla movimento [ESC]", width=-1,
                        callback=lambda *a: self._cancel_auto_move())
         dpg.add_checkbox(label="Mostra percorso sulla mappa",
                          default_value=self.show_path,
@@ -602,8 +606,66 @@ class UISetupMixin:
                 color=Colors.TEXT_DIM)
             dpg.add_spacer(height=2)
 
+    def _setup_font(self):
+        """
+        Registra e applica un font con il range di caratteri accentati
+        (Latin-1 / Latin Extended-A), in modo che le lettere italiane
+        accentate (è, à, ù, ò, é, ì) vengano renderizzate correttamente
+        invece di apparire come quadratini.
+
+        Il font di default di DearPyGui carica solo l'ASCII di base: senza
+        questa registrazione i glifi accentati non sarebbero disponibili.
+
+        Strategia robusta:
+          1. Tenta di caricare un font TTF di sistema comune (Segoe UI,
+             DejaVu Sans, Arial, ...). Sul primo che esiste si ferma.
+          2. Per ogni font registrato, abilita l'hint di range Latin +
+             il range esplicito 0x0100-0x017F (Latin Extended-A) cosi'
+             tutti gli accenti italiani sono coperti.
+          3. Se nessun font di sistema e' disponibile, esce senza errori:
+             il testo restera' col font di default (gli accenti potrebbero
+             non vedersi, ma l'app non si rompe).
+        """
+        import os as _os
+
+        # Candidati comuni per piattaforma (Windows in primis, dato che il
+        # bot gira con Among Us su Windows; aggiunti fallback Linux/Mac).
+        candidati = [
+            r"C:\Windows\Fonts\segoeui.ttf",
+            r"C:\Windows\Fonts\arial.ttf",
+            r"C:\Windows\Fonts\tahoma.ttf",
+            r"C:\Windows\Fonts\calibri.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ]
+        font_path = next((p for p in candidati if _os.path.exists(p)), None)
+        if font_path is None:
+            # Nessun font di sistema trovato: niente da fare, il default
+            # resta attivo (vedi docstring).
+            print("[Font] Nessun font di sistema trovato, uso il default DPG.",
+                  flush=True)
+            return
+
+        try:
+            with dpg.font_registry():
+                with dpg.font(font_path, 16) as self._font_default:
+                    # Range base (ASCII + simboli) e accenti italiani.
+                    dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
+                    # Latin-1 Supplement (0x00C0-0x00FF) copre àèéìòù e maiuscole.
+                    dpg.add_font_range(0x00C0, 0x00FF)
+                    # Latin Extended-A (per eventuali altri segni diacritici).
+                    dpg.add_font_range(0x0100, 0x017F)
+            dpg.bind_font(self._font_default)
+            print(f"[Font] Caricato: {font_path}", flush=True)
+        except Exception as e:
+            # Fallisce silenziosamente sul default in caso di errore.
+            print(f"[Font] Errore caricamento font ({e}), uso il default.",
+                  flush=True)
+
     def _setup_theme(self):
-        """Inizializza theme."""
+        """Applica il tema DPG globale (palette colori, padding, font, frame styling)."""
         # Tema globale: palette principale, padding e arrotondamenti.
         with dpg.theme() as self.global_theme:
             with dpg.theme_component(dpg.mvAll):

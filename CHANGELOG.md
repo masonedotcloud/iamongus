@@ -1,5 +1,202 @@
 # Changelog
 
+## v2.2.52 — Review massiva commenti & docstring (95 file)
+
+### Richiesta utente
+
+> Review impeccabile dei commenti su TUTTI i 95 file. Stile italiano
+> professionale (commenti tecnici brevi, niente prosa). Anche refactor
+> leggibilita' + segnala problemi. Funzioni senza docstring: aggiungi
+> breve docstring. Fix passati: riassumi in commento sopra
+> (es. 'Fix v2.2.48: cache LRU').
+
+### Cosa e' stato fatto
+
+Passata completa di documentazione su tutti i 95 moduli Python
+(~22.000 righe). Nessuna modifica al comportamento del codice: solo
+commenti, docstring e micro-pulizie di leggibilita'.
+
+**Docstring aggiunte/migliorate**:
+- Tutte le funzioni che avevano docstring di una riga generica
+  (es. `"""Aggiorna."""`, `"""Ritorna by id."""`) ora hanno una
+  descrizione tecnica con `:param`/`:return` dove utile.
+- Tutti i `__init__.py` dei package hanno un docstring che elenca le
+  esposizioni e il ruolo del modulo.
+- Le strutture `ctypes` in `io_input/key_controller.py` ora indicano
+  da quale header C derivano (WinUser.h) e il significato dei flag.
+
+**Note "Fix vX.Y.Z" consolidate** sopra le logiche derivate da bug fix
+passati, per non perdere il "perche'" delle scelte:
+- `Fix v2.2.48: cache LRU dict-based` in `activity_detector.py`
+  (eviction deterministica degli eventi vecchi).
+- `Fix v2.2.48: smoothing score` in `suspicion_analyzer.py`.
+- `Fix v2.2.48: niente .clear()` in `proximity_analyzer.py`
+  (bonus alone-with-safe non piu' azzerato a ogni interruzione 1v1).
+- `Fix v2.2.47: set dedicato SUDDEN_DISAPPEAR`.
+
+**Pulizia commenti orfani auto-generati** rimossi da 30+ file
+(erano residui di una generazione automatica precedente, es.
+`# Verifica se l'elemento DPG e' gia' stato creato`,
+`# Goal irraggiungibile o limite nodi superato` copiati per errore
+in `memory_reader.py`, `# Sposta il mouse alle coordinate target`).
+
+**Problemi segnalati e risolti**:
+- `game_io/memory_reader.py`: rimosso un `return None` duplicato
+  (dead code) dopo `if not self._connect():` in `get_tasks()`.
+- `managers/task_planner.py`: rimosso `import time` non utilizzato.
+
+### Verifica
+
+- `python -m py_compile` / `ast.parse` su tutti i 95 file: **0 errori**.
+- Import completo di `GPSVisualizerPro` e `TaskActionEditor` con mock
+  delle dipendenze Win (mss, win32*, pyautogui, pymem, cv2, dpg, numpy,
+  ultralytics): **OK**.
+- MRO verificato: GPSVisualizerPro 26 classi, TaskActionEditor 9 classi.
+
+### Nessun cambiamento funzionale
+
+Indirizzi RAM, soglie, timing, modalita' di esecuzione e tutta la
+logica restano identici alla v2.2.51.
+
+### Normalizzazione testi della dashboard
+
+Passata sui testi visibili all'utente per coerenza:
+
+- **Accenti veri** al posto degli apostrofi nei testi a schermo:
+  `e'`->`è`, `piu'`->`più`, `gia'`->`già`, `puo'`->`può`,
+  `finche'`->`finché`, `c'e'`->`c'è`, `cosi'`->`così`
+  (24 stringhe in 8 file: pannello Planner, Calibrazione Use, Info, Editor).
+- **Font con accenti**: aggiunto `UISetupMixin._setup_font()` che registra
+  un font di sistema (Segoe UI / Arial / DejaVu / Liberation, primo
+  disponibile) con i range Latin-1 e Latin Extended-A. Senza questa
+  registrazione DPG carica solo l'ASCII e gli accenti apparirebbero come
+  quadratini. Fallback sicuro al font di default se nessun font di
+  sistema e' presente. L'editor eredita il font globale via `bind_font`.
+- **Coerenza label**:
+  - `"Si"` -> `"Sì"` (dialog di conferma)
+  - bottoni `"Aggiungi Fase"`/`"Aggiungi Alternativo"` -> sentence case
+    (`"Aggiungi fase"`/`"Aggiungi alternativo"`) per allinearli ai
+    bottoni equivalenti del pannello laterale
+  - titolo finestra `"Calibra pulsante Use"` -> `"Calibra pulsante 'Use'"`
+    (apici coerenti con le altre 3 occorrenze)
+  - **tasti scorciatoia** uniformati a parentesi quadre maiuscole:
+    `(Esc)`/`(ESC)`->`[ESC]`, `(Canc)`->`[CANC]`, `(Invio)`->`[INVIO]`,
+    `(F1)`/`(F2)`/`(F3)`->`[F1]`/`[F2]`/`[F3]`. Le parentesi tonde restano
+    solo per le sigle/annotazioni non-tasto: `(YOLO)`, `(HUD)`, `(RAM)`,
+    `(s)`, `(consigliato)`.
+
+---
+
+## v2.2.51 — Fix check obsoleto + tasto "Rigenera tutti i .py non custom"
+
+### Richiesta utente
+
+> Ci sono delle specie di anomalie a volte risulta il codice obsoleto
+> di alcune task, quindi se puoi ricontrollare il codice e magari
+> aggiungere un tasto che "rigenera" tutti i py non custom delle task
+> e magari controlli anche il codice inerente a queste task per capire
+> perche' alcuni risultano obsoleti.
+
+### Diagnosi del bug "codice obsoleto"
+
+Il check di obsolescenza in `tasks_process.py` cercava 4 stringhe nei
+file .py generati:
+- `current_step=TASK_META`
+- `sys.exit(1)`
+- `GetForegroundWindow() != hwnd`
+- `WAIT_TRIGGER`
+
+Verifica fatta sui 24 file in `tasks_exec/`: **nessun file conteneva
+3 dei 4 marker** (solo `WAIT_TRIGGER` era presente). Quelle stringhe
+erano marker del **vecchio formato monolitico** del file, prima del
+refactoring "thin wrapper + `_motore.py` package".
+
+Risultato: **i file venivano sempre considerati obsoleti** e rigenerati
+ad ogni avvio, anche quando non serviva. Da qui le "anomalie" segnalate.
+
+### Fix: versionamento esplicito del writer
+
+Soluzione robusta basata su versionamento:
+
+1. **Nuove costanti in `task_writer.py`**:
+   ```python
+   WRITER_VERSION = 2  # incrementa quando cambi la struttura
+   WRITER_VERSION_MARKER = "# generated_by_task_writer_v"
+   ```
+
+2. **Header dei file generati** include ora il marker:
+   ```
+   # =============================================================
+   # generated_by_task_writer_v2     <-- NUOVO
+   # FILE ESECUZIONE TASK - generato automaticamente dal bot
+   ...
+   ```
+
+3. **Check in `tasks_process.py`** parsa la versione dal marker:
+   - Se marker assente -> versione 0 -> rigenera
+   - Se versione < WRITER_VERSION corrente -> rigenera
+   - Se versione >= corrente -> NIENTE rigenerazione (file ok)
+
+4. **Skip per codice_personalizzato=True**: l'utente puo' modificare
+   il codice a mano e il bot non lo sovrascrive (comportamento gia'
+   presente, mantenuto).
+
+In futuro, quando modifichi la struttura dei file (aggiungi un campo
+a TASK_META, cambi il parsing argomenti CLI, refactori main block,
+ecc.), basta incrementare `WRITER_VERSION = 3` e tutti i file vengono
+rigenerati alla prossima esecuzione. Niente piu' marker stringhe a
+caso.
+
+### Nuovo: tasto "Rigenera tutti i .py non custom"
+
+Aggiunto nel menu **Strumenti** (sotto "Anti-AFK on/off"):
+- Itera su tutte le task registrate
+- Salta quelle con `codice_personalizzato=True`
+- Chiama `task_mgr.crea_file_esecuzione(id_task)` per ognuna
+- Mostra un popup riassuntivo:
+  ```
+  Operazione completata.
+
+  Task totali registrate :  24
+  File .py rigenerati    :  21
+  Saltate (codice custom):   3
+  Errori                 :   0
+  ```
+- In caso di errori, elenca i primi 10
+
+Usi tipici:
+- Dopo aver aggiornato il task_writer
+- Dopo aver modificato la config (es. `SIMON_PANEL_TIMEOUT_SEC`)
+- Per forzare una pulizia globale dei .py
+
+### File toccati
+
+| File | Modifica |
+|---|---|
+| `execution/task_writer.py` | +costanti `WRITER_VERSION = 2`, `WRITER_VERSION_MARKER`. `_build_header` ora inserisce il marker nell'header del file generato. |
+| `ui/mixins/tasks_process.py` | `_avvia_subprocess_task`: check obsolescenza riscritto. Parsa il marker dall'header e confronta con `WRITER_VERSION`. Skip per `codice_personalizzato=True`. Stampa il motivo della rigenerazione nel log. |
+| `ui/mixins/tasks_launch.py` | +metodo `_rigenera_tutti_py_non_custom`: itera e rigenera. +metodo `_mostra_popup_rigenera`: popup di riepilogo. |
+| `ui/mixins/ui_setup.py` | +voce menu "Rigenera tutti i .py non custom" sotto "Anti-AFK". |
+
+### Verifica fatta
+
+Test funzionale:
+- Generato file di prova con `genera_file_esecuzione()`
+- File contiene il marker `# generated_by_task_writer_v2` come atteso
+- Parser estrae correttamente la versione `2`
+- File senza marker -> versione 0 -> verrebbe rigenerato (corretto)
+- File con versione corrente -> niente rigenerazione (corretto)
+
+Syntax + import: OK su tutti i 4 file modificati.
+
+### Cosa NON e' cambiato
+
+- API del motore: invariata
+- I file .py generati hanno la stessa struttura (solo +1 riga marker)
+- `codice_personalizzato=True` continua a non essere mai sovrascritto
+- Tutti gli altri fix precedenti: intatti
+
+
 ## v2.2.50 — StopWatcher: ferma il subprocess se la task scompare dalla RAM (qualunque tipo)
 
 ### Richiesta utente

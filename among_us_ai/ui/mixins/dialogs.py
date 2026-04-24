@@ -10,25 +10,20 @@ from ._imports import *
 
 
 class DialogsMixin:
-    """Mixin con i metodi di dialogs di GPSVisualizerPro."""
+    """Mixin per i dialoghi modali generici di :class:`GPSVisualizerPro`."""
     def _show_text_input(self, title, default_text, callback):
         """Mostra un popup modale per inserimento testo. callback(str|None)."""
         tag = "text_input_popup"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
 
         def do_ok(*_):
-            """Callback del pulsante OK."""
-            # Verifica se l'elemento DPG e' gia' stato creato
+            """Conferma input: chiama callback(testo) e chiude il popup."""
             if not dpg.does_item_exist(f"{tag}_input"):
                 callback(None)
                 return
             value = dpg.get_value(f"{tag}_input")
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
             if value and value.strip():
                 callback(value.strip())
@@ -36,10 +31,8 @@ class DialogsMixin:
                 callback(None)
 
         def do_cancel(*_):
-            """Callback del pulsante Annulla."""
-            # Verifica se l'elemento DPG e' gia' stato creato
+            """Annulla: chiama callback(None) e chiude il popup."""
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
             callback(None)
 
@@ -67,30 +60,23 @@ class DialogsMixin:
     def _show_confirm(self, message, callback):
         """Mostra un popup modale di conferma. callback(bool)."""
         tag = "confirm_popup"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
 
         def do_yes(*_):
-            """Callback del pulsante Si."""
-            # Verifica se l'elemento DPG e' gia' stato creato
+            """Conferma Sì: chiama callback(True) e chiude."""
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
             callback(True)
 
         def do_no(*_):
-            """Callback del pulsante No."""
-            # Verifica se l'elemento DPG e' gia' stato creato
+            """Conferma No: chiama callback(False) e chiude."""
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
             callback(False)
 
         vp_w = dpg.get_viewport_client_width()
         vp_h = dpg.get_viewport_client_height()
-        # Apre la finestra
         with dpg.window(label="Conferma", tag=tag, modal=True, no_resize=True,
                         no_collapse=True,
                         width=340, height=115,
@@ -99,26 +85,21 @@ class DialogsMixin:
             dpg.add_text(message)
             dpg.add_spacer(height=6)
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Si",  width=155, callback=do_yes)
+                dpg.add_button(label="Sì",  width=155, callback=do_yes)
                 dpg.add_button(label="No",  width=155, callback=do_no)
 
     def _show_color_picker(self, zona):
         """Popup con la palette: clicca un colore per applicarlo alla zona."""
         tag = "color_picker_popup"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
 
         def pick(col_hex):
-            """Callback selezione colore dalla palette."""
+            """Applica il colore scelto alla zona, refresha la lista, chiude il popup."""
             self.zone_mgr.cambia_colore(zona['id'], col_hex)
             self._refresh_zone_list()
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Colore di '{zona['nome']}' aggiornato"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         vp_w = dpg.get_viewport_client_width()
@@ -144,7 +125,6 @@ class DialogsMixin:
                         dpg.add_button(label=" ", tag=btn_tag,
                                        width=60, height=32,
                                        callback=lambda s, a, u=col_hex: pick(u))
-                        # Tema per colorare il bottone
                         with dpg.theme() as th:
                             with dpg.theme_component(dpg.mvButton):
                                 dpg.add_theme_color(dpg.mvThemeCol_Button, rgba)
@@ -156,17 +136,13 @@ class DialogsMixin:
                         dpg.bind_item_theme(btn_tag, th)
             dpg.add_spacer(height=6)
             dpg.add_button(label="Annulla", width=-1,
-                           # Rimuove l'elemento DPG (cleanup)
                            callback=lambda *a: dpg.delete_item(tag)
-                                                # Verifica se l'elemento DPG e' gia' stato creato
                                                 if dpg.does_item_exist(tag) else None)
 
     def _show_help(self):
-        """Mostra help."""
-        # Verifica se l'elemento DPG e' gia' stato creato
+        """Apre la finestra "Informazioni" con cheatsheet di mouse/tastiera."""
         if dpg.does_item_exist("help_win"):
             dpg.show_item("help_win"); return
-        # Apre la finestra
         with dpg.window(label="Informazioni", tag="help_win",
                         width=520, height=470, pos=(180, 130)):
             dpg.add_text("Among Us AI Bot", color=Colors.ACCENT)
@@ -190,9 +166,9 @@ class DialogsMixin:
             dpg.add_text("  ESC = annulla", color=Colors.TEXT_DIM)
             dpg.add_separator()
             dpg.add_text("Pathfinding:", color=Colors.TARGET)
-            dpg.add_text("A* lavora sulle celle gia' visitate del mapper.",
+            dpg.add_text("A* lavora sulle celle già visitate del mapper.",
                          color=Colors.TEXT_DIM)
-            dpg.add_text("Piu' la mappa e' completa, piu' il percorso e' ottimale.",
+            dpg.add_text("Più la mappa è completa, più il percorso è ottimale.",
                          color=Colors.TEXT_DIM)
             dpg.add_text("Il path viene semplificato con 'string-pulling'.",
                          color=Colors.TEXT_DIM)

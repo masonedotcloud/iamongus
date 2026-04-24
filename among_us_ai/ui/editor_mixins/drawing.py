@@ -11,13 +11,9 @@ class EditorDrawingMixin:
     """Mixin con i metodi di editor drawing di GPSVisualizerPro."""
     def aggiorna_preview(self):
         """Aggiorna la preview screenshot nell'editor."""
-        # Verifica se l'elemento DPG e' gia' stato creato
         if not dpg.does_item_exist(self.TAG_CANVAS):
             return
-        # Rimuove l'elemento DPG (cleanup)
         dpg.delete_item(self.TAG_CANVAS, children_only=True)
-
-        # Verifica se l'elemento DPG e' gia' stato creato
         if self.texture_width > 0 and dpg.does_item_exist(self.TAG_BG_TEX):
             dpg.draw_image(self.TAG_BG_TEX, (0, 0),
                            (self.preview_w, self.preview_h),
@@ -47,7 +43,7 @@ class EditorDrawingMixin:
         return rx * self.preview_w, ry * self.preview_h
 
     def _disegna_azione(self, idx, a, selezionato=False):
-        """Disegna su DPG azione."""
+        """Disegna il marker visivo di una singola azione sulla preview (form/colore dipendono dal tipo)."""
         num = str(idx + 1)
         t = a.get("tipo")
         p = self.TAG_CANVAS
@@ -332,7 +328,7 @@ class EditorDrawingMixin:
             self._disegna_handles(a)
 
     def _disegna_handles(self, a):
-        """Disegna su DPG handles."""
+        """Disegna le maniglie temporanee della registrazione in corso (vertici poly, punti gia' marcati, ecc.)."""
         p = self.TAG_CANVAS
         HANDLE_R    = 5
         HANDLE_FILL = (255, 255, 255, 230)

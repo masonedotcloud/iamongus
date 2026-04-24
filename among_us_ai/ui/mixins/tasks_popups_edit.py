@@ -10,11 +10,9 @@ from ._imports import *
 class TasksPopupsEditMixin:
     """Mixin con i metodi di tasks popups edit di GPSVisualizerPro."""
     def _apri_popup_nuova_task(self):
-        """Apre il popup nuova task."""
+        """Apre il popup di creazione di una nuova task con tutti i campi (nome/posizione/tipo/vitale/...)."""
         tag = "popup_nuova_task"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
         px, py = self.pos_target
         vp_w = dpg.get_viewport_client_width()
@@ -90,21 +88,15 @@ class TasksPopupsEditMixin:
             msg = f"Task '{nome_v}' registrata"
             if zona_s:      msg += f" in '{zona_s['nome']}'"
             if matched_mem: msg += f" (tipo={matched_mem.get('tipo')} room={matched_mem.get('id_stanza')})"
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = msg
-            
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         def do_usa_pos(*_):
             """Callback del bottone \"Usa posizione attuale\"."""
             nx = round(self.pos_target[0], 3)
             ny = round(self.pos_target[1], 3)
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("nt_x", nx)
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("nt_y", ny)
             # Aggiorna label zona in tempo reale
             z2 = self._zona_alla_posizione(nx, ny)
@@ -113,13 +105,10 @@ class TasksPopupsEditMixin:
                 info2 = f"Zona: [{z2['id']:02d}] {z2['nome']}" + (f"  GZ:{gz2}" if gz2 is not None else "")
             else:
                 info2 = "Posizione fuori da qualsiasi zona"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist("nt_zona_info"):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("nt_zona_info", info2)
 
         col_zona = Colors.ACCENT if zona_corrente else (200, 120, 30, 255)
-        # Apre la finestra
         with dpg.window(label="Nuova Task", tag=tag, modal=True, no_resize=True,
                         no_collapse=True, width=400, height=275,
                         pos=(max(0, vp_w // 2 - 200), max(0, vp_h // 2 - 147))):
@@ -145,24 +134,19 @@ class TasksPopupsEditMixin:
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Salva", width=190, callback=do_salva)
                 dpg.add_button(label="Annulla", width=190,
-                               # Rimuove l'elemento DPG (cleanup)
                                callback=lambda *a: dpg.delete_item(tag)
-                               # Verifica se l'elemento DPG e' gia' stato creato
                                if dpg.does_item_exist(tag) else None)
 
     def _apri_popup_modifica_task(self, task=None):
-        """Apre il popup modifica task."""
+        """Apre il popup di modifica dei campi della task selezionata."""
         # task puo' essere passato direttamente (es. aperto da lista memoria)
         # oppure viene risolto dalla listbox delle task registrate.
         t = task if task is not None else self._get_selected_reg_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task da modificare"
             return
         tag = "popup_modifica_task"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
         vp_w = dpg.get_viewport_client_width()
         vp_h = dpg.get_viewport_client_height()
@@ -187,7 +171,6 @@ class TasksPopupsEditMixin:
             # subito cooldown.
             lgr_v = (dpg.get_value("mt_loop_guard_retry")
                      if dpg.does_item_exist("mt_loop_guard_retry") else False)
-            # Verifica se l'elemento DPG e' gia' stato creato
             parent_v = dpg.get_value("mt_parent") if dpg.does_item_exist("mt_parent") else "- (nessuno)"
             if not nome_v:
                 return
@@ -207,25 +190,19 @@ class TasksPopupsEditMixin:
                     new_parent = None
             # Imposta il padre della task (per ereditarieta' delle azioni)
             if not self.task_mgr.imposta_padre(id_t, new_parent):
-                # Messaggio di stato mostrato all'utente nel pannello
-                self.auto_status_msg = f"Parent invalido (self-loop o padre gia' figlio): ignorato"
+                self.auto_status_msg = f"Parent invalido (self-loop o padre già figlio): ignorato"
             # Refresh di ENTRAMBE le liste: la modifica di una task registrata
             # (nome, coordinate, parent) si riflette in qualunque voce della
             # lista-memoria che la referenzia via (tipo, id_stanza).
             self._refresh_reg_task_listbox()
             self._refresh_mem_task_listbox()
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Task [{id_t}] aggiornata"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         def do_usa_pos(*_):
             """Callback del bottone \"Usa posizione attuale\"."""
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("mt_x", round(self.pos_target[0], 3))
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("mt_y", round(self.pos_target[1], 3))
 
         def do_apri_editor(*_):
@@ -233,19 +210,17 @@ class TasksPopupsEditMixin:
             # Chiudi il popup modale: l'editor e' una finestra DPG autonoma
             # e la dashboard deve continuare a renderizzare normalmente.
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
             # Callback per l'evento
             def _on_save(id_salvata):
-                """Callback per l'evento save."""
+                """Callback del bottone Salva: applica le modifiche alla task corrente e chiude il popup."""
                 # Rigenera il file .py con le nuove azioni
                 self.task_mgr.crea_file_esecuzione(id_salvata)
                 # Il numero di azioni e' mostrato sia nella lista registrate sia
                 # (indirettamente, come stato) nella lista memoria: refresh di entrambe.
                 self._refresh_reg_task_listbox()
                 self._refresh_mem_task_listbox()
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"Azioni task [{id_salvata}] salvate + file .py rigenerato"
 
             self.action_editor.apri(id_t, on_save=_on_save)
@@ -419,7 +394,7 @@ class TasksPopupsEditMixin:
             if figli:
                 nomi_figli = ", ".join(f"[{f['id']}] {f['nome']}" for f in figli[:3])
                 suffix = "" if len(figli) <= 3 else f" (+{len(figli)-3})"
-                dpg.add_text(f"Questa task e' PADRE di {len(figli)} figli: {nomi_figli}{suffix}",
+                dpg.add_text(f"Questa task è PADRE di {len(figli)} figli: {nomi_figli}{suffix}",
                              color=Colors.TEXT_DIM, wrap=440)
 
             dpg.add_spacer(height=4)
@@ -458,5 +433,4 @@ class TasksPopupsEditMixin:
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Salva", width=220, height=32, callback=do_salva)
                 dpg.add_button(label="Annulla", width=220, height=32,
-                               # Rimuove l'elemento DPG (cleanup)
                                callback=lambda *a: dpg.delete_item(tag) if dpg.does_item_exist(tag) else None)

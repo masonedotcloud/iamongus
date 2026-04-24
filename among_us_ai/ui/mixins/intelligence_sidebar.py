@@ -58,7 +58,7 @@ class IntelligenceSidebarMixin:
         # Pannello visibile: NIENTE no_focus_on_appearing /
         # no_bring_to_front_on_focus, altrimenti la finestra resta
         # nascosta dietro al canvas della mappa che occupa lo schermo.
-        with dpg.window(label="Intelligence (F2 chiude)",
+        with dpg.window(label="Intelligence ([F2] chiude)",
                         tag=SIDEBAR_TAG,
                         no_close=False,
                         no_resize=True,
@@ -348,6 +348,12 @@ class IntelligenceSidebarMixin:
 
     @staticmethod
     def _verdict_color(verdict):
+        """
+        Mapping verdetto -> tupla RGB per evidenziare il giudizio nella UI.
+
+        :param verdict: ``'safe'`` / ``'sus'`` / ``'super_sus'``
+        :return: ``(r, g, b)`` (default grigio se verdict sconosciuto).
+        """
         return {
             'safe':      (120, 220, 120),
             'sus':       (255, 200, 80),

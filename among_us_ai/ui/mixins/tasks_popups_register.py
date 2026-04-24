@@ -16,12 +16,10 @@ class TasksPopupsRegisterMixin:
         """
         t = self._get_selected_mem_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task dalla lista"
             return
         if t.get('reg_task') is not None:
-            # Messaggio di stato mostrato all'utente nel pannello
-            self.auto_status_msg = f"'{t['nome']}' e' gia' registrata"
+            self.auto_status_msg = f"'{t['nome']}' è già registrata"
             return
 
         # Dati univoci e persistenti della task
@@ -29,9 +27,7 @@ class TasksPopupsRegisterMixin:
         id_stanza = t.get('id_stanza')
 
         tag = "popup_registra_sconosciuta"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
 
         px, py = self.pos_target
@@ -84,21 +80,16 @@ class TasksPopupsRegisterMixin:
             self._refresh_mem_task_listbox()
             
             zona_msg = f" in '{zona_s['nome']}'" if zona_s else ""
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = (f"Task '{nome_v}' registrata{zona_msg}  "
                                     f"tipo={tipo_id}  room={id_stanza}")
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
 
         def do_usa_pos(*_):
             """Callback del bottone \"Usa posizione attuale\"."""
             nx = round(self.pos_target[0], 3)
             ny = round(self.pos_target[1], 3)
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("rs_x", nx)
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("rs_y", ny)
             
             # Aggiorna label della zona in tempo reale se il giocatore si sposta
@@ -108,15 +99,11 @@ class TasksPopupsRegisterMixin:
                 info2 = f"[{z2['id']:02d}] {z2['nome']}" + (f"  GZ:{gz2}" if gz2 is not None else "")
             else:
                 info2 = "Fuori da qualsiasi zona"
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist("rs_zona_info"):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("rs_zona_info", info2)
 
         # Mostriamo gli ID utili a schermo per debug e chiarezza
         id_str = f"Task Type: {tipo_id}  |  Room ID: {id_stanza}"
-        
-        # Apre la finestra
         with dpg.window(label="Registra Task", tag=tag,
                         modal=True, no_resize=True, no_collapse=True,
                         width=400, height=315,
@@ -145,9 +132,7 @@ class TasksPopupsRegisterMixin:
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Salva", width=195, callback=do_salva)
                 dpg.add_button(label="Annulla", width=195,
-                               # Rimuove l'elemento DPG (cleanup)
                                callback=lambda *a: dpg.delete_item(tag)
-                               # Verifica se l'elemento DPG e' gia' stato creato
                                if dpg.does_item_exist(tag) else None)
 
     def _apri_popup_padre_figlia(self):
@@ -162,10 +147,7 @@ class TasksPopupsRegisterMixin:
         TAG_SCROLL = "rel_cards_scroll"
         TAG_STATUS = "rel_status_txt"
         WIN_W, WIN_H = 860, 700
-
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(TAG_WIN):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(TAG_WIN)
 
         vp_w = dpg.get_viewport_client_width()
@@ -178,20 +160,16 @@ class TasksPopupsRegisterMixin:
 
         def _status(msg, col=None):
             """Aggiorna il messaggio di stato del popup."""
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(TAG_STATUS):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value(TAG_STATUS, msg)
                 if col:
                     # Cambia le configurazioni di un widget gia' creato
                     dpg.configure_item(TAG_STATUS, color=col)
 
         def _refresh(*_):
-            """Aggiorna."""
-            # Verifica se l'elemento DPG e' gia' stato creato
+            """Ricostruisce le card della lista task (chiamare dopo CRUD o cambio di stato)."""
             if not dpg.does_item_exist(TAG_SCROLL):
                 return
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(TAG_SCROLL, children_only=True)
             _build_cards()
 
@@ -345,10 +323,10 @@ class TasksPopupsRegisterMixin:
                                 callback=_cb_collega_figlia,
                                 width=230, height=22)
                         elif t.get('id_padre'):
-                            dpg.add_text("(ha gia' un padre)",
+                            dpg.add_text("(ha già un padre)",
                                          color=Colors.TEXT_DIM)
                         elif figli:
-                            dpg.add_text("(e' padre: non puo' diventare figlia)",
+                            dpg.add_text("(è padre: non può diventare figlia)",
                                          color=Colors.TEXT_DIM)
 
                     # Modifica sempre disponibile
@@ -424,9 +402,7 @@ class TasksPopupsRegisterMixin:
                 pos=(max(0, vp_w // 2 - WIN_W // 2),
                      max(0, vp_h // 2 - WIN_H // 2)),
                 no_collapse=True,
-                # Rimuove l'elemento DPG (cleanup)
                 on_close=lambda *a: (dpg.delete_item(TAG_WIN)
-                                     # Verifica se l'elemento DPG e' gia' stato creato
                                      if dpg.does_item_exist(TAG_WIN) else None)):
 
             dpg.add_text("GESTIONE RELAZIONI  PADRE <-> FIGLIA",
@@ -448,9 +424,7 @@ class TasksPopupsRegisterMixin:
                                width=120, height=26)
                 dpg.add_button(
                     label="Chiudi",
-                    # Rimuove l'elemento DPG (cleanup)
                     callback=lambda *a: (dpg.delete_item(TAG_WIN)
-                                         # Verifica se l'elemento DPG e' gia' stato creato
                                          if dpg.does_item_exist(TAG_WIN) else None),
                     width=90, height=26)
             dpg.add_separator()

@@ -36,7 +36,6 @@ class TasksProcessMixin:
         """
         task = self.task_mgr.get_by_id(id_task)
         if task is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Errore: task non trovata"
             return
 
@@ -71,30 +70,61 @@ class TasksProcessMixin:
                 target_exec['file'] = filepath
                 self.task_mgr.salva()
 
-        # In subprocess mode: se il file esiste ma e' vecchio (senza
-        # blocco __main__), rigeneralo. In thread mode, skip: il file
-        # NON viene usato per l'esecuzione, basta che esista.
-        if exec_mode_pre != 'thread' and filepath and os.path.exists(filepath):
+        # In subprocess mode: se il file esiste ma e' stato generato con
+        # una versione vecchia del task_writer, rigeneralo. Il marker
+        # `WRITER_VERSION_MARKER` viene inserito nell'header di ogni file
+        # generato; se manca o se il numero estratto e' < WRITER_VERSION
+        # corrente, il file e' considerato obsoleto.
+        #
+        # NB: i file con `codice_personalizzato=True` non vengono mai
+        # rigenerati automaticamente (l'utente potrebbe aver modificato
+        # il codice a mano).
+        if (exec_mode_pre != 'thread' and filepath and os.path.exists(filepath)
+                and not target_task.get('codice_personalizzato', False)):
             try:
+                # Path: siamo in among_us_ai/ui/mixins/ -> 3 dots per salire
+                # a among_us_ai/ e poi entrare in execution
+                from ...execution.task_writer import (
+                    WRITER_VERSION, WRITER_VERSION_MARKER,
+                )
                 with open(filepath, 'r', encoding='utf-8') as fh:
                     contenuto = fh.read()
-                if ('current_step=TASK_META' not in contenuto or 'sys.exit(1)' not in contenuto or 'GetForegroundWindow() != hwnd' not in contenuto or 'WAIT_TRIGGER' not in contenuto) and not target_task.get('codice_personalizzato', False):
-                    print(f"[Exec] File '{os.path.basename(filepath)}' obsoleto - rigenero")
+                # Estraggo la versione dal marker.
+                # Esempio match: '# generated_by_task_writer_v2' -> 2
+                file_ver = 0
+                idx = contenuto.find(WRITER_VERSION_MARKER)
+                if idx >= 0:
+                    # Leggo l'intero che segue il marker (fino a newline o non-digit)
+                    rest = contenuto[idx + len(WRITER_VERSION_MARKER):]
+                    digits = ''
+                    for ch in rest:
+                        if ch.isdigit():
+                            digits += ch
+                        else:
+                            break
+                    if digits:
+                        try:
+                            file_ver = int(digits)
+                        except ValueError:
+                            file_ver = 0
+                if file_ver < WRITER_VERSION:
+                    print(f"[Exec] File '{os.path.basename(filepath)}' "
+                          f"obsoleto (writer_v{file_ver} < v{WRITER_VERSION})"
+                          " - rigenero")
                     # Genera (o ri-genera) il file .py autonomo della task
                     filepath = self.task_mgr.crea_file_esecuzione(target_id)
                     exec_info['file'] = filepath
                     target_exec['file'] = filepath
                     # Salva il registro delle task su disco
                     self.task_mgr.salva()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[Exec] Errore check obsoleto: {e}", flush=True)
 
         # Evita doppio avvio dello stesso processo
         if (self._task_process is not None
                 and self._task_process.poll() is None
                 and self._task_process_task_id == id_task):
-            # Messaggio di stato mostrato all'utente nel pannello
-            self.auto_status_msg = f"'{task['nome']}' e' gia' in esecuzione"
+            self.auto_status_msg = f"'{task['nome']}' è già in esecuzione"
             return
 
         _, _, ram_step = self._get_task_target_coords(task)
@@ -195,7 +225,6 @@ class TasksProcessMixin:
             self._task_process_task_id = id_task
             # Aggiorna lo stato di esecuzione (idle/running/done/error)
             self.task_mgr.imposta_stato_esecuzione(id_task, 'running')
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"> '{task['nome']}' avviata ({avvio_label})"
             print(f"[Exec] Avviato '{abs_filepath}' - {avvio_label}", flush=True)
 
@@ -232,7 +261,6 @@ class TasksProcessMixin:
         except Exception as e:
             # Aggiorna lo stato di esecuzione (idle/running/done/error)
             self.task_mgr.imposta_stato_esecuzione(id_task, 'error')
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Errore avvio task: {e}"
             print(f"[Exec] Errore avvio '{filepath}': {e}")
 
@@ -362,7 +390,6 @@ class TasksProcessMixin:
                 if curr_fallback < len(alternativi):
                     next_target = (alternativi[curr_fallback]['x'], alternativi[curr_fallback]['y'])
                     self._task_fallback_idx = curr_fallback + 1
-                    # Messaggio di stato mostrato all'utente nel pannello
                     self.auto_status_msg = f"Task fallita, provo l'alternativo {self._task_fallback_idx}..."
                     print(f"[Fallback] Errore esecuzione. Navigo al punto alternativo: {next_target}")
                     
@@ -547,7 +574,6 @@ class TasksProcessMixin:
 
             nome = task['nome'] if task else f"#{id_task}"
             icona = "OK" if ret == 0 else "X"
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"{icona} '{nome}' terminata (exit {ret})"
             print(f"[Exec] '{nome}' terminata - exit code {ret}")
 
@@ -567,14 +593,12 @@ class TasksProcessMixin:
         # Rilascia sempre il mouse per evitare che rimanga incastrato sul gioco
         if _WIN_OK:
             try:
-                # Rilascia il tasto sinistro del mouse
                 pyautogui.mouseUp(button='left')
             except Exception:
                 pass
                 
         if self._task_process is None or self._task_process.poll() is not None:
             if not success:
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Nessun processo da fermare"
             return
         try:
@@ -594,11 +618,9 @@ class TasksProcessMixin:
             task = self.task_mgr.get_by_id(id_task)
             nome = task['nome'] if task else f"#{id_task}"
             if success:
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"OK '{nome}' completata (Memoria)"
                 print(f"[Exec] '{nome}' interrotta automaticamente (successo in RAM)")
             else:
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"[X] '{nome}' fermata"
                 print(f"[Exec] '{nome}' terminata forzatamente")
         self._task_process         = None

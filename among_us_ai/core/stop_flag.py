@@ -1,53 +1,61 @@
 """
-Flag globale per interrompere il "Test" dell'editor azioni.
+Flag globale di "stop" condiviso fra UI, motore di esecuzione e subprocess.
 
-Settato dall'hotkey di Stop globale (F4 / End) nella dashboard
-(`ui.gps_app.GPSVisualizerPro.aggiorna_frame`) e dal pulsante Stop
-dell'editor (`ui.task_action_editor.TaskActionEditor`).
+Contesto: in piu' punti del bot serve poter dire "interrompi subito":
+- Hotkey F4/FINE dalla dashboard (`ui/app.py`).
+- Pulsante "Stop" dell'editor azioni (`ui/editor.py`).
+- Messaggio "STOP\\n" su stdin del subprocess (vedi `_motore_pkg/lifecycle.py`).
 
-Letto dal motore di esecuzione runtime (`execution.runtime.esegui_azioni`)
-fra una azione e l'altra: se True, il test viene interrotto.
+Tutti scrivono lo stesso flag; il dispatcher delle azioni
+(`execution/_motore_pkg/dispatcher.py`) lo legge fra un'azione e l'altra e
+abortisce il loop appena lo trova settato.
 
-Si trova in un modulo a se' perche' nell'originale era una variabile
-globale condivisa fra TaskActionEditor, esegui_azioni e GPSVisualizerPro:
-nel modulo unico bastava ``global _STOP_TEST_THREAD``, ma con il package
-splittato serve un punto di riferimento univoco.
+In passato era una variabile globale (``global _STOP_TEST_THREAD``);
+nel package splittato serve un punto di riferimento univoco, quindi
+e' incapsulata in una classe wrapper con singleton di modulo.
 
-Uso::
+Uso tipico::
 
     from among_us_ai.core import stop_flag
-    # Flag globale di stop (True quando F4 o FINE viene premuto)
-    stop_flag.requested = True       # richiede stop
-    # Check stop globale (F4 o FINE)
-    if stop_flag.requested: ...      # consuma
+
+    # Richiede stop
+    stop_flag.request_stop()
+
+    # All'inizio di una nuova esecuzione, resetta
+    stop_flag.clear_stop()
+
+    # Loop di lavoro: check fra una iterazione e l'altra
+    while ...:
+        if stop_flag.is_stop_requested():
+            break
 """
 
 
 class _StopFlag:
-    """Wrapper boolean: l'attributo `requested` e' l'unico stato."""
+    """Contenitore boolean: l'unico stato e' :attr:`requested`."""
 
     __slots__ = ("requested",)
 
     def __init__(self):
-        """Inizializza l'istanza con i valori di default."""
         self.requested = False
 
 
-# Singleton globale del package.
+# Singleton di modulo: importato da chiunque abbia bisogno del flag.
 flag = _StopFlag()
 
 
-# Helper di compatibilita' con i pattern del codice originale.
+# --- Helper di comodita' (interfaccia funzionale equivalente) ---
+
 def request_stop():
-    """Richiede lo stop globale (chiamata da F4 e END)."""
+    """Setta il flag di stop globale (richiesta di interruzione)."""
     flag.requested = True
 
 
 def clear_stop():
-    """Resetta il flag di stop globale."""
+    """Resetta il flag (chiamare all'inizio di una nuova esecuzione)."""
     flag.requested = False
 
 
 def is_stop_requested():
-    """Ritorna se stop requested."""
+    """Ritorna ``True`` se e' stato richiesto stop, ``False`` altrimenti."""
     return flag.requested

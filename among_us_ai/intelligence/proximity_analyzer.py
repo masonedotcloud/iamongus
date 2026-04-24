@@ -1,21 +1,23 @@
 """
 ProximityAnalyzer: analizza la prossimita' fra player e il bot.
 
-Misura "chi mi segue di piu'" calcolando per ogni player il tempo
-cumulato passato entro un certo raggio dal bot. Util utile per:
-- Identificare stalker / killer potenziali
-- Sapere chi e' costantemente vicino in modo sospetto
-- Rilevare "gruppi" (3+ player vicini fra loro)
+Misura "chi mi segue di piu'" calcolando per ogni player il tempo cumulato
+passato entro un certo raggio dal bot. Utile per:
+- identificare stalker / killer potenziali
+- sapere chi e' costantemente vicino in modo sospetto
+- rilevare "gruppi" (3+ player vicini fra loro)
+- bonus "alone-with-safe": se sono 1v1 con un player e NON muoio, ogni
+  secondo passato cosi' abbassa il suo sospetto.
 """
 
 import math
 import time as _time
 
 
-# Configurazione default (override-able)
-PROXIMITY_RADIUS = 5.0   # entro quanto considerare "vicino al bot"
-GROUP_RADIUS = 4.0       # entro quanto considerare "in gruppo"
-TIME_WINDOW_SEC = 120.0  # finestra di tempo per il "follow score"
+# Configurazione default (override-able tramite costruttore)
+PROXIMITY_RADIUS = 5.0   # raggio per dire "vicino al bot" (unita' di gioco)
+GROUP_RADIUS = 4.0       # raggio per dire "in gruppo" fra player
+TIME_WINDOW_SEC = 120.0  # finestra di tempo per il "follow score" cumulato
 
 
 class ProximityAnalyzer:
@@ -43,13 +45,15 @@ class ProximityAnalyzer:
         # update. Memorizziamo l'ultimo tempo per ciascun player.
         self._last_seen_near_t = {}
 
-        # === SOLO CON LUI (tracking 1v1 sicuro) ===
+        # === SOLO CON LUI (alone-with-safe, 1v1 sicuro) ===
         # Se sono SOLO con un player (nessun altro nelle vicinanze) e
-        # NON muoio, ogni secondo passato cosi' abbassa il suo
-        # sospetto: probabilmente non e' l'impostore (avrebbe killato).
+        # NON muoio, ogni secondo passato cosi' abbassa il suo sospetto:
+        # un impostore avrebbe killato in 1v1, quindi probabilmente
+        # questo player e' crewmate.
         # player_name -> secondi cumulati di "1v1 vivo"
         self._alone_with_safe_time = {}
-        # Ultima volta che abbiamo visto "io + lui da soli"
+        # Ultima volta che abbiamo visto "io + lui da soli". Serve per
+        # calcolare il delta-t da accumulare al prossimo update.
         self._alone_with_last_t = {}
 
     # ============================================================
@@ -134,9 +138,12 @@ class ProximityAnalyzer:
                         + delta
                     )
             self._alone_with_last_t[solo.name] = now
-        # NB: niente .clear() qui. Se ora non e' 1v1, il timer del player
-        # smette di aggiornarsi: il prossimo tick 1v1 vedra' un delta
-        # grande e non lo conteggera' (ma il bonus accumulato resta).
+        # Fix v2.2.48: NIENTE .clear() qui (era un bug). Se ora non e' piu'
+        # 1v1, il timer del player smette di aggiornarsi: il prossimo tick
+        # 1v1 vedra' un delta grande e non lo conteggera' come continuita',
+        # ma il bonus accumulato precedentemente resta valido. Il .clear()
+        # azzerava il bonus a ogni "interruzione" del 1v1, vanificando la
+        # logica safe.
 
     # ============================================================
     # API DI QUERY

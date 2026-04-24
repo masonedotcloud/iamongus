@@ -1,39 +1,49 @@
 """
 Applicazione principale: GPS Visualizer Pro.
 
-Orchestra lettura RAM, scanner YOLO, rendering DPG, pathfinding, task,
-zone, POI, popup di editing e input simulato.
+Orchestra: lettura RAM, scanner YOLO, rendering DPG, pathfinding A*,
+gestione task, zone, POI, popup di editing e input simulato.
 
 Per organizzazione, i metodi sono distribuiti in mixin tematici dentro
 ``among_us_ai/ui/mixins/``. Ogni mixin contiene un blocco coerente di
-metodi (es. tutti i ``_render_*`` in ``rendering.py``, tutto il pathfinding
-runtime in ``auto_move.py``, ...). I mixin condividono lo stato self.*
-inizializzato qui in ``__init__``.
+metodi (es. tutti i ``_render_*`` in ``rendering_*.py``, tutto il
+pathfinding runtime in ``auto_move.py``, ecc.). I mixin condividono lo
+stato ``self.*`` inizializzato qui in :meth:`__init__`.
 
 Per orientarsi rapidamente:
 
-============================  ===============================================
-Mixin                         Cosa contiene
-============================  ===============================================
-MemorySyncMixin               Thread RAM (posizione + task)
-MapLoaderMixin                Caricamento mappa + bounds
-UISetupMixin                  Costruzione interfaccia DPG
-YoloScannerMixin              Scanner YOLO altri giocatori / porte
-InputCallbacksMixin           Callback mouse/zoom/camera
-AutoMoveMixin                 Pathfinding A* + esecuzione cammino
-AutoQuestMixin                Modalita' Auto-Quest (scelta task)
-ZonesMixin                    UI zone nominate + zone porta
-TasksListMixin                Liste task (mem/registrate) + selezione
-TasksLifecycleMixin           Lancio task, subprocess, controllo, stop
-TasksPopupsMixin              Popup di registrazione/modifica/link task
-DialogsMixin                  Dialoghi modali generici
-PoiMixin                      Punti di interesse (UI)
-RenderingMixin                Tutti i ``_render_*`` chiamati nel frame
-MiscMixin                     Trail, esportazione, ricarica mappa
-============================  ===============================================
+==============================  ============================================
+Mixin                            Cosa contiene
+==============================  ============================================
+MemorySyncMixin                  Thread RAM (posizione + task)
+MapLoaderMixin                   Caricamento mappa + bounds
+UISetupMixin                     Costruzione interfaccia DPG
+YoloScannerMixin                 Scanner YOLO altri giocatori / porte
+InputCallbacksMixin              Callback mouse/zoom/camera
+AutoMoveMixin                    Pathfinding A* + esecuzione cammino
+AutoQuestMixin                   Auto-Quest: scelta task automatica
+ZonesMixin                       UI zone nominate + zone porta
+TasksListMixin                   Liste task (mem/registrate) + selezione
+TasksLaunchMixin                 Lancio task, popup arrivo, animazione
+TasksProcessMixin                Subprocess, monitoraggio, retry, cooldown
+TasksPopupsRegisterMixin         Popup di registrazione/link task
+TasksPopupsEditMixin             Popup di modifica task
+TasksPopupsSubitemMixin          Popup di fasi/alternativi/zone
+DialogsMixin                     Dialoghi modali generici (testo, conferma)
+PoiMixin                         Punti di interesse (UI)
+RenderingWorldMixin              Rendering mappa/zone/path/POI
+RenderingEntitiesMixin           Rendering player/altri player/HUD
+MiscMixin                        Trail, esportazione, ricarica mappa
+UseButtonCalibMixin              Calibrazione pulsante Use del gioco
+PlannerMixin                     UI pesi pianificatore Auto-All
+IntelligenceSidebarMixin         Sidebar F2 analisi player
+AntiAfkMixin                     Toggle F3 anti-AFK
+GameStateMonitorMixin            Monitor stato gioco RAM (in_game/voting/dead)
+==============================  ============================================
 
-Solo ``__init__``, ``aggiorna_frame`` e ``run`` restano in questo file
-perche' sono il "cuore" che lega insieme i mixin e definisce lo stato.
+Solo :meth:`__init__`, :meth:`aggiorna_frame` e :meth:`run` restano in
+questo file perche' sono il "cuore" che lega insieme i mixin e definisce
+lo stato condiviso.
 """
 
 import atexit
@@ -122,9 +132,21 @@ class GPSVisualizerPro(
     AntiAfkMixin,
     GameStateMonitorMixin,
 ):
-    """Classe principale dell'applicazione: orchestra rendering, pathfinding, lettura RAM, scanner YOLO, esecuzione task."""
+    """
+    Classe principale dell'applicazione.
+
+    Composta per mixin (vedi docstring di modulo per la mappa completa).
+    Orchestra rendering DPG, pathfinding A*, lettura RAM, scanner YOLO,
+    esecuzione delle task e la sidebar Intelligence.
+    """
+
     def __init__(self):
-        """Inizializza l'istanza con i valori di default."""
+        """
+        Costruttore: inizializza TUTTO lo stato condiviso fra i mixin
+        (manager, reader RAM, pathfinder, flag di rendering, stato task,
+        moduli intelligence, ...) e avvia i thread di background
+        (lettura RAM + scanner YOLO).
+        """
         self.reader      = AmongUsMemoryReader()
         self.task_reader = AmongUsTaskReader(GPSConfig.TASKS_DEF_FILE)
         self.visitati_coords = []
@@ -173,7 +195,6 @@ class GPSVisualizerPro(
         self.auto_path_index = 0
         self.auto_stuck_pos = None
         self.auto_stuck_timer = 0.0
-        # Messaggio di stato mostrato all'utente nel pannello
         self.auto_status_msg = ""
         self._on_arrival_callback = None   # callable() chiamato una volta all'arrivo
         
@@ -335,15 +356,11 @@ class GPSVisualizerPro(
                 self._ferma_processo_task()
                 self._task_launch_arrivo = False
                 try:
-                    # Rilascia il tasto sinistro del mouse
                     pyautogui.mouseUp(button='left')
                 except Exception:
                     pass
-                # Verifica se l'elemento DPG e' gia' stato creato
                 if dpg.does_item_exist("task_launch_popup"):
-                    # Rimuove l'elemento DPG (cleanup)
                     dpg.delete_item("task_launch_popup")
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "[X] Esecuzione annullata (Stop)"
             self._prev_stop_key = (f4_pressed or end_pressed)
 
@@ -375,7 +392,6 @@ class GPSVisualizerPro(
                         target_2p, step_2p = self._imposta_navigazione_2p(task_reg)
                         if target_2p:
                             self._plan_path(target_2p)
-                            # Messaggio di stato mostrato all'utente nel pannello
                             self.auto_status_msg = f"Navigo verso '{task_reg['nome']}' (Tappa {step_2p})"
 
         # Editor azioni (se aperto): aggiorna preview + gestisci Ctrl+Click
@@ -389,12 +405,10 @@ class GPSVisualizerPro(
                 nome_att = task_att['nome'] if task_att else "?"
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("processo_status", color=(0, 220, 120, 255))
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("processo_status", f"> {nome_att}")
             else:
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("processo_status", color=(120, 120, 120, 200))
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("processo_status", "nessun processo")
 
         # Aggiorna listbox task memoria con timer fisso (ogni 0.3s)

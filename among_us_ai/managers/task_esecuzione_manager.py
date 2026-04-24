@@ -52,11 +52,15 @@ class TaskEsecuzioneManager:
     """CRUD + persistenza dei dati di esecuzione, un file JSON per task."""
 
     def __init__(self, dir_path):
-        """Inizializza l'istanza con i valori di default."""
+        """
+        :param dir_path: directory in cui scrivere/leggere i ``task_<id>.json``.
+                         Viene creata se non esiste (con i suoi parent).
+        """
         self.dir_path = dir_path
-        # Cache in-memory: {id_task: dict_esecuzione}. Caricata lazy.
+        # Cache in-memory: {id_task: dict_esecuzione}. Riempita all'avvio
+        # da `_carica_tutto()`; tutti i metodi lavorano sulla cache e
+        # sincronizzano su disco quando necessario.
         self._cache = {}
-        # Crea la directory (e i parent) se non esiste
         os.makedirs(self.dir_path, exist_ok=True)
         self._carica_tutto()
 
@@ -65,21 +69,21 @@ class TaskEsecuzioneManager:
     # ------------------------------------------------------------------
 
     def _path_for(self, id_task):
-        """Ritorna il path del file .json di esecuzione per la task data."""
+        """Path del file ``task_<id>.json`` per la task indicata (id zero-padded a 3 cifre)."""
         return os.path.join(self.dir_path, f"task_{int(id_task):03d}.json")
 
     def _carica_tutto(self):
-        """All'avvio carica tutti i file in cache (sono pochi/piccoli)."""
+        """All'avvio carica tutti i file .json della directory in cache."""
         if not os.path.isdir(self.dir_path):
             return
         n = 0
         for fn in os.listdir(self.dir_path):
+            # Filtro per pattern: ignora file estranei nella stessa cartella.
             if not fn.startswith('task_') or not fn.endswith('.json'):
                 continue
             try:
                 with open(os.path.join(self.dir_path, fn),
                           'r', encoding='utf-8') as f:
-                    # Carica e deserializza JSON da file
                     data = json.load(f)
                 tid = int(data.get('id', 0))
                 if tid > 0:
@@ -90,19 +94,18 @@ class TaskEsecuzioneManager:
         print(f"Esecuzione task caricata: {n} file")
 
     def _salva(self, id_task):
-        """Salva su file."""
+        """Serializza la entry in cache su disco (overwrite del file della task)."""
         data = self._cache.get(id_task)
         if data is None:
             return
         try:
             with open(self._path_for(id_task), 'w', encoding='utf-8') as f:
-                # Serializza su file in formato JSON
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"Errore salvataggio esecuzione task {id_task}: {e}")
 
     def _ensure(self, id_task):
-        """Crea la entry vuota in cache se non esiste."""
+        """Crea la entry default in cache se la task non esiste ancora."""
         if id_task not in self._cache:
             self._cache[id_task] = {
                 'id':            int(id_task),
@@ -124,18 +127,17 @@ class TaskEsecuzioneManager:
         self._salva(id_task)
 
     def rimuovi(self, id_task):
-        """Cancella i dati di esecuzione e il file su disco."""
+        """Cancella i dati di esecuzione dalla cache e il file su disco."""
         self._cache.pop(id_task, None)
         try:
             p = self._path_for(id_task)
             if os.path.exists(p):
-                # Cancella il file dal disco
                 os.remove(p)
         except Exception as e:
             print(f"Errore rimozione esecuzione task {id_task}: {e}")
 
     def get(self, id_task):
-        """Ritorna il dict completo di esecuzione, o None se assente."""
+        """Ritorna il dict completo di esecuzione, oppure ``None`` se assente."""
         return self._cache.get(id_task)
 
     # ------------------------------------------------------------------
@@ -193,23 +195,27 @@ class TaskEsecuzioneManager:
         self._salva(id_task)
 
     def get_stato(self, id_task):
-        """Ritorna stato."""
+        """Ritorna lo stato di esecuzione (``'idle'`` se task assente)."""
         e = self._cache.get(id_task)
         if e is None:
             return 'idle'
         return e.get('esecuzione', {}).get('stato', 'idle')
 
     # ------------------------------------------------------------------
-    # Codice custom
+    # Codice custom (file .py editato a mano dall'utente)
     # ------------------------------------------------------------------
 
     def set_codice_personalizzato(self, id_task, valore):
-        """Imposta il flag di codice personalizzato per una task."""
+        """
+        Imposta il flag "codice_personalizzato" per la task.
+        Quando True, il bot NON sovrascrive automaticamente il file .py
+        (rigenerazione, invalidazione, ecc. sono no-op).
+        """
         e = self._ensure(id_task)
         e['codice_personalizzato'] = bool(valore)
         self._salva(id_task)
 
     def is_codice_personalizzato(self, id_task):
-        """Ritorna se codice personalizzato."""
+        """``True`` se il file .py della task e' marcato come custom-editato."""
         e = self._cache.get(id_task)
         return bool(e and e.get('codice_personalizzato', False))

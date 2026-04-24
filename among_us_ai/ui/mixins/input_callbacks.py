@@ -70,7 +70,6 @@ class InputCallbacksMixin:
             return
 
         if not self.auto_enabled:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Auto-move disattivato (premi M)"
             return
 
@@ -117,7 +116,6 @@ class InputCallbacksMixin:
         if self.zone_draw_type == "door":
             if not getattr(self, 'door_rect_start', None) or not getattr(self, 'door_rect_end', None):
                 self.zone_draw_mode = False
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Disegno porta annullato"
                 return
                 
@@ -161,7 +159,6 @@ class InputCallbacksMixin:
         if len(punti_puliti) < 3:
             self.zone_draw_mode = False
             self.zona_in_modifica = None
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Area non mappata o troppo piccola"
             return
 
@@ -171,11 +168,9 @@ class InputCallbacksMixin:
             self.zone_draw_mode = False
             if self.zone_draw_type == "door":
                 self.door_zone_mgr.aggiorna_forma(id_mod, punti_puliti)
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Forma zona porta aggiornata"
             else:
                 self.zone_mgr.aggiorna_forma(id_mod, punti_puliti)
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Forma adattata ai muri"
             self.zone_draw_type = "normal"
             return
@@ -188,31 +183,27 @@ class InputCallbacksMixin:
                 if nome:
                     self.door_zone_mgr.aggiungi(nome, punti_puliti, colore="#FF3333")
                     self._refresh_door_zone_list()
-                    # Messaggio di stato mostrato all'utente nel pannello
                     self.auto_status_msg = f"Zona Porta '{nome}' creata"
                 else:
-                    # Messaggio di stato mostrato all'utente nel pannello
                     self.auto_status_msg = "Annullato"
             self._show_text_input("Nuova Zona Porta", "", on_name_door)
             return
 
         def on_name(nome):
-            """Callback di input del nome."""
+            """Callback dell'input testo: aggiorna l'attributo `self.nome_lobby`."""
             self.zone_draw_mode = False
             if nome:
                 # Crea la zona con i punti gia' "puliti"
                 self.zone_mgr.aggiungi(nome, punti_puliti)
                 self._refresh_zone_list()
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"Zona '{nome}' creata e adattata"
             else:
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = "Annullato"
 
         self._show_text_input("Nuova Zona", "", on_name)
 
     def _mouse_to_game(self):
-        """Operazioni mouse: to game."""
+        """Converte (mx, my) dal sistema di riferimento drawlist al sistema di gioco."""
         mx, my = dpg.get_drawing_mouse_pos()
         cam_x, cam_y = self._camera_center()
         half_w = self.canvas_w / 2
@@ -251,16 +242,14 @@ class InputCallbacksMixin:
                          min(GPSConfig.MAX_SCALE, app_data))
 
     def _zoom(self, factor):
-        """Applica uno zoom di."""
+        """Applica uno zoom di `factor` mantenendo il cursore come centro dello zoom."""
         self.scale = max(GPSConfig.MIN_SCALE,
                          min(GPSConfig.MAX_SCALE, self.scale * factor))
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist("zoom_slider"):
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("zoom_slider", self.scale)
 
     def _toggle(self, attr):
-        """Inverte lo stato di."""
+        """Inverte lo stato di un attributo boolean di self (es. mostra/nascondi layer)."""
         setattr(self, attr, not getattr(self, attr))
 
     # Callback per l'evento
@@ -271,7 +260,7 @@ class InputCallbacksMixin:
         dpg.configure_item("map_node", show=self.show_visited)
 
     def _set_camera(self, mode):
-        """Imposta camera."""
+        """Imposta la camera sul giocatore (modalita' follow) o libera (drag camera)."""
         self.camera_mode = mode
         if mode == "overview":
             self._fit_to_map()
@@ -279,7 +268,7 @@ class InputCallbacksMixin:
             self.free_cam = list(self.pos_visuale)
 
     def _fit_to_map(self):
-        """Adatta al map."""
+        """Calcola scala e offset per inquadrare tutta la mappa nel viewport."""
         if not self.map_bounds: return
         min_x, min_y, max_x, max_y = self.map_bounds
         w_u = max_x - min_x; h_u = max_y - min_y
@@ -288,18 +277,14 @@ class InputCallbacksMixin:
         scale_y = self.canvas_h / h_u
         self.scale = max(GPSConfig.MIN_SCALE,
                          min(GPSConfig.MAX_SCALE, min(scale_x, scale_y) * 0.95))
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist("zoom_slider"):
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("zoom_slider", self.scale)
         self.free_cam = [(min_x + max_x) / 2, (min_y + max_y) / 2]
 
     def _reset_view(self):
-        """Resetta view."""
+        """Resetta zoom e offset ai valori di default (centra il giocatore)."""
         self.scale = GPSConfig.DEFAULT_SCALE
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist("zoom_slider"):
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("zoom_slider", self.scale)
         if self.camera_mode == "free":
             self.free_cam = list(self.pos_visuale)

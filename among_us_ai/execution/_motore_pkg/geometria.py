@@ -15,17 +15,18 @@ except Exception:
     _win32gui = None
 
 def _client_rect(hwnd):
-    # Restituisce (origin_x, origin_y, width, height) del CLIENT AREA del
-    # gioco, in pixel schermo. Esclude bordi e barra del titolo della
-    # finestra del SO. Restituisce None se la finestra non esiste.
+    """
+    Restituisce ``(origin_x, origin_y, width, height)`` del CLIENT AREA della
+    finestra del gioco, in pixel schermo. Esclude bordi e barra del titolo.
+    Ritorna ``None`` se la finestra non esiste o l'API Win32 non e' disponibile.
+    """
     try:
-        # Rect totale della finestra (incluso bordo + titolo)
+        # Rect totale (incluso bordo + titolo) e rect del client (area utile).
         rect  = _win32gui.GetWindowRect(hwnd)
-        # Rect del client (solo area utile interna)
         crect = _win32gui.GetClientRect(hwnd)
-        # bw = larghezza bordo verticale (sinistro/destro identici)
+        # bw = larghezza bordo verticale (assumiamo sinistro = destro).
         bw = int((rect[2] - rect[0] - crect[2]) / 2)
-        # th = altezza barra titolo + bordo superiore
+        # th = altezza barra titolo + bordo superiore.
         th = int(rect[3] - rect[1] - crect[3] - bw)
         return rect[0] + bw, rect[1] + th, crect[2], crect[3]
     except Exception:
@@ -33,18 +34,24 @@ def _client_rect(hwnd):
 
 
 def _point_in_polygon(px, py, poly):
-    # Test point-in-polygon classico con algoritmo "ray casting".
-    # Ritorna True se il punto (px, py) e' DENTRO il poligono.
-    # Funziona con poligoni concavi e auto-intersecanti.
+    """
+    Test point-in-polygon con algoritmo ray casting (Jordan curve theorem).
+
+    :param px, py: coordinate del punto da testare
+    :param poly:   lista di tuple ``[(x, y), ...]``
+    :return: ``True`` se dentro. Funziona anche su poligoni concavi e
+             auto-intersecanti.
+    """
     n = len(poly)
     if n < 3:
-        # Meno di 3 vertici = degenere, considerato fuori
+        # Meno di 3 vertici = degenere, considerato fuori.
         return False
     inside = False
     j = n - 1  # indice del vertice precedente (chiusura del poligono)
     for i in range(n):
         xi, yi = poly[i]; xj, yj = poly[j]
-        # Conta intersezioni del raggio orizzontale (verso destra) col lato i-j
+        # Conta intersezioni del raggio orizzontale verso destra col lato i-j.
+        # +1e-12 a denominatore per evitare divisione per zero su lati orizzontali.
         if ((yi > py) != (yj > py)) and \
            (px < (xj - xi) * (py - yi) / (yj - yi + 1e-12) + xi):
             inside = not inside
@@ -53,8 +60,10 @@ def _point_in_polygon(px, py, poly):
 
 
 def _random_in_rect(rect):
-    # Punto random uniforme dentro un rettangolo [(x1,y1)-(x2,y2)].
-    # Usa min/max per gestire rect con coordinate "invertite".
+    """
+    Punto random uniforme dentro un rettangolo ``(x1, y1, x2, y2)``.
+    Usa min/max per gestire rect con coordinate "invertite".
+    """
     x1, y1, x2, y2 = rect
     xa, xb = min(x1, x2), max(x1, x2)
     ya, yb = min(y1, y2), max(y1, y2)
@@ -62,22 +71,23 @@ def _random_in_rect(rect):
 
 
 def _random_in_poly(poly):
-    # Punto random uniforme dentro un poligono.
-    # Strategia: rejection sampling sul bbox per max 40 tentativi,
-    # fallback al centroide.
+    """
+    Punto random uniforme dentro un poligono.
+
+    Strategia: rejection sampling sulla bounding box per max 40 tentativi,
+    poi fallback al centroide (media aritmetica dei vertici).
+    """
     if not poly:
         return 0.5, 0.5
-    # Bounding box del poligono
     xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
     x1, x2 = min(xs), max(xs); y1, y2 = min(ys), max(ys)
-    # Tenta 40 volte di trovare un punto dentro
     for _ in range(40):
         rx = _random.uniform(x1, x2); ry = _random.uniform(y1, y2)
         if _point_in_polygon(rx, ry, poly):
             return rx, ry
-    # Fallback: centroide (media aritmetica dei vertici).
-    # Non e' il vero centroide geometrico ma e' sempre dentro un poligono
-    # convesso e quasi sempre dentro uno concavo.
+    # Fallback: centroide (media aritmetica dei vertici). Non e' il vero
+    # centroide geometrico ma e' sempre dentro un poligono convesso e
+    # quasi sempre dentro uno concavo.
     return sum(xs)/len(xs), sum(ys)/len(ys)
 
 

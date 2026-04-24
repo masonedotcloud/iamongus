@@ -14,19 +14,16 @@ class EditorSequenceMixin:
         tag = "tae_text_input_popup"
         # Se il widget esiste gia', lo rimuovo prima di ricrearlo
         if dpg.does_item_exist(tag):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(tag)
 
         def do_ok(*_):
-            """Callback del pulsante OK."""
-            # Verifica se l'elemento DPG e' gia' stato creato
+            """Callback dei popup interni: conferma input e chiude il popup."""
             if not dpg.does_item_exist(f"{tag}_input"):
                 callback(None)
                 return
             value = dpg.get_value(f"{tag}_input")
             # Se il widget esiste gia', lo rimuovo prima di ricrearlo
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
             if value and value.strip():
                 callback(value.strip())
@@ -35,9 +32,7 @@ class EditorSequenceMixin:
 
         def do_cancel(*_):
             """Callback del pulsante Annulla."""
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(tag):
-                # Rimuove l'elemento DPG (cleanup)
                 dpg.delete_item(tag)
             callback(None)
 
@@ -57,7 +52,7 @@ class EditorSequenceMixin:
             pass
 
     def _chiudi_sequenza(self, *_):
-        """Chiude sequenza."""
+        """Conclude la registrazione corrente: finalizza i buffer in un'azione e la appende a `self.azioni`."""
         durata = dpg.get_value(self.TAG_IN_DUR)
         attesa = dpg.get_value(self.TAG_IN_PAUSE)
 
@@ -259,7 +254,7 @@ class EditorSequenceMixin:
         self._imposta_istruzioni("Annullato.", (150, 150, 150))
 
     def _reset_stato(self):
-        """Resetta stato."""
+        """Resetta lo stato dell'editor a IDLE: svuota i buffer, esce dalla modalita' di registrazione."""
         self.stato = self.IDLE
         self.buffer_punti = []
         self.buffer_zone_a = []
@@ -278,7 +273,7 @@ class EditorSequenceMixin:
         self.rect_end = None
 
     def _descr_azione(self, a):
-        """Descrive azione."""
+        """Ritorna una stringa human-readable che descrive un'azione (usata nella lista del pannello)."""
         t = a.get("tipo")
         if t == "click":
             return f"Click @({a['rx']:.2f},{a['ry']:.2f})"
@@ -326,23 +321,21 @@ class EditorSequenceMixin:
         return str(t)
 
     def _toggle_live(self, *_):
-        """Inverte lo stato di live."""
+        """Toggle del refresh live della preview (utile per minigiochi statici dove non serve aggiornare a ogni frame)."""
         self.is_live = not self.is_live
         dpg.set_item_label(self.TAG_BTN_LIVE,
                            "FERMA Live Preview" if self.is_live else "AVVIA Live Preview")
 
     def _toggle_freeze(self, *_):
-        """Inverte lo stato di freeze."""
+        """Toggle del freeze della preview: congela l'immagine per cliccare con precisione su pixel in movimento."""
         self.frozen = not self.frozen
         # Se il widget esiste gia', lo rimuovo prima di ricrearlo
         if dpg.does_item_exist("tae_label_freeze"):
             if self.frozen:
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("tae_label_freeze", "Preview: FROZEN")
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("tae_label_freeze", color=(100, 200, 255))
             else:
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("tae_label_freeze", "Preview: LIVE")
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item("tae_label_freeze", color=(150, 200, 255))

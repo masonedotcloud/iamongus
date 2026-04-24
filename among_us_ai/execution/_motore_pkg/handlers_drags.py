@@ -10,6 +10,11 @@ from .geometria import _random_in_poly
 from .input_mouse import _drag_umano, _drag_multi, _drag_e_tieni
 
 def _h_drag(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    """
+    Handler ``drag``: drag rettilineo da ``(start_rx, start_ry)`` a
+    ``(end_rx, end_ry)``. La durata effettiva e' ``d * durata`` con ``d``
+    distanza euclidea relativa (cosi' drag piu' lunghi durano piu' tempo).
+    """
     sx = cx + int(az['start_rx'] * cw)
     sy = cy + int(az['start_ry'] * ch)
     ex = cx + int(az['end_rx'] * cw)
@@ -19,20 +24,37 @@ def _h_drag(az, cx, cy, cw, ch, hwnd, durata, attesa):
 
 
 def _h_drag_multi(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    """
+    Handler ``drag_multi``: drag che passa per N punti in sequenza.
+    Durata totale = ``tot * durata`` con ``tot`` lunghezza dell'intero
+    percorso (somma dei segmenti).
+    """
     pts = [(cx + int(p[0] * cw), cy + int(p[1] * ch)) for p in az['punti']]
     rel = az['punti']
-    tot = sum((_math.hypot(rel[i + 1][0] - rel[i][0], rel[i + 1][1] - rel[i][1]) for i in range(len(rel) - 1)))
+    tot = sum((_math.hypot(rel[i + 1][0] - rel[i][0], rel[i + 1][1] - rel[i][1])
+              for i in range(len(rel) - 1)))
     _drag_multi(pts, max(0.1, tot * durata))
 
 
 def _h_drag_zone(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    """
+    Handler ``drag_zone``: drag fra 2 zone (poligoni). Sceglie un punto
+    random in ``zone_a`` e uno in ``zone_b``: ogni esecuzione e' diversa
+    (anti-detection).
+    """
     sxr, syr = _random_in_poly(az['zone_a'])
     exr, eyr = _random_in_poly(az['zone_b'])
     d = _math.hypot(exr - sxr, eyr - syr)
-    _drag_umano(cx + int(sxr * cw), cy + int(syr * ch), cx + int(exr * cw), cy + int(eyr * ch), max(0.05, d * durata))
+    _drag_umano(cx + int(sxr * cw), cy + int(syr * ch),
+                cx + int(exr * cw), cy + int(eyr * ch),
+                max(0.05, d * durata))
 
 
 def _h_drag_hold(az, cx, cy, cw, ch, hwnd, durata, attesa):
+    """
+    Handler ``drag_hold``: drag rettilineo + hold finale del tasto premuto
+    per ``hold`` secondi (utile per minigiochi tipo "tieni premuto al target").
+    """
     sx = cx + int(az['start_rx'] * cw)
     sy = cy + int(az['start_ry'] * ch)
     ex = cx + int(az['end_rx'] * cw)

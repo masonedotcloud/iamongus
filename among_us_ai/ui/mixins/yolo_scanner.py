@@ -32,14 +32,12 @@ class YoloScannerMixin:
         while self.running:
             # Sospende se non deve scansionare nulla
             if not self.show_other_players and not self.auto_enabled and door_model is None:
-                # Pausa il thread per il tempo specificato (secondi)
                 time.sleep(0.5)
                 continue
                 
             # Cerca la finestra del gioco per nome
             hwnd = win32gui.FindWindow(None, "Among Us")
             if not hwnd:
-                # Pausa il thread per il tempo specificato (secondi)
                 time.sleep(1.0)
                 continue
                 
@@ -51,7 +49,6 @@ class YoloScannerMixin:
             ww, wh = crect[2], crect[3]
             
             if ww <= 0 or wh <= 0:
-                # Pausa il thread per il tempo specificato (secondi)
                 time.sleep(0.5)
                 continue
                 
@@ -61,7 +58,6 @@ class YoloScannerMixin:
                 try:
                     img = np.array(sct.grab(monitor))[:, :, :3]
                 except Exception:
-                    # Pausa il thread per il tempo specificato (secondi)
                     time.sleep(0.5)
                     continue
                     
@@ -120,7 +116,6 @@ class YoloScannerMixin:
                                     try:
                                         # Se il widget esiste gia', lo rimuovo prima di ricrearlo
                                         if dpg.does_item_exist("yolo_cam_slider"):
-                                            # Aggiorna il valore di un widget DPG
                                             dpg.set_value("yolo_cam_slider", self.yolo_camera_height)
                                     except Exception:
                                         pass
@@ -380,6 +375,4 @@ class YoloScannerMixin:
                         self.detected_doors.append(nd)
                 
                 self.detected_doors = [d for d in getattr(self, 'detected_doors', []) if current_time - d['time'] < 1.0]
-            
-            # Pausa il thread per il tempo specificato (secondi)
             time.sleep(0.15)  # Circa ~6 FPS per lo scanning radar, per non appesantire la CPU

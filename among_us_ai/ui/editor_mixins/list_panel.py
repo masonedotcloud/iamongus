@@ -24,10 +24,8 @@ class EditorListPanelMixin:
         (= il chunk di azioni che termina con questo cooldown) finche'
         la RAM non segnala l'avanzamento di step o la task come done.
         """
-        # Verifica se l'elemento DPG e' gia' stato creato
         if not dpg.does_item_exist(self.TAG_LIST):
             return
-        # Rimuove l'elemento DPG (cleanup)
         dpg.delete_item(self.TAG_LIST, children_only=True)
         for i, a in enumerate(self.azioni):
             sel = (i == self.sel_idx)
@@ -56,7 +54,9 @@ class EditorListPanelMixin:
                 # 3) ricreo la lista per aggiornare il colore della
                 #    label "[Ripeti]"
                 def make_toggle_ripeti(idx):
+                    """Factory: ritorna una closure callback per la checkbox "Ripeti" della i-esima azione."""
                     def cb(s, app_data, u):
+                        # Closure cattura `idx`: ad ogni toggle salva il valore sull'azione e persiste.
                         self.azioni[idx]['ripeti'] = bool(app_data)
                         # Salvataggio automatico (idempotente, e' solo un
                         # update del JSON della task)
@@ -106,6 +106,7 @@ class EditorListPanelMixin:
                     max_tag = f"editor_max_tent_{i}"
 
                     def make_set_max(idx):
+                        """Factory: ritorna una closure callback per il campo "Max tentativi" della i-esima azione."""
                         def cb(s, app_data, u):
                             try:
                                 self.azioni[idx]['max_tentativi'] = max(1, int(app_data))
@@ -130,7 +131,7 @@ class EditorListPanelMixin:
                     )
 
     def _sposta_su(self, sender, app_data, user_data):
-        """Sposta su."""
+        """Sposta l'azione `user_data` di una posizione in alto (no-op se gia' prima)."""
         i = user_data
         if i > 0:
             self.azioni[i], self.azioni[i-1] = self.azioni[i-1], self.azioni[i]
@@ -142,7 +143,7 @@ class EditorListPanelMixin:
             self._aggiorna_pannello_selezione()
 
     def _sposta_giu(self, sender, app_data, user_data):
-        """Sposta giu."""
+        """Sposta l'azione `user_data` di una posizione in basso (no-op se gia' ultima)."""
         i = user_data
         if i < len(self.azioni) - 1:
             self.azioni[i], self.azioni[i+1] = self.azioni[i+1], self.azioni[i]
@@ -154,7 +155,7 @@ class EditorListPanelMixin:
             self._aggiorna_pannello_selezione()
 
     def _elimina_azione(self, sender, app_data, user_data):
-        """Elimina azione."""
+        """Rimuove l'azione all'indice `user_data` e aggiorna ``sel_idx`` se necessario."""
         i = user_data
         if 0 <= i < len(self.azioni):
             self.azioni.pop(i)
@@ -166,12 +167,10 @@ class EditorListPanelMixin:
             self._aggiorna_pannello_selezione()
 
     def _aggiorna_pannello_selezione(self):
-        """Aggiorna pannello selezione."""
-        # Verifica se l'elemento DPG e' gia' stato creato
+        """Aggiorna l'etichetta "azione selezionata" + i campi durata/attesa/hold nel pannello laterale."""
         if not dpg.does_item_exist("tae_sel_info"):
             return
         if self.sel_idx < 0 or self.sel_idx >= len(self.azioni):
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("tae_sel_info", "- nessuna azione selezionata -")
             # Cambia le configurazioni di un widget gia' creato
             dpg.configure_item("tae_sel_info", color=(150, 150, 150))
@@ -181,7 +180,6 @@ class EditorListPanelMixin:
                 dpg.configure_item(self.TAG_EDIT_GROUP, show=False)
         else:
             a = self.azioni[self.sel_idx]
-            # Aggiorna il valore di un widget DPG
             dpg.set_value("tae_sel_info",
                           f"#{self.sel_idx + 1}: {self._descr_azione(a)}")
             # Cambia le configurazioni di un widget gia' creato
@@ -189,17 +187,11 @@ class EditorListPanelMixin:
             # Pre-compila i campi tempi con i valori correnti dell'azione
             # selezionata, cosi' l'utente vede subito cosa sta modificando.
             if dpg.does_item_exist(self.TAG_EDIT_DUR):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value(self.TAG_EDIT_DUR, float(a.get("durata", 0.0)))
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(self.TAG_EDIT_PAUSE):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value(self.TAG_EDIT_PAUSE, float(a.get("attesa", 0.0)))
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(self.TAG_EDIT_HOLD):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value(self.TAG_EDIT_HOLD, float(a.get("hold", 0.0)))
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist(self.TAG_EDIT_GROUP):
                 # Cambia le configurazioni di un widget gia' creato
                 dpg.configure_item(self.TAG_EDIT_GROUP, show=True)
@@ -218,7 +210,6 @@ class EditorListPanelMixin:
         self.azioni[self.sel_idx]["durata"] = dur_nuova
         self.azioni[self.sel_idx]["attesa"] = pausa_nuova
         _az = self.azioni[self.sel_idx]
-        # Verifica se l'elemento DPG e' gia' stato creato
         if _az.get("tipo") == "drag_hold" and dpg.does_item_exist(self.TAG_EDIT_HOLD):
             _az["hold"] = max(0.0, float(dpg.get_value(self.TAG_EDIT_HOLD)))
         _h = (f", H={_az['hold']:.2f}s" if _az.get("tipo") == "drag_hold" else "")
@@ -229,7 +220,7 @@ class EditorListPanelMixin:
         self.aggiorna_lista()
 
     def _elimina_selezione(self, *_):
-        """Elimina selezione."""
+        """Bottone "Elimina selezione": rimuove l'azione corrente (`sel_idx`) e resetta la selezione."""
         if self.sel_idx < 0 or self.sel_idx >= len(self.azioni):
             self._imposta_istruzioni("Nessuna azione selezionata.", (255, 150, 100))
             return
@@ -242,20 +233,20 @@ class EditorListPanelMixin:
         self.aggiorna_preview()
 
     def _modifica_selezione(self, *_):
-        """Modifica selezione."""
+        """
+        Bottone "Modifica selezione": rilancia la registrazione dell'azione
+        corrente (la rimuove dalla lista e mette l'editor in modalita'
+        wait sul tipo opportuno, in modo che la prossima interazione
+        ridisegni l'azione).
+        """
         if self.sel_idx < 0 or self.sel_idx >= len(self.azioni):
             self._imposta_istruzioni("Nessuna azione selezionata.", (255, 150, 100))
             return
         a = self.azioni.pop(self.sel_idx)
         self.sel_idx = -1
-        
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(self.TAG_IN_DUR):
-            # Aggiorna il valore di un widget DPG
             dpg.set_value(self.TAG_IN_DUR, a.get("durata", 0.2))
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(self.TAG_IN_PAUSE):
-            # Aggiorna il valore di un widget DPG
             dpg.set_value(self.TAG_IN_PAUSE, a.get("attesa", 0.5))
             
         tipo = a.get("tipo")

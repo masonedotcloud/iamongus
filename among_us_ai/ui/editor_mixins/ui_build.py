@@ -11,12 +11,8 @@ class EditorUIMixin:
     """Mixin con i metodi di editor u i di GPSVisualizerPro."""
     def _build_ui(self, task):
         """Costruisce l'interfaccia DPG dell'editor."""
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(self.TAG_WIN):
-            # Rimuove l'elemento DPG (cleanup)
             dpg.delete_item(self.TAG_WIN)
-
-        # Verifica se l'elemento DPG e' gia' stato creato
         if not dpg.does_item_exist(self.TAG_TEX_REG):
             with dpg.texture_registry(show=False, tag=self.TAG_TEX_REG):
                 pass
@@ -174,14 +170,14 @@ class EditorUIMixin:
                         dpg.add_button(label="+ CLICK ALL YOLO",
                                        callback=self._avvia_yolo_click_all,
                                        width=125, height=35)
-                        dpg.add_text("Clicca TUTTI gli oggetti\nrilevati finche' non finiscono.",
+                        dpg.add_text("Clicca TUTTI gli oggetti\nrilevati finché non finiscono.",
                                      color=(180, 180, 180))
 
                     with dpg.group(horizontal=True):
                         dpg.add_button(label="+ DRAG ALL YOLO",
                                        callback=self._avvia_yolo_drag_all,
                                        width=125, height=35)
-                        dpg.add_text("Trascina TUTTI gli oggetti\nrilevati finche' non finiscono.",
+                        dpg.add_text("Trascina TUTTI gli oggetti\nrilevati finché non finiscono.",
                                      color=(180, 180, 180))
 
                     with dpg.group(horizontal=True):
@@ -195,7 +191,7 @@ class EditorUIMixin:
                         dpg.add_button(label="+ CLICK UNTIL",
                                        callback=self._avvia_click_until,
                                        width=125, height=35)
-                        dpg.add_text("Clicca un bottone finche' il\ncheck non e' bianco.",
+                        dpg.add_text("Clicca un bottone finché il\ncheck non è bianco.",
                                      color=(180, 180, 180))
                     with dpg.group(horizontal=True):
                         dpg.add_button(label="+ SIMON SAYS",
@@ -217,10 +213,10 @@ class EditorUIMixin:
                         dpg.add_text("Legge numeri (EasyOCR)\ne preme tastierino 0-9.", color=(180, 180, 180))
 
                     with dpg.group(horizontal=True):
-                        dpg.add_button(label="CHIUDI PUNTI (Invio)",
+                        dpg.add_button(label="CHIUDI PUNTI [INVIO]",
                                        callback=self._chiudi_sequenza,
                                        width=190, height=28)
-                        dpg.add_button(label="ANNULLA (Esc)",
+                        dpg.add_button(label="ANNULLA [ESC]",
                                        callback=self._annulla,
                                        width=190, height=28)
 
@@ -268,7 +264,7 @@ class EditorUIMixin:
                         dpg.add_button(label="Ridisegna geometria",
                                        callback=self._modifica_selezione,
                                        width=190, height=28)
-                        dpg.add_button(label="Elimina (Canc)",
+                        dpg.add_button(label="Elimina [CANC]",
                                        callback=self._elimina_selezione,
                                        width=190, height=28)
 
@@ -302,14 +298,10 @@ class EditorUIMixin:
                     with dpg.drawlist(width=self.preview_w, height=self.preview_h,
                                       tag=self.TAG_CANVAS):
                         pass
-
-        # Verifica se l'elemento DPG e' gia' stato creato
         if not dpg.does_item_exist("tae_canvas_handler"):
             with dpg.item_handler_registry(tag="tae_canvas_handler"):
                 dpg.add_item_clicked_handler(button=0, callback=self._canvas_mouse_down)
         dpg.bind_item_handler_registry(self.TAG_CANVAS, "tae_canvas_handler")
-
-        # Verifica se l'elemento DPG e' gia' stato creato
         if not dpg.does_item_exist("tae_key_handler"):
             with dpg.handler_registry(tag="tae_key_handler"):
                 dpg.add_key_press_handler(key=dpg.mvKey_Delete, callback=self._on_key_delete)
@@ -322,8 +314,7 @@ class EditorUIMixin:
         dpg.bind_item_handler_registry(self.TAG_WIN, "tae_win_resize_handler")
 
     def _ricalcola_dimensioni_preview(self):
-        """Ricalcola dimensioni preview."""
-        # Verifica se l'elemento DPG e' gia' stato creato
+        """Calcola le dimensioni della drawlist di preview mantenendo l'aspect ratio del client di Among Us."""
         if not dpg.does_item_exist(self.TAG_PREVIEW_CONT) or self.texture_width <= 0:
             return False
             

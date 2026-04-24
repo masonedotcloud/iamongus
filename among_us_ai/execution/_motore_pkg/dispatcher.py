@@ -57,28 +57,33 @@ _DISPATCH_MAP = {
 }
 
 def esegui_azioni(azioni, hwnd, current_step=0, is_test=False, start_from_action=0):
-    # =========================================================================
-    # DISPATCHER PRINCIPALE
-    # =========================================================================
-    # Esegue una lista di azioni nel gioco. Macro-passi:
-    #   1) Suddivide le azioni in CHUNK separati dai cooldown
-    #   2) Sceglie il chunk da eseguire (current_step), tutto se test
-    #   3) Salta le prime `start_from_action` azioni del chunk (per
-    #      la modalita' "ripeti azione": il bot rilancia il subprocess
-    #      saltando le azioni che hanno gia' avuto successo)
-    #   4) Per ogni azione rimanente:
-    #      - aspetta che il gioco sia in primo piano
-    #      - legge il rect del client
-    #      - delega all'handler in _DISPATCH_MAP[tipo]
-    # Parametri:
-    #   azioni             list[dict]
-    #   hwnd               handle finestra del gioco
-    #   current_step       int (chunk_id da eseguire)
-    #   is_test            True se chiamato dall'editor
-    #   start_from_action  int (default 0) - salta le prime N azioni del chunk.
-    #                      Usato dal bot per ripetere SOLO le azioni con
-    #                      [Ripeti]=True senza rifare quelle precedenti.
-    # =========================================================================
+    """
+    Dispatcher principale: esegue una lista di azioni nel gioco.
+
+    Macro-passi:
+      1. Suddivide le azioni in CHUNK separati dai ``cooldown``
+      2. Sceglie il chunk da eseguire (``current_step``), tutto se ``is_test``
+      3. Salta le prime ``start_from_action`` azioni del chunk (modalita'
+         "ripeti azione": il bot rilancia il subprocess saltando le azioni
+         che hanno gia' avuto successo)
+      4. Per ogni azione rimanente:
+         - aspetta che il gioco sia in primo piano
+         - legge il rect del client
+         - delega all'handler in :data:`_DISPATCH_MAP` ``[tipo]``
+         - controlla ``stop_flag`` fra un'azione e l'altra per supportare
+           l'interruzione veloce dalla RAM (vedi `MemorySyncMixin`)
+
+    :param azioni:            ``list[dict]`` lista di azioni
+    :param hwnd:              handle finestra del gioco
+    :param current_step:      ``int`` chunk_id da eseguire (in modalita' non-test)
+    :param is_test:           ``True`` se chiamato dall'editor (esegue tutto)
+    :param start_from_action: ``int`` (default 0); salta le prime N azioni
+                              del chunk. Usato dal bot per ripetere SOLO le
+                              azioni con ``[Ripeti]=True`` senza rifare quelle
+                              precedenti.
+    :return: ``True`` se l'esecuzione e' arrivata a fine chunk, ``False`` su
+             errore.
+    """
     if not _OK:
         return False
 

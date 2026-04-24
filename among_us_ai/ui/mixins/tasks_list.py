@@ -17,8 +17,6 @@ class TasksListMixin:
         Formato: [STATO] [ID:ROOM_ID] LUOGO: NOME TASK [PROG] (COORD)
         """
         enriched = self.task_mgr.get_memory_tasks_info(self.memory_tasks)
-        
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist("sort_mem_tasks_chk") and dpg.get_value("sort_mem_tasks_chk"):
             enriched.sort(key=lambda x: (x['reg_task']['nome'] if x.get('reg_task') else x['nome']).lower())
             
@@ -49,8 +47,6 @@ class TasksListMixin:
             else:
                 # Task Sconosciuta: Nome base dalla RAM
                 items.append(f"{stato} [ID:{id_stanza}] {t['nome']} [{t['prog']}]")
-                
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist("mem_task_listbox"):
             # Cambia le configurazioni di un widget gia' creato
             dpg.configure_item("mem_task_listbox", items=items)
@@ -74,7 +70,6 @@ class TasksListMixin:
         items = []
         
         tasks_to_render = list(self.task_mgr.task_list)
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist("sort_reg_tasks_chk") and dpg.get_value("sort_reg_tasks_chk"):
             tasks_to_render.sort(key=lambda x: x['nome'].lower())
             
@@ -127,8 +122,6 @@ class TasksListMixin:
                 f"[{t['id']:02d}]{vitale_str}{due_p_str}{custom_str} {t['nome']}"
                 f"{azioni_str}{fasi_str}{frat_str}{zona_str}{parent_str}{figli_str}"
             )
-
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist("reg_task_listbox"):
             # Cambia le configurazioni di un widget gia' creato
             dpg.configure_item("reg_task_listbox", items=items)
@@ -139,7 +132,6 @@ class TasksListMixin:
         """
         if not self.memory_tasks:
             return None
-        # Verifica se l'elemento DPG e' gia' stato creato
         if not dpg.does_item_exist("mem_task_listbox"):
             return None
         
@@ -176,10 +168,9 @@ class TasksListMixin:
         return None
 
     def _get_selected_reg_task(self):
-        """Ritorna selected reg task."""
+        """Ritorna il dict della task registrata selezionata in listbox, oppure ``None``."""
         if not self.task_mgr.task_list:
             return None
-        # Verifica se l'elemento DPG e' gia' stato creato
         if not dpg.does_item_exist("reg_task_listbox"):
             return None
         sel = dpg.get_value("reg_task_listbox")
@@ -196,33 +187,27 @@ class TasksListMixin:
         """Naviga con A* verso la task in memoria selezionata, usando le coordinate registrate."""
         t = task_to_nav if task_to_nav is not None else self._get_selected_mem_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task dalla lista memoria"
             return
         reg = t.get('reg_task')
         if reg is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Task '{t['nome']}' non ancora registrata - aggiungila prima"
             return
             
         # Controllo Cooldown
         rem = self.task_cooldowns.get(reg['id'], 0) - time.time()
         if rem > 0:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Task in cooldown. Riprova tra {int(rem)}s"
             return
             
         if not self.auto_enabled:
             self.auto_enabled = True
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist("auto_checkbox"):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("auto_checkbox", True)
         
         target_2p, step_2p = self._imposta_navigazione_2p(reg)
         if target_2p:
             self._plan_path(target_2p)
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Navigo verso '{reg['nome']}' (Tappa {step_2p})"
         else:
             punti_possibili = [(reg['x'], reg['y'])]
@@ -234,12 +219,10 @@ class TasksListMixin:
                 cx, cy = self.pos_target
                 closest = min(punti_possibili, key=lambda p: math.hypot(cx - p[0], cy - p[1]))
                 tx, ty = closest
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"Navigo verso '{reg['nome']}' (Cerco lock visivo...)"
             else:
                 self._task_alternativi_pendenti = None
                 tx, ty, step = self._get_task_target_coords(reg)
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"Navigo verso '{reg['nome']}'"
                 
             self._plan_path((tx, ty))
@@ -256,12 +239,10 @@ class TasksListMixin:
         """
         t = self._get_selected_mem_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task dalla lista memoria"
             return
         reg = t.get('reg_task')
         if reg is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = (
                 f"'{t['nome']}' non e' ancora registrata - "
                 f"usa 'Registra ?' per aggiungere i dettagli, "
@@ -276,38 +257,32 @@ class TasksListMixin:
         """Avvia la navigazione A* verso task registrata."""
         t = self._get_selected_reg_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task registrata"
             return
         if not self.auto_enabled:
             self.auto_enabled = True
-            # Verifica se l'elemento DPG e' gia' stato creato
             if dpg.does_item_exist("auto_checkbox"):
-                # Aggiorna il valore di un widget DPG
                 dpg.set_value("auto_checkbox", True)
                 
         target_2p, step_2p = self._imposta_navigazione_2p(t)
         if target_2p:
             self._plan_path(target_2p)
             label_loc = 'A' if target_2p == getattr(self, 'auto_2p_loc_A', None) else 'B'
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Navigo verso '{t['nome']}' (2P - Loc {label_loc})"
         else:
             self._plan_path((t['x'], t['y']))
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = f"Navigo verso '{t['nome']}'"
 
     def _elimina_task_registrata(self):
-        """Elimina task registrata."""
+        """Apre il dialog di conferma e, se OK, rimuove la task registrata selezionata."""
         t = self._get_selected_reg_task()
         if t is None:
-            # Messaggio di stato mostrato all'utente nel pannello
             self.auto_status_msg = "Seleziona una task da eliminare"
             return
         nome = t['nome']
         id_t = t['id']
         def on_confirm(yes):
-            """Callback di conferma."""
+            """Callback del dialog: se ``yes`` rimuove la task dal manager e refresha la lista."""
             if yes:
                 # Rimuove la task dal registro (cancella anche il file di esecuzione)
                 self.task_mgr.rimuovi(id_t)
@@ -315,7 +290,6 @@ class TasksListMixin:
                 # (la voce collegata diventa "non registrata") devono aggiornarsi.
                 self._refresh_reg_task_listbox()
                 self._refresh_mem_task_listbox()
-                # Messaggio di stato mostrato all'utente nel pannello
                 self.auto_status_msg = f"Task '{nome}' eliminata"
         self._show_confirm(f"Eliminare la task '{nome}' ?", on_confirm)
 

@@ -26,7 +26,6 @@ class UseButtonCalibMixin:
     def _apri_popup_calibra_use_button(self):
         """Apre il popup di calibrazione pulsante Use."""
         tag = "popup_calibra_use"
-        # Verifica se l'elemento DPG e' gia' stato creato
         if dpg.does_item_exist(tag):
             dpg.delete_item(tag)
 
@@ -38,7 +37,7 @@ class UseButtonCalibMixin:
         vp_h = dpg.get_viewport_client_height()
         win_w, win_h = 480, 480
 
-        with dpg.window(label="Calibra pulsante Use",
+        with dpg.window(label="Calibra pulsante 'Use'",
                         tag=tag,
                         modal=True,
                         no_close=False,
@@ -48,7 +47,7 @@ class UseButtonCalibMixin:
             dpg.add_text("Calibrazione del pulsante 'Use' di Among Us",
                          color=Colors.ACCENT)
             dpg.add_separator()
-            dpg.add_text("Aiuta il bot a capire quando puo' interagire con")
+            dpg.add_text("Aiuta il bot a capire quando può interagire con")
             dpg.add_text("una task. Il pulsante si ILLUMINA quando sei nel")
             dpg.add_text("raggio di interazione di un oggetto.", wrap=420)
             dpg.add_separator()
@@ -83,7 +82,7 @@ class UseButtonCalibMixin:
                                     min_value=0.01, max_value=1.0,
                                     min_clamped=True, max_clamped=True)
 
-            dpg.add_text("(Default e' angolo basso-destra, regola se serve)",
+            dpg.add_text("(Default è angolo basso-destra, regola se serve)",
                          color=Colors.TEXT_DIM)
 
             # Bottone per la selezione VISUALE della ROI (drag su screenshot)
@@ -95,7 +94,7 @@ class UseButtonCalibMixin:
             # Pulsanti di cattura
             dpg.add_text("2) Cattura i 2 stati di riferimento:",
                          color=(180, 220, 255))
-            dpg.add_text("- Posiziona l'avatar dove il pulsante e' SPENTO")
+            dpg.add_text("- Posiziona l'avatar dove il pulsante è SPENTO")
             dpg.add_text("  (lontano da ogni task), poi premi:")
 
             with dpg.group(horizontal=True):
@@ -202,7 +201,7 @@ class UseButtonCalibMixin:
 
         # Sanity check: lit deve essere significativamente piu' luminoso
         if lit_v <= off_v + 5:
-            self.auto_status_msg = ("ATTENZIONE: ACCESO non e' piu' luminoso "
+            self.auto_status_msg = ("ATTENZIONE: ACCESO non è più luminoso "
                                     "di SPENTO. Verifica la calibrazione.")
             return
 
