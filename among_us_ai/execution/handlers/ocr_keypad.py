@@ -12,26 +12,9 @@ is_test). Le funzioni delegano i movimenti del mouse ai helper di
 ``_drag_utils.py``.
 """
 
-import math
-import os
-import random
 import time
 
-import pyautogui
-
-from .._drag_utils import (
-    trascinamento_umano,
-    trascinamento_multi,
-    esegui_click_hold,
-    trascinamento_e_tieni,
-    trascinamento_seq_tappe,
-)
-from ...core.geometry import (
-    random_point_in_rect,
-    random_point_in_poly,
-    point_in_polygon,
-)
-
+from .._drag_utils import esegui_click_hold
 
 def handle_ocr_keypad(az, cx, cy, cw, ch, hwnd, is_test):
     """

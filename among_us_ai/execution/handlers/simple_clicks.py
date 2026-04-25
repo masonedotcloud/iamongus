@@ -12,26 +12,11 @@ is_test). Le funzioni delegano i movimenti del mouse ai helper di
 ``_drag_utils.py``.
 """
 
-import math
-import os
-import random
-import time
-
-import pyautogui
-
-from .._drag_utils import (
-    trascinamento_umano,
-    trascinamento_multi,
-    esegui_click_hold,
-    trascinamento_e_tieni,
-    trascinamento_seq_tappe,
-)
+from .._drag_utils import esegui_click_hold
 from ...core.geometry import (
     random_point_in_rect,
     random_point_in_poly,
-    point_in_polygon,
 )
-
 
 def handle_click(az, cx, cy, cw, ch, hwnd, is_test):
     """
@@ -57,7 +42,6 @@ def handle_click(az, cx, cy, cw, ch, hwnd, is_test):
     esegui_click_hold(x, y, durata)
 
 
-
 def handle_click_rect(az, cx, cy, cw, ch, hwnd, is_test):
     """
     Click random in un rettangolo. Utile quando l'esatto pixel non conta.
@@ -81,7 +65,6 @@ def handle_click_rect(az, cx, cy, cw, ch, hwnd, is_test):
     rx, ry = random_point_in_rect(r[0], r[1], r[2], r[3])
     x = cx + int(rx * cw); y = cy + int(ry * ch)
     esegui_click_hold(x, y, durata)
-
 
 
 def handle_click_poly(az, cx, cy, cw, ch, hwnd, is_test):

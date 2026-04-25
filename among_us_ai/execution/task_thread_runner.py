@@ -22,10 +22,8 @@ Sicurezza:
   - Il thread e' marcato daemon=True: se il bot principale termina,
     il thread non blocca lo shutdown.
 """
-import io
 import os
 import sys
-import time
 import threading
 
 

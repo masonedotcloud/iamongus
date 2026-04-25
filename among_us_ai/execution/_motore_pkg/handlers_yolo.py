@@ -21,8 +21,7 @@ try:
     from ultralytics import YOLO as _YOLO
 except Exception:
     _pag = _mss = _np = _cv2 = _YOLO = None
-from .geometria import _point_in_polygon
-from .input_mouse import _drag_umano, _click_hold, _drag_seq_tappe, _drag_snap
+from .input_mouse import _drag_umano, _click_hold, _drag_seq_tappe
 
 def _h_yolo_drag(az, cx, cy, cw, ch, hwnd, durata, attesa):
     """
@@ -119,7 +118,6 @@ def _h_yolo_drag_all(az, cx, cy, cw, ch, hwnd, durata, attesa):
       7. mouseUp
     """
     import os as _os
-    import random as _rnd
     try:
         from ultralytics import YOLO as _YOLO
         import mss as _mss

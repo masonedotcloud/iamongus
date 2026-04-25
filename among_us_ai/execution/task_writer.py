@@ -39,8 +39,6 @@ API pubblica:
 import os
 import shutil
 
-from .task_template import get_motore_modulo
-
 
 # ---------------------------------------------------------------------------
 # Versionamento del formato dei file generati.

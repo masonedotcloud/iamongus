@@ -12,30 +12,12 @@ is_test). Le funzioni delegano i movimenti del mouse ai helper di
 ``_drag_utils.py``.
 """
 
-import math
-import os
-import random
 import time
 
-import pyautogui
-
-from .._drag_utils import (
-    trascinamento_umano,
-    trascinamento_multi,
-    esegui_click_hold,
-    trascinamento_e_tieni,
-    trascinamento_seq_tappe,
-)
-# _extract_pure_shape estrae la forma binarizzata 40x40 da una ROI di
-# immagine. Usato per matching numerico (Stabilize Steering): si crea
-# un "template" del numero da cercare e si confronta con ogni
-# candidato cliccabile.
+from .._drag_utils import esegui_click_hold
+# _extract_pure_shape estrae la forma binarizzata 40x40 da una ROI:
+# serve a confrontare il template del numero target con i candidati.
 from .._motore_pkg.input_mouse import _extract_pure_shape
-from ...core.geometry import (
-    random_point_in_rect,
-    random_point_in_poly,
-    point_in_polygon,
-)
 
 
 def handle_number_match(az, cx, cy, cw, ch, hwnd, is_test):

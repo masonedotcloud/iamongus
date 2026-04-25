@@ -8,7 +8,7 @@ try:
     import pyautogui as _pag
 except Exception:
     _pag = None
-from .input_mouse import _extract_pure_shape, _click_hold
+from .input_mouse import _click_hold
 
 def _h_click_anomaly(az, cx, cy, cw, ch, hwnd, durata, attesa):
     """

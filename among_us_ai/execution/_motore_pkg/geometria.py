@@ -4,7 +4,6 @@ Helper geometriche pure: poligono, rettangolo, sampling random, rect del client.
 Non dipende da nessun altro modulo del package. Le funzioni qui sono
 "matematica pura" + win32gui per il client rect.
 """
-import math as _math
 import random as _random
 
 # win32gui usato solo da _client_rect; se non disponibile, _client_rect
