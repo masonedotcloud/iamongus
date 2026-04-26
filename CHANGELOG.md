@@ -53,6 +53,73 @@ in `memory_reader.py`, `# Sposta il mouse alle coordinate target`).
   ultralytics): **OK**.
 - MRO verificato: GPSVisualizerPro 26 classi, TaskActionEditor 9 classi.
 
+### Rimozione import morti (analisi codice morto)
+
+Scansione statica completa del codebase (import, funzioni/classi mai
+referenziate, codice irraggiungibile, riferimenti a file/metodi
+inesistenti, costanti di config inutilizzate).
+
+Esito: il codice e' risultato pulito (0 codice irraggiungibile, 0
+metodi-fantasma, 0 riferimenti a file inesistenti). Rimossi solo import
+inutilizzati:
+
+- **Import morti isolati**:
+  - ``_motore_pkg/geometria.py``: ``import math`` (mai usato)
+  - ``_motore_pkg/handlers_anomaly.py``: ``_extract_pure_shape``
+  - ``_motore_pkg/handlers_yolo.py``: ``_point_in_polygon``, ``_drag_snap``
+    e ``import random`` locale
+  - ``execution/task_thread_runner.py``: ``import io``, ``import time``
+    top-level (esisteva gia' un ``import io as _io`` locale)
+  - ``execution/use_button.py``: ``import os``
+  - ``intelligence/activity_detector.py``: ``defaultdict``
+  - ``intelligence/suspicion_analyzer.py``: ``EV_STOP``
+  - ``ui/mixins/misc.py``: ``ImageFont``
+  - ``ui/mixins/planner_ui.py``: ``PESI_DEFAULT``
+
+- **Blocco import "kitchen-sink" nei 9 file ``execution/handlers/*.py``**:
+  ogni file aveva lo stesso blocco di ~13 import copiato in cima, di cui
+  usava solo una frazione. Sfoltiti tenendo per ciascun file solo i nomi
+  realmente usati (-~70 righe di import complessive).
+
+Note (NON toccati, di proposito):
+- ``runtime.py`` re-esporta i helper ``trascinamento_*`` come API per i
+  mixin: e' un'esposizione voluta, lasciata.
+- ``GPSConfig.AUTO_AXIS_THRESHOLD`` risulta inutilizzata ma e' lasciata
+  come parametro di configurazione documentato.
+- ``stop_flag.clear_stop()`` e' un helper non adottato (il codice usa
+  ``stop_flag.requested = False``): lasciato per simmetria con
+  ``request_stop`` / ``is_stop_requested``.
+- In ``editor_mixins/canvas_input.py`` l'``import cv2`` dentro un
+  ``try`` e' un import "di guardia" (valida la presenza della dipendenza):
+  lasciato perche' rimuoverlo cambierebbe il comportamento del fallback.
+
+Nessun impatto funzionale: tutti gli import rimossi erano inutilizzati.
+
+### Pulizia template legacy del motore
+
+I file ``execution/task_template.txt`` (1248 righe) e
+``execution/_motore_template.txt`` (1266 righe) erano **codice morto**:
+
+- ``get_motore_template()`` era citato solo in un commento.
+- ``get_motore_modulo()`` era importato in ``task_writer.py`` ma **mai
+  chiamato**.
+
+Il task_writer usa da tempo ESCLUSIVAMENTE il package modulare
+``_motore_pkg/`` (copiato in ``tasks_exec/_motore/``), che e' gia' il
+motore "spezzettato" in 13 file Python per famiglia di handler.
+
+Modifiche:
+- Rimossi i due file ``.txt`` (-106 KB, -2514 righe di template legacy).
+- ``task_template.py`` semplificato: resta solo ``get_motore_pkg_path()``
+  (rimossi ``get_motore_template`` e ``get_motore_modulo`` con le loro cache).
+- Rimosso l'import morto da ``task_writer.py``.
+- Aggiornati ``execution/__init__.py``, ``runtime.py`` (docstring),
+  ``README.md`` e ``ASSETS.md`` per descrivere il formato attuale
+  (thin wrapper + package ``_motore/``) invece del vecchio file autonomo.
+
+Nessun impatto funzionale: la generazione delle task usava gia' il
+package modulare.
+
 ### Nessun cambiamento funzionale
 
 Indirizzi RAM, soglie, timing, modalita' di esecuzione e tutta la
