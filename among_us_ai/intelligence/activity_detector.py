@@ -17,7 +17,6 @@ Ogni evento ha timestamp, tipo, player, posizione e "evidence"
 
 import math
 import time as _time
-from collections import defaultdict
 
 
 # Configurazione default (override-able)

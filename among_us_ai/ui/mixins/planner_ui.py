@@ -21,7 +21,7 @@ Due popup gestiti da questo mixin:
 """
 
 from ._imports import *
-from ...managers.task_planner import carica_pesi_da_config, PESI_DEFAULT
+from ...managers.task_planner import carica_pesi_da_config
 import json as _json
 import os as _os
 
