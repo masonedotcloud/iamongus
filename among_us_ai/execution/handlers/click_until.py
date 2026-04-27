@@ -16,7 +16,6 @@ import time
 
 import pyautogui
 
-
 def handle_click_until(az, cx, cy, cw, ch, hwnd, is_test):
     """
     Esegue click ripetuto finche' un check pixel non passa.

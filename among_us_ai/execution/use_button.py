@@ -37,7 +37,6 @@ comunque (best-effort).
 """
 
 import json as _json
-import os as _os
 
 
 # Percorso del file di calibrazione (relativo alla cwd del bot).

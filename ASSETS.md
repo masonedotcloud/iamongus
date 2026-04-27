@@ -244,17 +244,21 @@ saranno presi dalla RAM se possibile.
 
 ### `tasks_exec/task_<id>_<nome>.py`
 
-File Python autonomi generati dal bottone "Genera file .py" e dal
+Thin wrapper Python generati dal bottone "Genera file .py" e dal
 runtime quando si avvia una task. Contengono tre blocchi:
 
-1. **header** (commento + parsing args CLI)
+1. **header** (commento + marker di versione + parsing args CLI)
 2. **TASK_META** + **AZIONI** (dati specifici della task)
-3. **motore di esecuzione** (codice generico copiato da
-   `among_us_ai/execution/task_template.txt`)
+3. **chiamata al motore comune**: ``import _motore`` seguito da
+   ``_motore.esegui_lifecycle(TASK_META, AZIONI)``
+
+Il motore vero e proprio NON e' inline: vive nel package
+``tasks_exec/_motore/`` (copiato da ``among_us_ai/execution/_motore_pkg/``
+al momento della generazione). I wrapper sono percio' di ~74 righe.
 
 Eseguibili con `python tasks_exec/task_001_Swipe_Card.py --step 0`.
-Non importano nulla dal package `among_us_ai`: sono completamente
-autonomi.
+Non importano nulla dal package `among_us_ai`: dipendono solo dal
+package ``_motore/`` nella stessa cartella.
 
 **Il bot li sovrascrive ogni volta che modifichi le azioni** dal
 pannello (a meno che `codice_personalizzato` sia True).

@@ -89,7 +89,7 @@ class MiscMixin:
           - trail = giallo (se presente)
         """
         try:
-            from PIL import Image, ImageDraw, ImageFont
+            from PIL import Image, ImageDraw
         except ImportError:
             print("[EXPORT] Pillow non installato. Installa con: pip install Pillow")
             return False

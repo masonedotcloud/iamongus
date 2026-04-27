@@ -14,24 +14,12 @@ is_test). Le funzioni delegano i movimenti del mouse ai helper di
 
 import math
 import os
-import random
 import time
-
-import pyautogui
 
 from .._drag_utils import (
     trascinamento_umano,
-    trascinamento_multi,
     esegui_click_hold,
-    trascinamento_e_tieni,
-    trascinamento_seq_tappe,
 )
-from ...core.geometry import (
-    random_point_in_rect,
-    random_point_in_poly,
-    point_in_polygon,
-)
-
 
 def handle_yolo_drag(az, cx, cy, cw, ch, hwnd, is_test):
     """
@@ -128,7 +116,6 @@ def handle_yolo_drag(az, cx, cy, cw, ch, hwnd, is_test):
         print(f"[YoloDrag] Oggetto non trovato (cercato in: {model_path})")
     # Pausa il thread per il tempo specificato (secondi)
     time.sleep(attesa)
-
 
 
 def handle_yolo_drag_all(az, cx, cy, cw, ch, hwnd, is_test):
@@ -241,7 +228,6 @@ def handle_yolo_drag_all(az, cx, cy, cw, ch, hwnd, is_test):
     _time.sleep(attesa)
 
 
-
 def handle_yolo_click(az, cx, cy, cw, ch, hwnd, is_test):
     """
     Click su un oggetto rilevato da YOLO.
@@ -334,7 +320,6 @@ def handle_yolo_click(az, cx, cy, cw, ch, hwnd, is_test):
     if not found:
         print(f"[YoloClick] Oggetto non trovato (modello: {_model_path})")
     _time.sleep(attesa)
-
 
 
 def handle_yolo_click_all(az, cx, cy, cw, ch, hwnd, is_test):

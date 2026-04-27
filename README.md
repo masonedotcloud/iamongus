@@ -244,9 +244,9 @@ bot/
     |   +-- poi_manager.py              # punti di interesse
     +-- execution/
     |   +-- runtime.py            # motore "live" per il pulsante Test
-    |   +-- task_template.py      # loader del template
-    |   +-- task_template.txt     # template raw del motore
-    |   +-- task_writer.py        # genera il .py autonomo
+    |   +-- task_template.py      # path del package motore (_motore_pkg)
+    |   +-- _motore_pkg/          # motore modulare (copiato in tasks_exec/_motore/)
+    |   +-- task_writer.py        # genera i thin wrapper .py delle task
     +-- ui/
         +-- app.py                # GPSVisualizerPro (init+frame+run)
         +-- editor.py             # TaskActionEditor (lifecycle)
@@ -355,8 +355,10 @@ c'e' bisogno di ripetere 30 import in ogni file.
 4. Aggiungi il rendering dell'azione in
    `editor_mixins/drawing.py::_disegna_azione`.
 5. Aggiungi l'esecuzione in `execution/runtime.py::esegui_azioni`
-   (per il pulsante Test) **e** in `execution/task_template.txt`
-   (per i file `.py` generati). Sono due posti distinti.
+   (per il pulsante Test) **e** nel package `execution/_motore_pkg/`
+   (per i file `.py` generati): aggiungi l'handler nel modulo della
+   famiglia giusta e registralo nella dispatch map. Sono due posti
+   distinti.
 
 ### Un nuovo manager
 
@@ -450,14 +452,14 @@ La migrazione accetta sia il formato `v2.0` (con `room_id`,
 1. Risolve l'ereditarieta': se la task ha `id_padre`, usa le azioni del
    padre.
 2. Delega a `execution/task_writer.py::genera_file_esecuzione` che
-   produce un file con tre blocchi:
-   - **header** (commento + import + parsing argomenti CLI)
+   produce un thin wrapper con tre blocchi:
+   - **header** (commento + marker versione + parsing argomenti CLI)
    - **meta_block** (dizionario `TASK_META` + costante `AZIONI`)
-   - **motore_block** (motore di esecuzione, letto da
-     `execution/task_template.txt`)
-3. Il file risultante e' completamente autonomo: non importa nulla
-   dal package `among_us_ai`, eseguibile con
-   `python tasks_exec/task_001_xxx.py --step 0`.
+   - **call_block** (`import _motore` + `_motore.esegui_lifecycle(...)`)
+   Il task_writer copia anche `_motore_pkg/` in `tasks_exec/_motore/`.
+3. Il file risultante non importa nulla dal package `among_us_ai`:
+   dipende solo dal package `_motore/` nella stessa cartella, ed e'
+   eseguibile con `python tasks_exec/task_001_xxx.py --step 0`.
 
 ## Stop globale
 

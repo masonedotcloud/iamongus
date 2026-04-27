@@ -6,14 +6,14 @@ mouse sulla finestra di Among Us, eseguendo la sequenza di azioni di
 una task in modo umano (movimenti Bezier con jitter, durate
 randomizzate).
 
-Lo stesso motore in versione INLINE e' anche embedded nel template
-``task_template.txt`` per i file ``.py`` generati nei ``tasks_exec/``.
+Lo stesso motore esiste in una seconda versione "autonoma" nel package
+``_motore_pkg/`` (copiato in ``tasks_exec/_motore/`` dal task_writer).
 Le due implementazioni convivono apposta:
 
 - Questo modulo dipende dalla dashboard (usa import diretti dal package
   ``among_us_ai``).
-- Il template e' autonomo (re-importa al bisogno), eseguibile come
-  script Python standalone.
+- Il package ``_motore_pkg/`` e' autonomo (re-importa al bisogno) ed e'
+  eseguibile dai thin wrapper delle task come script Python standalone.
 
 Tutte le funzioni assumono che l'ambiente Windows (mss, win32gui,
 pyautogui, cv2, numpy) sia inizializzato — vedi ``core.win_deps``.

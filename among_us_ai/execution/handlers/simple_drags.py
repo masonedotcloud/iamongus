@@ -13,25 +13,13 @@ is_test). Le funzioni delegano i movimenti del mouse ai helper di
 """
 
 import math
-import os
-import random
-import time
-
-import pyautogui
 
 from .._drag_utils import (
     trascinamento_umano,
     trascinamento_multi,
-    esegui_click_hold,
     trascinamento_e_tieni,
-    trascinamento_seq_tappe,
 )
-from ...core.geometry import (
-    random_point_in_rect,
-    random_point_in_poly,
-    point_in_polygon,
-)
-
+from ...core.geometry import random_point_in_poly
 
 def handle_drag(az, cx, cy, cw, ch, hwnd, is_test):
     """
@@ -58,7 +46,6 @@ def handle_drag(az, cx, cy, cw, ch, hwnd, is_test):
                           az["end_ry"] - az["start_ry"])
     dur_fin = max(0.05, dist_rel * durata)
     trascinamento_umano(sx, sy, ex, ey, dur_fin)
-
 
 
 def handle_drag_multi(az, cx, cy, cw, ch, hwnd, is_test):
@@ -117,7 +104,6 @@ def handle_drag_zone(az, cx, cy, cw, ch, hwnd, is_test):
     dist_rel = math.hypot(ex_r - sx_r, ey_r - sy_r)
     dur_fin = max(0.05, dist_rel * durata)
     trascinamento_umano(sx, sy, ex, ey, dur_fin)
-
 
 
 def handle_drag_hold(az, cx, cy, cw, ch, hwnd, is_test):

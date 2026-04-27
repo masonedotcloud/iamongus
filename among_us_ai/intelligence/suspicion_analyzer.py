@@ -14,7 +14,7 @@ Pesi configurabili tramite costruttore; default sono valori ragionevoli.
 """
 
 from .activity_detector import (
-    EV_VENT_USE, EV_NEAR_BODY, EV_SUDDEN_DISAPPEAR, EV_STOP
+    EV_VENT_USE, EV_NEAR_BODY, EV_SUDDEN_DISAPPEAR
 )
 
 
