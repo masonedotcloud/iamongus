@@ -55,6 +55,10 @@ class IntelligenceSidebarMixin:
         w = getattr(GPSConfig, 'INTELLIGENCE_SIDEBAR_WIDTH', 320)
         h = vp_h - 80  # tutta l'altezza meno barra menu + status bar
 
+        # F2 = pannello DESTRO (il preview giro F1 sta a sinistra).
+        # Ancorato al bordo destro del viewport con un margine di 10px.
+        pos_x = max(10, vp_w - w - 10)
+
         # Pannello visibile: NIENTE no_focus_on_appearing /
         # no_bring_to_front_on_focus, altrimenti la finestra resta
         # nascosta dietro al canvas della mappa che occupa lo schermo.
@@ -64,7 +68,7 @@ class IntelligenceSidebarMixin:
                         no_resize=True,
                         no_collapse=False,
                         width=w, height=h,
-                        pos=(10, 40),
+                        pos=(pos_x, 40),
                         on_close=lambda *a: self._on_close_intelligence()):
             # Header
             dpg.add_text("ANALISI PLAYER", color=Colors.ACCENT)

@@ -50,6 +50,23 @@ class PlannerMixin:
         self._preview_giro_aperto = True
         self._aggiorna_preview_giro()
 
+    def _set_percorso_breve(self, enabled):
+        """
+        Attiva/disattiva la modalita' "percorso piu' breve" (callback
+        checkbox del menu). Imposta ``GPSConfig.PLANNER_PERCORSO_BREVE``:
+        i pesi vengono riletti ad ogni scelta del giro, quindi il
+        cambiamento ha effetto immediato.
+
+        Se la preview del giro e' aperta, la rinfresco per mostrare
+        subito il nuovo ordinamento.
+        """
+        GPSConfig.PLANNER_PERCORSO_BREVE = bool(enabled)
+        stato = "attivo" if enabled else "disattivato"
+        self.auto_status_msg = f"Percorso piu' breve: {stato}"
+        print(f"[Planner] Percorso piu' breve {stato}", flush=True)
+        if getattr(self, '_preview_giro_aperto', False):
+            self._aggiorna_preview_giro()
+
     def _aggiorna_preview_giro(self):
         """
         Ricalcola il giro completo (TaskPlanner.calcola_giro) e aggiorna

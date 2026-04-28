@@ -95,6 +95,10 @@ class SuspicionAnalyzer:
         # Cache degli score precedenti (uno per player) per applicare smoothing.
         self._last_scores = {}
 
+    def reset(self):
+        """Azzera la cache degli score. Da chiamare a inizio nuova partita."""
+        self._last_scores.clear()
+
     def analyze(self, player, activity, proximity, task_inf, now=None):
         """
         Calcola il SuspicionScore per un singolo player.
