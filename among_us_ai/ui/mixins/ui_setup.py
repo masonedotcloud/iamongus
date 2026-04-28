@@ -55,6 +55,13 @@ class UISetupMixin:
                         callback=lambda *a: self._cancel_auto_move())
                 # Menu
                 with dpg.menu(label="Strumenti"):
+                    dpg.add_menu_item(label="Reset partita [F5]",
+                        callback=lambda *a: self._reset_partita())
+                    dpg.add_menu_item(label="Auto-reset tra le partite",
+                        check=True,
+                        default_value=getattr(self, '_auto_reset_enabled', False),
+                        callback=lambda s, a: self._set_auto_reset(a))
+                    dpg.add_separator()
                     dpg.add_menu_item(label="Cancella trail",
                         callback=lambda *a: self._clear_trail())
                     dpg.add_menu_item(label="Reset statistiche",
@@ -67,6 +74,10 @@ class UISetupMixin:
                         callback=lambda *a: self._toggle_preview_giro())
                     dpg.add_menu_item(label="Come scegliere le task...",
                         callback=lambda *a: self._apri_popup_pesi_pianificatore())
+                    dpg.add_menu_item(label="Percorso piu' breve (meno strada)",
+                        check=True,
+                        default_value=getattr(GPSConfig, 'PLANNER_PERCORSO_BREVE', True),
+                        callback=lambda s, a: self._set_percorso_breve(a))
                     dpg.add_separator()
                     dpg.add_menu_item(label="Intelligence [F2]",
                         callback=lambda *a: self._toggle_intelligence_sidebar())
@@ -174,10 +185,10 @@ class UISetupMixin:
                 callback=lambda *a: self._toggle_auto_enabled())
             dpg.add_key_press_handler(dpg.mvKey_N,
                 callback=lambda *a: self._start_new_zone_mode())
-            dpg.add_key_press_handler(dpg.mvKey_F1,
-                callback=lambda *a: self._toggle_preview_giro())
-            dpg.add_key_press_handler(dpg.mvKey_F2,
-                callback=lambda *a: self._toggle_intelligence_sidebar())
+            # NB: F1 (preview giro) e F2 (intelligence) NON sono registrati
+            # qui come DPG key handler: sono gestiti globalmente in
+            # `app.aggiorna_frame` via GetAsyncKeyState, cosi' rispondono
+            # anche quando il focus e' sul gioco (i DPG handler no).
             dpg.add_key_press_handler(dpg.mvKey_F3,
                 callback=lambda *a: self._toggle_anti_afk())
             dpg.add_key_press_handler(dpg.mvKey_Escape,

@@ -270,3 +270,101 @@ class MiscMixin:
             if 0.0005 < d < 5.0:
                 self.total_distance += d
         self.last_pos_for_dist = list(self.pos_target)
+
+    def _reset_partita(self, silent=False):
+        """
+        Reset "nuova partita": azzera tutti gli stati di progresso senza
+        toccare i dati persistenti (task registrate, zone, POI, mappa).
+
+        Cosa viene azzerato:
+        - esecuzione in corso (stop subprocess + navigazione + popup)
+        - cooldown, step interni e contatori retry delle task
+        - tracker "task viste in RAM"
+        - stato Auto-All e preview giro
+        - rilevamenti YOLO correnti (player/porte)
+        - moduli Intelligence (tracker, activity, proximity, task_inf, suspicion)
+        - trail + distanza + statistiche di sessione
+
+        Cosa NON viene toccato:
+        - task registrate, zone, POI, mappa (sono dati di configurazione)
+        - toggle delle impostazioni (auto-reset, evita sospetti, ecc.)
+
+        :param silent: se True non scrive un messaggio di stato (usato
+                       dall'auto-reset automatico per non spammare).
+        """
+        # 1) Ferma qualunque esecuzione in corso (come uno Stop globale).
+        stop_flag.requested = True
+        try:
+            self._cancel_auto_move(silent=True)
+        except Exception:
+            pass
+        try:
+            self._ferma_processo_task()
+        except Exception:
+            pass
+        self._task_launch_arrivo = False
+        if dpg.does_item_exist("task_launch_popup"):
+            dpg.delete_item("task_launch_popup")
+        # Lo stop e' stato consumato: pronti a ripartire puliti.
+        stop_flag.requested = False
+
+        # 2) Stato di progresso delle task.
+        self.task_cooldowns = {}
+        self.task_internal_steps = {}
+        self.task_retry_counts = {}
+        if hasattr(self, 'task_seen_in_ram'):
+            self.task_seen_in_ram = set()
+        self._task_prewarm_id = None
+        self._task_launch_id = None
+        self._current_auto_all_task_id = None
+        self._task_alternativi_pendenti = None
+        if hasattr(self, '_current_nav_target'):
+            self._current_nav_target = None
+
+        # 3) Auto-All e preview giro.
+        self.auto_execute_all = False
+        self._auto_all_timer = 0.0
+        self._giro_preview_lista = []
+        self._giro_preview_paths = []
+        if dpg.does_item_exist("auto_all_checkbox"):
+            dpg.set_value("auto_all_checkbox", False)
+
+        # 4) Rilevamenti YOLO correnti.
+        self.detected_players = []
+        self.detected_doors = []
+
+        # 5) Moduli Intelligence (se abilitati): ognuno ha il suo reset().
+        if getattr(self, '_intelligence_enabled', False):
+            for attr in ('_intelligence_tracker', '_intelligence_activity',
+                         '_intelligence_proximity', '_intelligence_task_inf',
+                         '_intelligence_suspicion'):
+                mod = getattr(self, attr, None)
+                if mod is not None and hasattr(mod, 'reset'):
+                    try:
+                        mod.reset()
+                    except Exception as e:
+                        print(f"[ResetPartita] reset {attr} fallito: {e}")
+
+        # 6) Trail, distanza, statistiche di sessione.
+        self._clear_trail()
+        self._reset_distance()
+
+        # 7) Anti-AFK: riparte il timer di inattivita'.
+        self._anti_afk_idle_since = time.time()
+
+        print("[ResetPartita] Stato di gioco azzerato (nuova partita).",
+              flush=True)
+        if not silent:
+            self.auto_status_msg = "Reset partita: task e dati azzerati [F5]"
+
+    def _set_auto_reset(self, enabled):
+        """
+        Abilita/disabilita l'auto-reset tra le partite (callback checkbox).
+
+        Quando attivo, il GameStateMonitor azzera automaticamente task e
+        stati di progresso all'ingresso in ogni nuova partita.
+        """
+        self._auto_reset_enabled = bool(enabled)
+        stato = "attivo" if self._auto_reset_enabled else "disattivato"
+        self.auto_status_msg = f"Auto-reset tra le partite: {stato}"
+        print(f"[ResetPartita] Auto-reset {stato}", flush=True)
