@@ -1,5 +1,66 @@
 # Changelog
 
+## v2.2.53 — Fix crash task 2P + Reset partita (F5) e auto-reset
+
+### Fix crash NameError sulle task a 2 giocatori
+
+**Sintomo**: avviando una task 2P (es. Reactor Meltdown) il bot
+crashava con::
+
+    NameError: cannot access free variable 'tx' where it is not
+    associated with a value in enclosing scope
+    (tasks_launch.py:165, dentro on_arrivo)
+
+**Causa**: in ``_avvia_task_selezionata`` le variabili ``tx``/``ty``
+vengono assegnate solo nel ramo ``else`` (task a 1 giocatore). Per le
+task 2P si entra nel ramo ``if target_2p`` e ``tx``/``ty`` non esistono.
+La closure ``on_arrivo`` le usava come default di ``getattr``::
+
+    curr_target = getattr(self, '_current_nav_target', (tx, ty))
+
+Poiche' Python valuta SEMPRE il default di ``getattr`` (anche quando
+l'attributo esiste), il riferimento a ``tx`` mancante causava il crash
+ad ogni task 2P.
+
+**Fix**: il default ora usa ``(reg['x'], reg['y'])``, sempre disponibili
+(``reg`` e' definito a inizio funzione). File: ``ui/mixins/tasks_launch.py``.
+
+### Nuova feature: Reset partita (F5) + auto-reset tra le partite
+
+**Reset manuale (F5)**: nuovo metodo ``_reset_partita()`` che azzera
+tutti gli stati di progresso "come a inizio nuova partita":
+
+- ferma l'esecuzione in corso (subprocess + navigazione + popup)
+- azzera cooldown, step interni e contatori retry delle task
+- svuota il tracker "task viste in RAM"
+- resetta Auto-All e la preview giro
+- svuota i rilevamenti YOLO correnti (player/porte)
+- resetta i 5 moduli Intelligence (ognuno col suo ``reset()``)
+- azzera trail, distanza e statistiche di sessione
+
+NON tocca i dati di configurazione (task registrate, zone, POI, mappa)
+ne' i toggle delle impostazioni.
+
+Agganciato al tasto **F5** (in ``app.py``, accanto a F4/Stop) e a una
+voce di menu "Reset partita [F5]" in Strumenti.
+
+**Auto-reset tra le partite**: checkbox "Auto-reset tra le partite" nel
+menu Strumenti (default OFF, configurabile con ``GPSConfig.AUTO_RESET_DEFAULT``).
+Quando attiva, il ``GameStateMonitor`` chiama automaticamente
+``_reset_partita(silent=True)`` alla transizione da menu/lobby verso una
+partita giocabile, cosi' ogni partita parte pulita senza premere F5.
+
+**Aggiunto** ``SuspicionAnalyzer.reset()`` (mancava: gli altri 4 moduli
+Intelligence lo avevano gia') per coerenza e per supportare il reset.
+
+File toccati: ``ui/mixins/misc.py`` (``_reset_partita`` + ``_set_auto_reset``),
+``ui/app.py`` (hotkey F5 + init flag), ``ui/mixins/game_state_monitor.py``
+(auto-reset su transizione), ``ui/mixins/ui_setup.py`` (menu + checkbox),
+``ui/mixins/dialogs.py`` (help), ``core/config.py`` (default),
+``intelligence/suspicion_analyzer.py`` (``reset()``).
+
+---
+
 ## v2.2.52 — Review massiva commenti & docstring (95 file)
 
 ### Richiesta utente
