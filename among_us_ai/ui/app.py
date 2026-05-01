@@ -284,6 +284,11 @@ class GPSVisualizerPro(
             getattr(GPSConfig, 'ANTI_AFK_DEFAULT', False))
         self._anti_afk_idle_since = 0.0
 
+        # Auto-reset tra partite: se attivo, azzera task/stati (come F5)
+        # quando il GameStateMonitor rileva l'ingresso in una nuova partita.
+        self._auto_reset_enabled = bool(
+            getattr(GPSConfig, 'AUTO_RESET_DEFAULT', False))
+
         # GameStateMonitor: legge dalla RAM lo stato del gioco
         # (in_game / lobby / voting / impostor / dead) e ferma il bot
         # quando appropriato. Vedere `GameStateMonitorMixin`.
@@ -363,6 +368,28 @@ class GPSVisualizerPro(
                     dpg.delete_item("task_launch_popup")
                 self.auto_status_msg = "[X] Esecuzione annullata (Stop)"
             self._prev_stop_key = (f4_pressed or end_pressed)
+
+            # --- HOTKEY F5: RESET PARTITA (azzera task/dati di progresso) ---
+            f5_pressed = (win32api.GetAsyncKeyState(0x74) & 0x8000) != 0
+            if f5_pressed and not getattr(self, '_prev_reset_key', False):
+                self._reset_partita()
+            self._prev_reset_key = f5_pressed
+
+            # --- HOTKEY F1: PREVIEW GIRO AUTO-ALL (pannello sinistro) ---
+            # Letti via GetAsyncKeyState (non DPG key handler) cosi'
+            # funzionano ANCHE quando il focus e' sul gioco e non sulla
+            # dashboard. I DPG key handler ricevono input solo a finestra
+            # attiva, percio' F1/F2 non rispondevano mentre si giocava.
+            f1_pressed = (win32api.GetAsyncKeyState(0x70) & 0x8000) != 0
+            if f1_pressed and not getattr(self, '_prev_f1_key', False):
+                self._toggle_preview_giro()
+            self._prev_f1_key = f1_pressed
+
+            # --- HOTKEY F2: SIDEBAR INTELLIGENCE (pannello destro) ---
+            f2_pressed = (win32api.GetAsyncKeyState(0x71) & 0x8000) != 0
+            if f2_pressed and not getattr(self, '_prev_f2_key', False):
+                self._toggle_intelligence_sidebar()
+            self._prev_f2_key = f2_pressed
 
         self._update_trail_and_distance()
         self._update_auto_move(dt)

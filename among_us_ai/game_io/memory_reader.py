@@ -16,6 +16,7 @@ offset vanno ridumpati e aggiornati qui.
 """
 
 import json
+import os
 
 # Pymem e' opzionale: senza, il bot non puo' leggere RAM ma resta avviabile
 # (la dashboard funziona per visualizzazione/registrazione task, e l'utente
@@ -335,23 +336,25 @@ class AmongUsGameStateReader:
         self.is_64_bit    = False
         self.STATIC_FIELDS = 0x5C
 
-        # Indirizzi delle classi: usa override del costruttore se passato,
-        # altrimenti le costanti hardcoded di modulo.
-        self.AMONG_US_CLIENT_CLASS = (
-            among_us_client_class
-            if among_us_client_class is not None
-            else GAME_STATE_AMONG_US_CLIENT_CLASS
-        )
-        self.MEETING_HUD_CLASS = (
-            meeting_hud_class
-            if meeting_hud_class is not None
-            else GAME_STATE_MEETING_HUD_CLASS
-        )
-        self.PLAYER_CONTROL_CLASS = (
-            player_control_class
-            if player_control_class is not None
-            else GAME_STATE_PLAYER_CONTROL_CLASS
-        )
+        # Indirizzi delle classi: priorita' (1) override costruttore,
+        # (2) JSON dump (dati_memoria/script.json), (3) costanti hardcoded.
+        # Il JSON e' piu' robusto: se il gioco si aggiorna e gli indirizzi
+        # cambiano, basta rigenerare il dump senza toccare il codice.
+        self.AMONG_US_CLIENT_CLASS = GAME_STATE_AMONG_US_CLIENT_CLASS
+        self.MEETING_HUD_CLASS     = GAME_STATE_MEETING_HUD_CLASS
+        self.PLAYER_CONTROL_CLASS  = GAME_STATE_PLAYER_CONTROL_CLASS
+
+        # (2) Prova a caricare dal JSON: sovrascrive le costanti se trova
+        # le voci. Non fatale se il file manca.
+        self._carica_classi_da_json()
+
+        # (1) Override espliciti del costruttore: massima priorita'.
+        if among_us_client_class is not None:
+            self.AMONG_US_CLIENT_CLASS = among_us_client_class
+        if meeting_hud_class is not None:
+            self.MEETING_HUD_CLASS = meeting_hud_class
+        if player_control_class is not None:
+            self.PLAYER_CONTROL_CLASS = player_control_class
 
         # Offsets interni delle classi (alias agli equivalenti globali).
         self.OFFSET_GAME_STATE   = GAME_STATE_OFFSET_GAME_STATE
@@ -377,6 +380,56 @@ class AmongUsGameStateReader:
                   "memory_reader.py oppure passa gli indirizzi al "
                   "costruttore. Stato gioco disabilitato.",
                   flush=True)
+
+    def _carica_classi_da_json(self):
+        """
+        Prova a caricare gli indirizzi delle classi dal dump IL2CPP
+        ``script.json`` (campo ``ScriptMetadata``). Se trova le voci,
+        sovrascrive le costanti hardcoded; e' robusto agli aggiornamenti
+        del gioco (basta rigenerare il dump).
+
+        Cerca il file in piu' posizioni note, in ordine:
+          1. ``dati_memoria/script.json`` (relativo alla cwd del bot)
+          2. ``../dati_memoria/script.json`` (compat. col layout originale)
+          3. ``<package>/../dati_memoria/script.json`` (relativo al codice)
+
+        Se nessun file e' presente, non fa nulla (restano le costanti).
+        """
+        candidati = [
+            os.path.join("dati_memoria", "script.json"),
+            os.path.join("..", "dati_memoria", "script.json"),
+            os.path.join(os.path.dirname(__file__), "..", "..",
+                         "dati_memoria", "script.json"),
+        ]
+        path = next((p for p in candidati if os.path.exists(p)), None)
+        if path is None:
+            # Nessun JSON: si usano le costanti hardcoded (silenzioso).
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Il dump puo' essere {"ScriptMetadata": [...]} o direttamente
+            # una lista di voci.
+            metadata = data.get("ScriptMetadata", []) if isinstance(data, dict) else data
+            trovati = 0
+            for entry in metadata:
+                name = entry.get("Name", "")
+                address = entry.get("Address", 0)
+                if name in ("AmongUsClient__TypeInfo", "AmongUsClient_TypeInfo"):
+                    self.AMONG_US_CLIENT_CLASS = address
+                    trovati += 1
+                elif name in ("MeetingHud__TypeInfo", "MeetingHud_TypeInfo"):
+                    self.MEETING_HUD_CLASS = address
+                    trovati += 1
+                elif name in ("PlayerControl__TypeInfo", "PlayerControl_TypeInfo"):
+                    self.PLAYER_CONTROL_CLASS = address
+                    trovati += 1
+            print(f"[GameStateReader] Indirizzi caricati da {path} "
+                  f"({trovati} classi).", flush=True)
+        except Exception as e:
+            print(f"[GameStateReader] Errore lettura {path}: {e}. "
+                  "Uso le costanti hardcoded.", flush=True)
 
     def connect(self):
         """

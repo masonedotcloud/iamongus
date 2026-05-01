@@ -162,7 +162,14 @@ class TasksLaunchMixin:
                 time.sleep(0.3) # pausa per stabilita' visiva (frame capture screen)
 
                 # --- CHECK VISUALE (Use Button / Alone Giallo) ---
-                curr_target = getattr(self, '_current_nav_target', (tx, ty))
+                # Fix crash 2P: il default usa reg['x']/reg['y'] (sempre
+                # disponibili) invece di tx/ty, che NON vengono assegnate
+                # quando la task e' a 2 giocatori (ramo `if target_2p`).
+                # Vedi _avvia_task_selezionata: tx/ty esistono solo nel
+                # ramo `else`, quindi riferirle qui dava un NameError sulle
+                # task 2P (es. Reactor Meltdown).
+                curr_target = getattr(self, '_current_nav_target',
+                                      (reg['x'], reg['y']))
                 if not self._controlla_task_attiva(curr_target[0], curr_target[1]):
                     alternativi = reg.get('alternativi', [])
                     curr_alternativo = getattr(self, '_task_alternativo_idx', 0)

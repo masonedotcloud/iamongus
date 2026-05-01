@@ -234,14 +234,38 @@ PESI_DEFAULT = {
     'alpha_distanza': 0.5,
 }
 
+# Pesi "percorso piu' breve": la distanza domina nettamente sulle
+# preferenze di tipo/lunghezza, cosi' il bot va SEMPRE alla task piu'
+# vicina e non "salta" task che ha di fianco. Il bonus vitale resta alto
+# (i sabotaggi restano prioritari anche in questa modalita').
+#
+# alpha_distanza molto piu' alto + bonus lunghezza azzerati => l'ordine
+# del giro e' praticamente un nearest-neighbor puro (minor strada totale).
+PESI_PERCORSO_BREVE = {
+    'vitale':         1000.0,
+    'long':           0.0,
+    'common':         0.0,
+    'na':             0.0,
+    'short':          0.0,
+    'multi_fase':     0.0,
+    'alpha_distanza': 10.0,
+}
+
 
 def carica_pesi_da_config(config):
     """
     Costruisce il dict dei pesi leggendo da GPSConfig.
 
+    Se ``GPSConfig.PLANNER_PERCORSO_BREVE`` e' True, ritorna i pesi
+    "percorso piu' breve" (nearest-neighbor quasi puro): il bot fa meno
+    strada possibile e non salta task vicine. Altrimenti usa i pesi
+    "bilanciati" classici (tipo/lunghezza influenzano l'ordine).
+
     Usato dall'app per passare i pesi al planner senza doverli
     citare uno per uno.
     """
+    if getattr(config, 'PLANNER_PERCORSO_BREVE', False):
+        return dict(PESI_PERCORSO_BREVE)
     return {
         'vitale':         getattr(config, 'PLANNER_PESO_VITALE', 1000.0),
         'long':           getattr(config, 'PLANNER_PESO_LONG', 30.0),

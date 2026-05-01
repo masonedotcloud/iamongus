@@ -112,6 +112,13 @@ class GPSConfig:
     PLANNER_ALPHA_DIST    = 0.5     # peso della distanza (penalita')
     PLANNER_USE_ASTAR     = True    # True: distanza A* reale, False: euclidea
 
+    # Modalita' "percorso piu' breve": se True il giro Auto-All e' un
+    # nearest-neighbor quasi puro (va sempre alla task piu' vicina, non
+    # salta task vicine), per fare meno strada possibile. Il bonus vitale
+    # resta comunque attivo (i sabotaggi restano prioritari).
+    # Se False, l'ordine considera anche tipo/lunghezza delle task.
+    PLANNER_PERCORSO_BREVE = True
+
     # ============================================================
     # --- INTELLIGENCE: sidebar analisi sospettosita' player (F2) ---
     # ============================================================
@@ -140,6 +147,12 @@ class GPSConfig:
     # Si puo' cambiare a runtime con F3.
     ANTI_AFK_DEFAULT        = False
     ANTI_AFK_THRESHOLD_SEC  = 30.0
+
+    # Toggle iniziale Auto-Reset tra le partite: se True, il bot azzera
+    # automaticamente task e stati di progresso (come un F5) quando il
+    # GameStateMonitor rileva l'ingresso in una nuova partita.
+    # Si puo' cambiare a runtime dalla checkbox nel pannello laterale.
+    AUTO_RESET_DEFAULT      = False
 
     # ============================================================
     # --- EXEC_MODE: come vengono eseguite le task ---

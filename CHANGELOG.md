@@ -1,5 +1,130 @@
 # Changelog
 
+## v2.2.54 — Game state, path ottimizzato, gestione meeting/morte, F1/F2 globali
+
+### #1 Pre-lobby riconosciuto
+
+Il monitor distingue gia' MENU / LOBBY (pre-partita) dalla partita vera:
+in questi stati il bot resta fermo (non pianifica, non si muove). Reso
+piu' chiaro il banner di stato: "PRE-LOBBY (attesa giocatori) - bot fermo".
+Aggiunti gli helper ``_is_pre_lobby()`` e ``_is_in_meeting()``.
+
+### #3 Indirizzi di memoria caricati da JSON
+
+``AmongUsGameStateReader`` ora carica gli indirizzi delle classi
+(AmongUsClient / MeetingHud / PlayerControl) dal dump IL2CPP
+``dati_memoria/script.json`` se presente (campo ``ScriptMetadata``),
+con fallback alle costanti hardcoded. Cosi' agli aggiornamenti del gioco
+basta rigenerare il dump senza toccare il codice. Cerca il file in cwd,
+``../dati_memoria/`` e relativo al package.
+
+### #4 Ricomincia il giro da fantasma
+
+Quando il crewmate muore (transizione ACTIVE -> GHOST), la task in corso
+si chiude; il bot ora ferma l'esecuzione, azzera il target di navigazione
+corrente e — se Auto-All era attivo — riprende il giro in modalita'
+fantasma (linea retta, attraversa muri). Le task gia' completate e i
+cooldown restano validi.
+
+### #5 Percorso piu' breve (meno strada)
+
+Nuova modalita' "percorso piu' breve" (``GPSConfig.PLANNER_PERCORSO_BREVE``,
+default ON, toggle nel menu Strumenti). Usa pesi che fanno dominare la
+distanza (nearest-neighbor quasi puro): il bot va sempre alla task piu'
+vicina e non "salta" task che ha di fianco. Il bonus vitale resta attivo
+(i sabotaggi restano prioritari). Disattivandola si torna all'ordinamento
+bilanciato classico (tipo/lunghezza influenzano la scelta).
+
+### #6 Gestione meeting d'emergenza
+
+Se parte una votazione/meeting mentre una task e' in esecuzione, il bot
+ora la abbandona subito: preme ESC sul gioco (chiude il minigioco aperto),
+ferma il subprocess SENZA marcare la task done (cosi' verra' ri-eseguita),
+annulla la navigazione e chiude il popup. Auto-All resta attivo: a meeting
+finito riprende e ri-pianifica (eventualmente proprio quella task).
+
+### #2 F1/F2 funzionano dal gioco + lati pannelli
+
+F1 (preview giro) e F2 (sidebar Intelligence) erano registrati come DPG
+key handler, che rispondono SOLO quando la dashboard ha il focus: premuti
+mentre si gioca, non facevano nulla. Ora sono letti via
+``GetAsyncKeyState`` nel loop principale (come F4/F5), quindi funzionano
+anche con Among Us in primo piano.
+
+Inoltre i pannelli sono ora su lati opposti: **F1 = pannello sinistro**
+(preview giro), **F2 = pannello destro** (Intelligence), ancorato al
+bordo destro del viewport.
+
+File toccati: ``game_io/memory_reader.py`` (JSON), ``ui/mixins/game_state_monitor.py``
+(meeting/morte/pre-lobby), ``ui/app.py`` (F1/F2 globali),
+``ui/mixins/ui_setup.py`` (rimossi handler F1/F2 + toggle percorso breve),
+``ui/mixins/intelligence_sidebar.py`` (pannello a destra),
+``managers/task_planner.py`` + ``core/config.py`` (pesi percorso breve),
+``ui/mixins/planner_ui.py`` (toggle), ``ui/mixins/dialogs.py`` (help).
+
+---
+
+## v2.2.53 — Fix crash task 2P + Reset partita (F5) e auto-reset
+
+### Fix crash NameError sulle task a 2 giocatori
+
+**Sintomo**: avviando una task 2P (es. Reactor Meltdown) il bot
+crashava con::
+
+    NameError: cannot access free variable 'tx' where it is not
+    associated with a value in enclosing scope
+    (tasks_launch.py:165, dentro on_arrivo)
+
+**Causa**: in ``_avvia_task_selezionata`` le variabili ``tx``/``ty``
+vengono assegnate solo nel ramo ``else`` (task a 1 giocatore). Per le
+task 2P si entra nel ramo ``if target_2p`` e ``tx``/``ty`` non esistono.
+La closure ``on_arrivo`` le usava come default di ``getattr``::
+
+    curr_target = getattr(self, '_current_nav_target', (tx, ty))
+
+Poiche' Python valuta SEMPRE il default di ``getattr`` (anche quando
+l'attributo esiste), il riferimento a ``tx`` mancante causava il crash
+ad ogni task 2P.
+
+**Fix**: il default ora usa ``(reg['x'], reg['y'])``, sempre disponibili
+(``reg`` e' definito a inizio funzione). File: ``ui/mixins/tasks_launch.py``.
+
+### Nuova feature: Reset partita (F5) + auto-reset tra le partite
+
+**Reset manuale (F5)**: nuovo metodo ``_reset_partita()`` che azzera
+tutti gli stati di progresso "come a inizio nuova partita":
+
+- ferma l'esecuzione in corso (subprocess + navigazione + popup)
+- azzera cooldown, step interni e contatori retry delle task
+- svuota il tracker "task viste in RAM"
+- resetta Auto-All e la preview giro
+- svuota i rilevamenti YOLO correnti (player/porte)
+- resetta i 5 moduli Intelligence (ognuno col suo ``reset()``)
+- azzera trail, distanza e statistiche di sessione
+
+NON tocca i dati di configurazione (task registrate, zone, POI, mappa)
+ne' i toggle delle impostazioni.
+
+Agganciato al tasto **F5** (in ``app.py``, accanto a F4/Stop) e a una
+voce di menu "Reset partita [F5]" in Strumenti.
+
+**Auto-reset tra le partite**: checkbox "Auto-reset tra le partite" nel
+menu Strumenti (default OFF, configurabile con ``GPSConfig.AUTO_RESET_DEFAULT``).
+Quando attiva, il ``GameStateMonitor`` chiama automaticamente
+``_reset_partita(silent=True)`` alla transizione da menu/lobby verso una
+partita giocabile, cosi' ogni partita parte pulita senza premere F5.
+
+**Aggiunto** ``SuspicionAnalyzer.reset()`` (mancava: gli altri 4 moduli
+Intelligence lo avevano gia') per coerenza e per supportare il reset.
+
+File toccati: ``ui/mixins/misc.py`` (``_reset_partita`` + ``_set_auto_reset``),
+``ui/app.py`` (hotkey F5 + init flag), ``ui/mixins/game_state_monitor.py``
+(auto-reset su transizione), ``ui/mixins/ui_setup.py`` (menu + checkbox),
+``ui/mixins/dialogs.py`` (help), ``core/config.py`` (default),
+``intelligence/suspicion_analyzer.py`` (``reset()``).
+
+---
+
 ## v2.2.52 — Review massiva commenti & docstring (95 file)
 
 ### Richiesta utente

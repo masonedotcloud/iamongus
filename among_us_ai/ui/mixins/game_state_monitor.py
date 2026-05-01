@@ -170,6 +170,44 @@ class GameStateMonitorMixin:
         print(f"[GameState] Transizione: {old_phase} -> {new_phase}",
               flush=True)
 
+        # --- AUTO-RESET TRA PARTITE ---
+        # Se il toggle e' attivo e stiamo ENTRANDO in una nuova partita
+        # (da menu/lobby a partita giocabile o impostore), azzera task e
+        # stati di progresso come un F5 automatico. Cosi' ogni partita
+        # parte pulita senza intervento manuale.
+        if getattr(self, '_auto_reset_enabled', False):
+            entering_game = (
+                old_phase in (PHASE_MENU, PHASE_LOBBY, PHASE_UNKNOWN)
+                and new_phase in (PHASE_ACTIVE, PHASE_IMPOSTOR, PHASE_GHOST)
+            )
+            if entering_game and hasattr(self, '_reset_partita'):
+                print("[GameState] Nuova partita rilevata -> auto-reset",
+                      flush=True)
+                try:
+                    self._reset_partita(silent=True)
+                    self.auto_status_msg = "Auto-reset: nuova partita"
+                except Exception as e:
+                    print(f"[GameState] Auto-reset fallito: {e}", flush=True)
+
+        # --- #6 MEETING / EMERGENZA: interrompi la task in corso ---
+        # Se parte una votazione (meeting d'emergenza o body report) mentre
+        # una task e' in esecuzione, la task va abbandonata SUBITO: il
+        # subprocess riceve ESC (chiude il minigioco aperto) e viene fermato.
+        # Quando il meeting finisce, l'Auto-All ripartira' da solo e
+        # ri-sceglie la prossima task (eventualmente proprio questa, se non
+        # completata: non viene marcata done).
+        if new_phase == PHASE_VOTING and old_phase != PHASE_VOTING:
+            self._interrompi_task_per_meeting()
+
+        # --- #4 MORTE: ricomincia il giro da fantasma ---
+        # Quando il crewmate muore (ACTIVE -> GHOST), la task in corso si
+        # chiude. Da fantasma si possono ancora completare le task, quindi
+        # ripartiamo il giro: fermiamo l'esecuzione corrente e, se Auto-All
+        # era attivo, lo rilanciamo cosi' il bot riprende dal task piu'
+        # conveniente in modalita' fantasma (linea retta, attraversa muri).
+        if old_phase == PHASE_ACTIVE and new_phase == PHASE_GHOST:
+            self._ricomincia_giro_da_fantasma()
+
         # Se siamo USCITI dalla votazione, attiva il grace period
         # PRIMA del passaggio reale alla fase successiva.
         # NB: il classify ha gia' deciso new_phase=ACTIVE/GHOST (o altro)
@@ -223,6 +261,21 @@ class GameStateMonitorMixin:
         """True se siamo crewmate morti (fantasma -> walk-through)."""
         return getattr(self, '_game_phase', None) == PHASE_GHOST
 
+    def _is_pre_lobby(self):
+        """
+        True se siamo nel menu o nella lobby di attesa (pre-partita).
+        In questo stato il bot non deve analizzare nulla ne' muoversi.
+        """
+        return getattr(self, '_game_phase', None) in (PHASE_MENU, PHASE_LOBBY)
+
+    def _is_in_meeting(self):
+        """
+        True se e' in corso una votazione/meeting d'emergenza (o il grace
+        period subito dopo). Usato per interrompere le task in corso.
+        """
+        return getattr(self, '_game_phase', None) in (PHASE_VOTING,
+                                                       PHASE_POST_VOTE)
+
     def _intelligence_should_run(self):
         """
         True se il sistema Intelligence deve continuare a girare.
@@ -245,7 +298,7 @@ class GameStateMonitorMixin:
         return {
             PHASE_UNKNOWN:   "Stato: in attesa lettura...",
             PHASE_MENU:      "NON IN PARTITA (menu)",
-            PHASE_LOBBY:     "NON IN PARTITA (lobby)",
+            PHASE_LOBBY:     "PRE-LOBBY (attesa giocatori) - bot fermo",
             PHASE_IMPOSTOR:  "IMPOSTORE - bot inattivo",
             PHASE_VOTING:    "IN VOTAZIONE - bot in pausa",
             PHASE_GHOST:     "FANTASMA - task in linea retta",
@@ -266,3 +319,91 @@ class GameStateMonitorMixin:
             PHASE_ACTIVE:    (100, 220, 120),
             PHASE_POST_VOTE: (180, 180, 100),
         }.get(phase, (150, 150, 150))
+
+    # ============================================================
+    # REAZIONI A EVENTI (meeting / morte)
+    # ============================================================
+
+    def _interrompi_task_per_meeting(self):
+        """
+        Abbandona immediatamente la task in corso quando parte un meeting.
+
+        Sequenza:
+          1. Premi ESC sul gioco (chiude il minigioco eventualmente aperto,
+             cosi' non resta a schermo durante il meeting).
+          2. Ferma il subprocess della task (senza marcarla done: cosi'
+             potra' essere ri-eseguita dopo il meeting).
+          3. Annulla la navigazione in corso e chiude il popup di lancio.
+
+        Auto-All NON viene disattivato: alla fine del meeting (POST_VOTE ->
+        ACTIVE) riprende da solo e ri-pianifica.
+        """
+        print("[GameState] Meeting rilevato -> abbandono task corrente",
+              flush=True)
+
+        # 1) ESC sul gioco per chiudere un eventuale minigioco aperto.
+        if _WIN_OK:
+            try:
+                pyautogui.press('esc')
+            except Exception as e:
+                print(f"[GameState] ESC fallito: {e}", flush=True)
+            try:
+                # rilascio anche il mouse, se era premuto in un drag
+                pyautogui.mouseUp(button='left')
+            except Exception:
+                pass
+
+        # 2) Ferma il subprocess (success=False -> task NON marcata done).
+        try:
+            self._ferma_processo_task()
+        except Exception as e:
+            print(f"[GameState] stop task fallito: {e}", flush=True)
+
+        # 3) Annulla navigazione + popup. Lascio Auto-All attivo: riprendera'
+        #    da solo a meeting finito.
+        try:
+            self._cancel_auto_move(silent=True, stop_auto_all=False)
+        except Exception:
+            pass
+        self._task_launch_arrivo = False
+        if dpg.does_item_exist("task_launch_popup"):
+            dpg.delete_item("task_launch_popup")
+        self.auto_status_msg = "Meeting: task interrotta, riprendo dopo"
+
+    def _ricomincia_giro_da_fantasma(self):
+        """
+        Quando il crewmate muore (ACTIVE -> GHOST), la task in corso si
+        chiude da sola. Da fantasma si possono ancora completare le task,
+        quindi facciamo ripartire il giro:
+
+          1. Ferma il subprocess / la navigazione correnti (cleanup).
+          2. Azzera SOLO lo stato di navigazione corrente (non i cooldown
+             ne' le task completate: quelle restano valide anche da morto).
+          3. Se Auto-All era attivo, lo lascia attivo: il prossimo tick di
+             `_update_auto_all` ripianifichera' partendo dalla posizione
+             attuale, in modalita' fantasma (linea retta, attraversa muri).
+
+        Se Auto-All NON era attivo, non forziamo nulla: l'utente puo'
+        riattivarlo a mano o lanciare le singole task.
+        """
+        print("[GameState] Morte rilevata -> ricomincio il giro da fantasma",
+              flush=True)
+        try:
+            self._ferma_processo_task()
+        except Exception:
+            pass
+        try:
+            self._cancel_auto_move(silent=True, stop_auto_all=False)
+        except Exception:
+            pass
+        self._task_launch_arrivo = False
+        if dpg.does_item_exist("task_launch_popup"):
+            dpg.delete_item("task_launch_popup")
+        # Reset del solo target di navigazione corrente.
+        if hasattr(self, '_current_nav_target'):
+            self._current_nav_target = None
+        self._current_auto_all_task_id = None
+        if getattr(self, 'auto_execute_all', False):
+            self.auto_status_msg = "Fantasma: riprendo il giro delle task"
+        else:
+            self.auto_status_msg = "Sei fantasma: puoi completare le task rimaste"

@@ -157,11 +157,17 @@ class DialogsMixin:
             dpg.add_separator()
             dpg.add_text("Tastiera:")
             dpg.add_text("  F / R / O = telecamera", color=Colors.TEXT_DIM)
+            dpg.add_text("  F1 = preview giro (pannello sinistro)",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("  F2 = intelligence (pannello destro)",
+                         color=Colors.TEXT_DIM)
             dpg.add_text("  G / T / C / H / P = toggle layers",
                          color=Colors.TEXT_DIM)
             dpg.add_text("  M = abilita / disabilita auto-move",
                          color=Colors.TEXT_DIM)
             dpg.add_text("  F4 / FINE (END) = ferma esecuzione task",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("  F5 = reset partita (azzera task e dati)",
                          color=Colors.TEXT_DIM)
             dpg.add_text("  ESC = annulla", color=Colors.TEXT_DIM)
             dpg.add_separator()
