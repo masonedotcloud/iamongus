@@ -74,8 +74,42 @@ class GPSConfig:
     #   5) Se dopo N tentativi ancora spento -> lancia la task comunque
     #      (best-effort, niente blocchi)
     USE_BUTTON_CHECK_ENABLED = True
-    USE_BUTTON_MAX_NUDGES    = 10
-    MICRO_NUDGE_DURATION_SEC = 0.05
+    USE_BUTTON_MAX_NUDGES    = 14
+
+    # --- MICRO-COLPI di aggiustamento posizione (precisi e lenti) ---
+    # All'arrivo il bot si centra sul target con piccoli "colpi" di WASD,
+    # UN ASSE ALLA VOLTA (mai diagonali, che farebbero "girare in cerchio").
+    # La DURATA del colpo e' dosata sulla distanza residua:
+    #   - lontani (> MICRO_NUDGE_FINE_DIST): colpo fino a MICRO_NUDGE_TAP_SEC
+    #   - vicini  (<= MICRO_NUDGE_FINE_DIST): colpo MINIMO (MICRO_NUDGE_TAP_MIN_SEC),
+    #     micro-passi che non oltrepassano il raggio di attivazione della task.
+    #
+    # Se il bot ESCE dal raggio di attivazione (movimenti troppo lunghi):
+    #   abbassa MICRO_NUDGE_TAP_MIN_SEC (passi finali piu' piccoli) e/o
+    #   alza MICRO_NUDGE_FINE_DIST (entra prima in modalita' rifinitura).
+    MICRO_NUDGE_TAP_SEC      = 0.025  # colpo massimo (da lontano)
+    MICRO_NUDGE_TAP_MIN_SEC  = 0.012  # colpo minimo (in rifinitura, da vicino)
+    MICRO_NUDGE_FINE_DIST    = 0.6    # sotto questa distanza -> colpo minimo
+    # Pausa dopo ogni colpo: il personaggio si ferma del tutto (inerzia) e
+    # la RAM aggiorna la posizione. Piu' alta = piu' meticoloso/preciso.
+    MICRO_NUDGE_SETTLE_SEC   = 0.12
+    # Numero massimo di micro-colpi quando il pulsante Use NON e' calibrato
+    # (loop "alla cieca", senza verifica visiva: si ferma alla deadzone).
+    BLIND_NUDGE_MAX          = 12
+
+    # Quando all'arrivo il pulsante Use risulta SPENTO e non ci sono punti
+    # alternativi, il bot ritenta il riposizionamento sul target principale
+    # invece di lanciare una task che non si attiverebbe. Dopo
+    # REPOSITION_MAX_RETRY tentativi falliti, salta la task e le mette un
+    # cooldown (REPOSITION_FAIL_COOLDOWN_SEC) per passare ad un'altra.
+    REPOSITION_MAX_RETRY        = 3
+    REPOSITION_FAIL_COOLDOWN_SEC = 20.0
+
+    # NUDGE_DEADZONE: "zona morta" attorno al target (in unita' mondo).
+    # Se la distanza su un asse e' sotto questo valore, l'asse e'
+    # considerato centrato e non si preme. Valore piccolo = il bot si
+    # avvicina di piu' al centro esatto (ma servono piu' colpi).
+    NUDGE_DEADZONE = 0.12
 
     # ============================================================
     # --- LOOP GUARD RETRY ---

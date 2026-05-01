@@ -12,21 +12,84 @@ from ._imports import *
 class AutoQuestMixin:
     """Mixin con i metodi di auto quest di GPSVisualizerPro."""
     def _toggle_auto_all(self):
-        """Attiva o disattiva l'esecuzione automatica in loop di tutte le task."""
+        """
+        Attiva o disattiva l'esecuzione automatica di tutte le task (F4).
+
+        - SPENTO -> ON: avvia il giro (forza un check immediato).
+        - ON -> SPENTO: ferma e ANNULLA tutto immediatamente:
+          ESC sul gioco (chiude il minigioco eventualmente aperto),
+          kill del subprocess della task, stop navigazione, chiusura
+          popup di lancio. Cosi' premere F4 durante una task la chiude
+          davvero, non la lascia a meta'.
+        """
         self.auto_execute_all = not self.auto_execute_all
         if self.auto_execute_all:
-            # Tema personalizzato (colori e spaziature)
-            with dpg.theme() as th:
-                with dpg.theme_component(dpg.mvButton):
-                    dpg.add_theme_color(dpg.mvThemeCol_Text, (0, 255, 100, 255))
-            dpg.bind_item_theme("btn_auto_all", th)
-            # Cambia le configurazioni di un widget gia' creato
-            dpg.configure_item("btn_auto_all", label="[X] Ferma Esecuzione Totale")
+            self._aggiorna_btn_auto_all_on()
             self.auto_status_msg = "Auto-All attivato: cerco task..."
-            self._auto_all_timer = 1.0 # Forza il check immediato
+            self._auto_all_timer = 1.0  # Forza il check immediato
         else:
-            self._cancel_auto_move()
-            self._ferma_processo_task()
+            self._aggiorna_btn_auto_all_off()
+            self._stop_completo_task()
+            self.auto_status_msg = "Auto-All fermato: task annullata"
+
+    def _stop_completo_task(self):
+        """
+        Stop pulito e completo della task/navigazione correnti.
+
+        Sequenza: STOP flag -> ESC sul gioco (chiude il minigioco aperto)
+        + rilascio mouse -> kill subprocess -> annulla navigazione ->
+        chiude il popup di lancio e azzera i flag di arrivo.
+        Condiviso fra F4 (spegnimento Auto-All) e altri punti di stop.
+        """
+        # Segnala stop al motore/subprocess.
+        stop_flag.requested = True
+
+        # ESC sul gioco: chiude un eventuale minigioco aperto e rilascia
+        # il mouse (se era premuto in un drag).
+        if _WIN_OK:
+            try:
+                pyautogui.press('esc')
+            except Exception:
+                pass
+            try:
+                pyautogui.mouseUp(button='left')
+            except Exception:
+                pass
+
+        # Kill subprocess + annulla navigazione.
+        self._ferma_processo_task()
+        self._cancel_auto_move(silent=True, stop_auto_all=False)
+
+        # Chiude popup di lancio e azzera i flag di fase arrivo.
+        self._task_launch_arrivo = False
+        if dpg.does_item_exist("task_launch_popup"):
+            dpg.delete_item("task_launch_popup")
+        if hasattr(self, '_current_nav_target'):
+            self._current_nav_target = None
+        self._current_auto_all_task_id = None
+
+        # Lo stop e' stato consumato: pronti a ripartire pulito al
+        # prossimo F4 (la ripresa non deve trovare il flag attivo).
+        stop_flag.requested = False
+
+    def _aggiorna_btn_auto_all_on(self):
+        """Aggiorna il bottone Auto-All allo stato ATTIVO (verde + label stop)."""
+        if not dpg.does_item_exist("btn_auto_all"):
+            return
+        with dpg.theme() as th:
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, (0, 255, 100, 255))
+        dpg.bind_item_theme("btn_auto_all", th)
+        dpg.configure_item("btn_auto_all",
+                           label="[X] Ferma Esecuzione Totale [F4]")
+
+    def _aggiorna_btn_auto_all_off(self):
+        """Aggiorna il bottone Auto-All allo stato SPENTO (label avvio)."""
+        if not dpg.does_item_exist("btn_auto_all"):
+            return
+        dpg.bind_item_theme("btn_auto_all", 0)
+        dpg.configure_item("btn_auto_all",
+                           label="Avvia tutte le task [F4]")
 
     def _update_auto_all(self, dt):
         """Loop logico dell'Auto-Quest: sceglie e avvia la prossima task se libero.
