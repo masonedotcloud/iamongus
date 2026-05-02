@@ -183,7 +183,54 @@ class TasksLaunchMixin:
                         self._on_arrival_callback = on_arrivo
                         return
                     else:
-                        print(f"[VisualCheck] Nessun alternativo rimanente o tutti inattivi, procedo comunque.")
+                        # Niente alternativi: invece di lanciare a vuoto
+                        # (la task NON partirebbe davvero, il pulsante Use
+                        # e' spento), RITENTO il riposizionamento sul target
+                        # principale fino a REPOSITION_MAX_RETRY volte.
+                        # Solo dopo i tentativi falliti rinuncio, cosi' non
+                        # "fingo" di eseguire una task che non si attiva.
+                        rip = getattr(self, '_task_reposition_retry', 0)
+                        max_rip = int(getattr(GPSConfig,
+                                              'REPOSITION_MAX_RETRY', 3))
+                        if rip < max_rip:
+                            self._task_reposition_retry = rip + 1
+                            print(f"[VisualCheck] USE spento e niente "
+                                  f"alternativi. Riposiziono "
+                                  f"({self._task_reposition_retry}/{max_rip}).",
+                                  flush=True)
+                            self.auto_status_msg = (
+                                f"USE spento: riposiziono "
+                                f"({self._task_reposition_retry}/{max_rip})")
+                            # Ritorno al target principale e rifaccio
+                            # l'avvicinamento (il nudge ritentera' Use).
+                            main_target = (reg['x'], reg['y'])
+                            self._current_nav_target = main_target
+                            self._plan_path(main_target)
+                            self._on_arrival_callback = on_arrivo
+                            return
+                        else:
+                            # Esauriti i retry: rinuncio a QUESTA task senza
+                            # lanciarla. In Auto-All metto un cooldown cosi'
+                            # il planner passa ad un'altra task e non resta
+                            # incastrato qui.
+                            print(f"[VisualCheck] USE ancora spento dopo "
+                                  f"{max_rip} riposizionamenti. Salto la "
+                                  f"task '{nome}'.", flush=True)
+                            self.auto_status_msg = (
+                                f"'{nome}': USE non attivo, task saltata")
+                            self._task_reposition_retry = 0
+                            if hasattr(self, 'task_cooldowns'):
+                                # cooldown breve per non riprovarla subito
+                                self.task_cooldowns[id_task] = time.time() + \
+                                    float(getattr(GPSConfig,
+                                          'REPOSITION_FAIL_COOLDOWN_SEC', 20.0))
+                            self._cancel_auto_move(silent=True,
+                                                   stop_auto_all=False)
+                            if dpg.does_item_exist("task_launch_popup"):
+                                dpg.delete_item("task_launch_popup")
+                            return
+                # Check superato: azzero il contatore retry riposizionamento.
+                self._task_reposition_retry = 0
             else:
                 print(f"[TaskLaunch] '{nome}' tempo-critica (simon_says): "
                       f"skip pausa stabilita' + check visuale", flush=True)

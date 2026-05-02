@@ -350,13 +350,28 @@ class GPSVisualizerPro(
         dt = dpg.get_delta_time()
         if dt > 0.1: dt = 0.1
 
-        # --- HOTKEY GLOBALE PER STOP TASK (F4 o END/FINE) ---
+        # --- HOTKEY GLOBALI ---
         if _WIN_OK:
+            # F4 = TOGGLE "avvia tutte le task" (Auto-All).
+            #   - se Auto-All e' SPENTO  -> lo accende (avvia il giro task)
+            #   - se Auto-All e' ACCESO  -> lo spegne e ferma tutto
+            # _toggle_auto_all() gia' gestisce entrambi i casi: quando
+            # spegne chiama _cancel_auto_move() + _ferma_processo_task().
             f4_pressed = (win32api.GetAsyncKeyState(0x73) & 0x8000) != 0
+            if f4_pressed and not getattr(self, '_prev_f4_key', False):
+                stop_flag.requested = False  # F4 puo' anche AVVIARE
+                self._toggle_auto_all()
+            self._prev_f4_key = f4_pressed
+
+            # FINE/END = STOP D'EMERGENZA puro: ferma SEMPRE tutto, senza
+            # toggle (utile per fermare di colpo anche una singola task
+            # lanciata a mano, non solo Auto-All).
             end_pressed = (win32api.GetAsyncKeyState(0x23) & 0x8000) != 0
-            if (f4_pressed or end_pressed) and not getattr(self, '_prev_stop_key', False):
-                # Flag globale di stop (True quando F4 o FINE viene premuto)
+            if end_pressed and not getattr(self, '_prev_stop_key', False):
                 stop_flag.requested = True
+                # spegne anche Auto-All se era attivo
+                self.auto_execute_all = False
+                self._aggiorna_btn_auto_all_off()
                 self._cancel_auto_move()
                 self._ferma_processo_task()
                 self._task_launch_arrivo = False
@@ -366,8 +381,8 @@ class GPSVisualizerPro(
                     pass
                 if dpg.does_item_exist("task_launch_popup"):
                     dpg.delete_item("task_launch_popup")
-                self.auto_status_msg = "[X] Esecuzione annullata (Stop)"
-            self._prev_stop_key = (f4_pressed or end_pressed)
+                self.auto_status_msg = "[X] Stop d'emergenza (FINE)"
+            self._prev_stop_key = end_pressed
 
             # --- HOTKEY F5: RESET PARTITA (azzera task/dati di progresso) ---
             f5_pressed = (win32api.GetAsyncKeyState(0x74) & 0x8000) != 0
