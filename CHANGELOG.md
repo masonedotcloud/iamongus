@@ -1,5 +1,59 @@
 # Changelog
 
+## v2.2.55 — Fix navigazione fantasma + oscillazione arrivo + F4 toggle Auto-All
+
+### Movimenti scattosi "avanti/indietro" sopra la task (risolto)
+
+Il "nudge" di rifinitura all'arrivo usava una deadzone minuscola (0.05):
+appena il bot oltrepassava di poco il target su un asse, premeva il
+tasto opposto -> oltrepassava di nuovo -> oscillava (i movimenti
+scattosi avanti/indietro). Risolto con:
+
+- **Deadzone piu' ampia** (``GPSConfig.NUDGE_DEADZONE = 0.18``): sotto
+  questa distanza su un asse, il bot non preme.
+- **Anti-overshoot**: se la direzione richiesta su un asse si inverte
+  rispetto al nudge precedente (= ho oltrepassato), quell'asse viene
+  fermato invece di rimbalzare indietro.
+
+### Anomalie da fantasma (risolto)
+
+Due cause distinte:
+
+1. **Dopo la votazione**: il grace period post-voto (pensato per dare
+   ai vivi il tempo di materializzarsi dopo il teletrasporto) veniva
+   applicato anche ai fantasmi, classificandoli ``POST_VOTE`` invece di
+   ``GHOST`` per alcuni secondi -> il bot tentava di navigare come un
+   vivo (A* che evita i muri) invece che in linea retta. Ora il grace
+   NON si applica ai fantasmi: appena morti dopo il voto, ripartono
+   subito in modalita' fantasma.
+
+2. **All'arrivo sulla task**: da fantasma il pulsante Use spesso non si
+   illumina, quindi il loop di micro-nudge (fino a 10 iterazioni di
+   press/release) andava in stallo producendo i movimenti scattosi. Ora
+   da fantasma il micro-nudge viene saltato del tutto: il bot arriva in
+   linea retta e lancia la task appena nel raggio di arrivo.
+
+### F4 = avvia/ferma tutte le task (Auto-All)
+
+Prima F4 era solo "stop". Ora F4 e' un toggle:
+
+- Auto-All SPENTO -> F4 lo accende (avvia il giro di tutte le task)
+- Auto-All ACCESO -> F4 lo spegne e ferma tutto (navigazione + subprocess)
+
+Il tasto **FINE/END** resta lo **stop d'emergenza** puro: ferma sempre
+tutto immediatamente (anche una singola task lanciata a mano), senza
+toggle. Il bottone in dashboard ora mostra "Avvia tutte le task [F4]"
+e diventa "[X] Ferma Esecuzione Totale [F4]" quando attivo.
+
+File toccati: ``ui/app.py`` (F4 toggle + FINE stop), ``ui/mixins/auto_quest.py``
+(refactor toggle + helper bottone), ``ui/mixins/auto_move.py`` (deadzone,
+anti-overshoot, skip nudge da fantasma), ``ui/mixins/game_state_monitor.py``
+(grace post-voto non si applica ai fantasmi), ``core/config.py``
+(NUDGE_DEADZONE), ``ui/mixins/ui_setup.py`` + ``ui/mixins/dialogs.py``
+(label/help).
+
+---
+
 ## v2.2.54 — Game state, path ottimizzato, gestione meeting/morte, F1/F2 globali
 
 ### #1 Pre-lobby riconosciuto
