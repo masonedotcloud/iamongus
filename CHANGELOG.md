@@ -1,5 +1,54 @@
 # Changelog
 
+## v2.2.56 — Fix arrivo fantasma: nudge adattivo + verifica reale del pulsante Use
+
+### Problema (regressione della v2.2.55)
+
+Nella v2.2.55 avevo fatto SALTARE del tutto il nudge ai fantasmi per
+eliminare i movimenti scattosi. Ma cosi' ho tolto anche il controllo del
+pulsante Use e l'aggiustamento di posizione: il fantasma "pensava" di
+essere arrivato e lanciava la task senza essere ben posizionato -> la
+task non partiva davvero.
+
+### Fix: nudge adattivo alla velocita' (invece di saltarlo)
+
+La vera causa dei movimenti scattosi NON era "il fantasma fa il nudge",
+ma la VELOCITA' alta del fantasma combinata con un tap a durata fissa:
+un tap da 50ms a velocita' alta percorre troppa strada e oltrepassa il
+target. Ora il nudge e' di nuovo attivo per tutti (fantasmi inclusi), ma
+la durata del singolo tap e' ADATTIVA:
+
+    dur = clamp(distanza_residua * GAIN, MIN, DURATION)
+
+Da lontano tap piu' lunghi (avvicinamento rapido), da vicino tap
+brevissimi (~20ms) che non oltrepassano. Cosi' anche un fantasma veloce
+si centra senza oscillare. Nuove costanti: ``MICRO_NUDGE_MIN_SEC``,
+``MICRO_NUDGE_GAIN_SEC``.
+
+### Fix: la task non parte piu' "a vuoto" se il pulsante Use e' spento
+
+Prima, se all'arrivo il pulsante Use era spento e non c'erano punti
+alternativi, il bot lanciava la task "comunque" (best-effort) -> sembrava
+eseguirla ma non si attivava. Ora:
+
+- Se il check visuale (pulsante Use in basso a destra OPPURE alone giallo
+  sulla task) fallisce e non ci sono alternativi, il bot RITENTA il
+  riposizionamento sul target principale fino a ``REPOSITION_MAX_RETRY``
+  volte (rifacendo il nudge, che ricontrolla il pulsante Use).
+- Dopo i tentativi falliti NON lancia a vuoto: salta la task e le mette
+  un cooldown breve (``REPOSITION_FAIL_COOLDOWN_SEC``) cosi' in Auto-All
+  il planner passa ad un'altra task e non resta incastrato.
+
+Il loop di micro-nudge ora, a tentativi esauriti, segnala chiaramente
+"pulsante Use ancora SPENTO" invece di "lancio comunque".
+
+File toccati: ``ui/mixins/auto_move.py`` (nudge adattivo, rimosso lo skip
+fantasma), ``ui/mixins/tasks_launch.py`` (retry riposizionamento invece
+di lancio a vuoto), ``core/config.py`` (costanti nudge adattivo +
+riposizionamento).
+
+---
+
 ## v2.2.55 — Fix navigazione fantasma + oscillazione arrivo + F4 toggle Auto-All
 
 ### Movimenti scattosi "avanti/indietro" sopra la task (risolto)
