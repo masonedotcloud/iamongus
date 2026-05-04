@@ -1,5 +1,48 @@
 # Changelog
 
+## v2.2.57 — Micro-colpi di posizionamento: un asse alla volta, precisi e lenti
+
+### Movimenti ancora anomali all'arrivo (gira in cerchio, si allontana)
+
+Anche col nudge "adattivo per distanza/velocita'" il bot all'arrivo
+girava in cerchio sopra la task e si allontanava troppo. Due cause:
+
+- I tap muovevano DUE assi insieme (W+D = diagonale): se gli assi del
+  gioco non sono perfettamente allineati allo schermo, la diagonale fa
+  "ruotare" attorno al target invece di centrarlo.
+- Il calcolo della durata in base alla velocita' poteva ancora produrre
+  tap troppo lunghi -> overshoot.
+
+### Fix: micro-colpi precisi, UN ASSE ALLA VOLTA
+
+Riscritta la centratura all'arrivo (``_do_arrival_nudge``):
+
+- **Un solo asse per colpo**: ogni micro-colpo preme UN solo tasto WASD,
+  correggendo prima l'asse con l'errore maggiore, poi l'altro. Mai
+  diagonali -> niente "giri in cerchio".
+- **Tap fissi e brevi** (``MICRO_NUDGE_TAP_SEC = 0.03``): niente calcolo
+  di velocita' che amplifica il movimento. Piccoli passi ripetuti.
+- **Pausa di assestamento** dopo ogni colpo (``MICRO_NUDGE_SETTLE_SEC =
+  0.08``): il player si ferma e la RAM aggiorna la posizione prima del
+  colpo successivo -> movimento meticoloso, non frenetico.
+- **Deadzone ridotta** (0.18 -> 0.12): si centra piu' vicino al punto
+  esatto.
+- Dopo ogni colpo ricontrolla il pulsante Use: appena acceso, stop.
+- Senza calibrazione Use: micro-colpi "alla cieca" fino alla deadzone,
+  max ``BLIND_NUDGE_MAX``.
+
+Rimossi il vecchio ``_calc_nudge_keys`` (due assi) e la stima velocita' a
+feedback chiuso, sostituiti da ``_single_axis_key``. Rimosse le costanti
+``MICRO_NUDGE_DURATION_SEC`` / ``_MIN_SEC`` / ``_GAIN_SEC``.
+
+Per tarare dal vivo: tap piu' corti o pause piu' lunghe = piu' precisione
+e lentezza; deadzone piu' piccola = piu' vicino al centro.
+
+File toccati: ``ui/mixins/auto_move.py`` (riscrittura nudge),
+``core/config.py`` (nuove costanti micro-colpi).
+
+---
+
 ## v2.2.56 — Fix arrivo fantasma: nudge adattivo + verifica reale del pulsante Use
 
 ### Problema (regressione della v2.2.55)
