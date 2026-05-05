@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.2.59 — Colpi proporzionali alla distanza + check Use pre-colpo
+
+### Problema: movimenti troppo lunghi, esce dal raggio di attivazione
+
+Anche coi micro-colpi "un asse alla volta" il bot, avvicinandosi alla
+task, faceva colpi troppo lunghi e usciva dal raggio di attivazione
+(il pulsante Use non restava acceso). Due cause:
+
+1. Il colpo aveva durata FISSA (30ms) a qualsiasi distanza: vicino al
+   target era troppo e oltrepassava.
+2. Il pulsante Use veniva controllato solo DOPO il colpo: se il bot era
+   gia' nel raggio, il colpo successivo lo faceva comunque uscire prima
+   del controllo.
+
+### Fix 1: durata del colpo proporzionale alla distanza residua
+
+Nuovo ``_tap_for_distance``: il colpo e' lungo solo da lontano e diventa
+MINIMO (12ms) quando si e' vicini al target (sotto
+``MICRO_NUDGE_FINE_DIST``). Cosi' in rifinitura fa micro-passi che non
+superano il raggio. Nuove costanti: ``MICRO_NUDGE_TAP_MIN_SEC`` (colpo
+minimo), ``MICRO_NUDGE_FINE_DIST`` (soglia rifinitura); ``MICRO_NUDGE_TAP_SEC``
+ora e' il colpo MASSIMO (da lontano).
+
+### Fix 2: controllo pulsante Use PRIMA di ogni colpo
+
+All'inizio di ogni iterazione il bot verifica se il pulsante Use e' gia'
+acceso: in tal caso e' gia' nel raggio e si ferma SENZA fare il colpo
+(che lo farebbe uscire). Prima il check era solo dopo il colpo. Questo
+copre anche il caso "gia' nel raggio all'arrivo" (rimosso il check
+iniziale separato, ora ridondante).
+
+Tuning: ``MICRO_NUDGE_SETTLE_SEC`` 0.08 -> 0.12 (piu' tempo per fermarsi,
+l'inerzia del personaggio non falsa la lettura), ``BLIND_NUDGE_MAX``
+8 -> 12.
+
+Per tarare dal vivo: se esce ancora dal raggio, abbassa
+``MICRO_NUDGE_TAP_MIN_SEC`` (colpi finali piu' corti) o alza
+``MICRO_NUDGE_FINE_DIST`` (entra prima in rifinitura).
+
+File toccati: ``ui/mixins/auto_move.py`` (tap proporzionale + check
+pre-colpo), ``core/config.py`` (nuove costanti).
+
+---
+
 ## v2.2.58 — Fix F4: ripresa Auto-All bloccata + stop netto della task
 
 ### Bug: F4 non riprendeva Auto-All
