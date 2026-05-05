@@ -1,5 +1,39 @@
 # Changelog
 
+## v2.2.58 — Fix F4: ripresa Auto-All bloccata + stop netto della task
+
+### Bug: F4 non riprendeva Auto-All
+
+``_ferma_processo_task`` faceva ``return`` anticipato quando il
+subprocess era gia' terminato (``poll() != None``), SENZA azzerare
+``self._task_process``. Cosi' dopo che una task finiva da sola,
+``_task_process`` restava puntato a un Popen morto. Il guard di Auto-All
+(``if self._task_process is not None: return``) lo vedeva come "task
+ancora in corso" e non sceglieva mai una nuova task -> premere F4 per
+riprendere non aveva effetto.
+
+Fix: ``_task_process`` (e ``_task_process_task_id`` / ``_task_prewarm_id``)
+vengono ora azzerati SEMPRE, anche quando il processo era gia' morto.
+Verificato con test: col vecchio codice la ripresa restava bloccata,
+col nuovo riparte.
+
+### F4 durante una task: ora la ferma e annulla nettamente
+
+Premere F4 mentre una task e' in esecuzione ora la chiude davvero:
+nuovo helper ``_stop_completo_task`` che esegue in sequenza STOP flag ->
+ESC sul gioco (chiude il minigioco aperto a schermo) + rilascio mouse ->
+kill del subprocess -> annulla navigazione -> chiude il popup di lancio
+e azzera i flag di arrivo, e rimette ``stop_flag.requested = False`` cosi'
+la ripresa successiva parte pulita.
+
+Prima F4-spegnimento chiamava solo ``_cancel_auto_move`` +
+``_ferma_processo_task`` senza ESC: il minigioco poteva restare aperto.
+
+File toccati: ``ui/mixins/tasks_process.py`` (reset sempre eseguito),
+``ui/mixins/auto_quest.py`` (``_stop_completo_task`` + toggle che lo usa).
+
+---
+
 ## v2.2.57 — Micro-colpi di posizionamento: un asse alla volta, precisi e lenti
 
 ### Movimenti ancora anomali all'arrivo (gira in cerchio, si allontana)
