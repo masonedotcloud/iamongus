@@ -465,42 +465,39 @@ class AutoMoveMixin:
 
     def _do_arrival_nudge(self, cx, cy):
         """
-        Esegue il "nudge finale" per arrivare nel raggio di attivazione
-        del pulsante Use del gioco.
+        Centra il giocatore sul target con MICRO-COLPI WASD precisi, per
+        entrare nel raggio di attivazione del pulsante Use del gioco.
+
+        Principio: niente movimenti continui o tap lunghi (che a velocita'
+        fantasma fanno overshoot e "giri in cerchio"). Si fanno piccoli
+        colpi, UN ASSE ALLA VOLTA (mai diagonali), con una pausa di
+        assestamento dopo ognuno per rileggere la posizione. Lento e
+        meticoloso.
 
         Strategia:
-          1) Se la calibrazione del pulsante Use e' presente e
-             USE_BUTTON_CHECK_ENABLED=True:
-             - Controlla periodicamente il pulsante Use
-             - Se acceso -> esci (massima precisione raggiunta)
-             - Se spento -> fa un micro-nudge WASD verso il target
-                            (MICRO_NUDGE_DURATION_SEC) e ricontrolla
-             - Ripete fino a USE_BUTTON_MAX_NUDGES
-          2) Altrimenti (o calibrazione mancante o ancora spento dopo
-             N tentativi): fa il nudge fisso classico
-             (AUTO_FINAL_NUDGE_SEC) come fallback.
+          1) Se ``USE_BUTTON_CHECK_ENABLED`` e la calibrazione del pulsante
+             Use sono presenti: dopo ogni micro-colpo ricontrolla il
+             pulsante. Appena acceso -> esci (centrato). Si ferma anche se
+             rientra nella deadzone su entrambi gli assi. Max
+             ``USE_BUTTON_MAX_NUDGES`` colpi; se resta spento, NON lancia
+             a vuoto (lo segnala al chiamante).
+          2) Se la calibrazione manca: micro-colpi "alla cieca" (stesso
+             stile, un asse alla volta) fino alla deadzone, max
+             ``BLIND_NUDGE_MAX``.
+
+        Parametri per tarare la precisione (in ``core/config.py``):
+        ``MICRO_NUDGE_TAP_SEC`` (durata colpo), ``MICRO_NUDGE_SETTLE_SEC``
+        (pausa fra colpi), ``NUDGE_DEADZONE`` (quanto vicino al centro).
 
         Parametri
         ---------
         cx, cy : float
             Posizione attuale del giocatore (mondo, non schermo). Usata
-            per calcolare la direzione del nudge verso `auto_final_target`.
+            come fallback se la lettura RAM non e' disponibile.
         """
         target = getattr(self, 'auto_final_target', None)
         if not target:
             return
-
-        # Direzione corrente verso il target (in coordinate mondo)
-        def _calc_nudge_keys(_cx, _cy):
-            """Calcola i tasti WASD da premere per andare verso `target` da `(_cx, _cy)`."""
-            tx, ty = target
-            dx, dy = tx - _cx, ty - _cy
-            keys = set()
-            if   dx >  0.05: keys.add('D')
-            elif dx < -0.05: keys.add('A')
-            if   dy >  0.05: keys.add('W')
-            elif dy < -0.05: keys.add('S')
-            return keys
 
         # Helper per cattura del client rect del gioco (in coordinate
         # schermo). Necessaria per il check del pulsante Use.
@@ -520,8 +517,58 @@ class AutoMoveMixin:
 
         # === FASE 1: tentativi iterativi con check pulsante Use ===
         check_enabled = getattr(GPSConfig, 'USE_BUTTON_CHECK_ENABLED', False)
-        max_nudges = int(getattr(GPSConfig, 'USE_BUTTON_MAX_NUDGES', 10))
-        nudge_dur = float(getattr(GPSConfig, 'MICRO_NUDGE_DURATION_SEC', 0.05))
+        max_nudges = int(getattr(GPSConfig, 'USE_BUTTON_MAX_NUDGES', 14))
+        # Durata MASSIMA di un micro-colpo (usata solo da lontano).
+        tap_max   = float(getattr(GPSConfig, 'MICRO_NUDGE_TAP_SEC', 0.03))
+        # Durata MINIMA di un micro-colpo: il tap piu' corto che il gioco
+        # registra ancora. Vicino al target si usa questo, per spostamenti
+        # minuscoli che non superano il raggio di attivazione.
+        tap_min   = float(getattr(GPSConfig, 'MICRO_NUDGE_TAP_MIN_SEC', 0.012))
+        # Sotto questa distanza dal target il colpo e' SEMPRE il minimo
+        # (siamo "in rifinitura": passi piccolissimi per non oltrepassare).
+        fine_dist = float(getattr(GPSConfig, 'MICRO_NUDGE_FINE_DIST', 0.5))
+        # Pausa fra un colpo e il successivo: tempo per fermarsi del tutto
+        # (inerzia del personaggio) e per la RAM di aggiornare la posizione.
+        settle_sec = float(getattr(GPSConfig, 'MICRO_NUDGE_SETTLE_SEC', 0.12))
+        deadzone   = float(getattr(GPSConfig, 'NUDGE_DEADZONE', 0.12))
+
+        def _tap_for_distance(_cx, _cy):
+            """
+            Durata del prossimo colpo in base alla distanza residua dal
+            target: piccola da vicino (no overshoot), un po' piu' lunga
+            da lontano (avvicinamento). Sempre fra tap_min e tap_max.
+            """
+            tx, ty = target
+            resid = math.hypot(tx - _cx, ty - _cy)
+            if resid <= fine_dist:
+                # Zona di rifinitura: colpo minimo, micro-passi.
+                return tap_min
+            # Scala lineare fra fine_dist e ~3*fine_dist.
+            frac = min(1.0, (resid - fine_dist) / (2.0 * fine_dist))
+            return tap_min + (tap_max - tap_min) * frac
+
+        def _single_axis_key(_cx, _cy):
+            """
+            Ritorna UN SOLO tasto (o None) per correggere l'asse con
+            l'errore maggiore. Muovere un asse alla volta evita le
+            diagonali che fanno "girare in cerchio" sopra la task.
+            Rispetta la deadzone: se entrambi gli assi sono dentro, None.
+            """
+            tx, ty = target
+            dx, dy = tx - _cx, ty - _cy
+            # Quale asse e' piu' fuori? Correggo prima quello.
+            if abs(dx) >= abs(dy):
+                if dx > deadzone:   return 'D'
+                if dx < -deadzone:  return 'A'
+                # X gia' centrato: passo a Y
+                if dy > deadzone:   return 'W'
+                if dy < -deadzone:  return 'S'
+            else:
+                if dy > deadzone:   return 'W'
+                if dy < -deadzone:  return 'S'
+                if dx > deadzone:   return 'D'
+                if dx < -deadzone:  return 'A'
+            return None
 
         if check_enabled:
             try:
@@ -535,60 +582,84 @@ class AutoMoveMixin:
                 # i check (cattura ROI veloce).
                 import mss as _mss
                 with _mss.mss() as sct:
-                    # Check iniziale: forse siamo gia' nel raggio
-                    rect = _client_rect()
-                    if rect:
-                        lit = is_lit(rect, calib, sct_optional=sct)
-                        if lit:
-                            print("[Arrival] Pulsante Use gia' acceso "
-                                  "all'arrivo, no nudge necessario.")
-                            return
-
-                    # Loop di micro-nudge
+                    # Loop di MICRO-COLPI precisi, un asse alla volta.
+                    # Ogni iterazione: PRIMA verifica se il pulsante Use e'
+                    # gia' acceso (in tal caso siamo nel raggio: fermati,
+                    # NON fare il colpo che ti farebbe uscire), poi un tap
+                    # brevissimo dosato sulla distanza, pausa, rilettura.
+                    # Il check pre-colpo alla prima iterazione copre anche
+                    # il caso "gia' nel raggio all'arrivo" (no colpo affatto).
                     for attempt in range(1, max_nudges + 1):
-                        # Posizione corrente (puo' essere cambiata dai
-                        # nudge precedenti)
-                        pos = self.pos_target if self.pos_target else (cx, cy)
-                        keys = _calc_nudge_keys(pos[0], pos[1])
-                        if not keys:
-                            # Esattamente sul target - non servono altri
-                            # nudge, usciamo.
-                            break
-
-                        # Esegui micro-nudge
-                        self.key_ctrl.release_all()
-                        for k in keys:
-                            self.key_ctrl.press(k)
-                        time.sleep(nudge_dur)
-                        self.key_ctrl.release_all()
-
-                        # Ricontrolla pulsante
+                        # CHECK PRE-COLPO: se il pulsante e' gia' acceso,
+                        # siamo nel raggio di attivazione. Fermarsi subito
+                        # evita il "movimento di troppo" che fa uscire.
                         rect = _client_rect()
                         if rect:
                             lit = is_lit(rect, calib, sct_optional=sct)
                             if lit:
                                 print(f"[Arrival] Pulsante Use acceso "
-                                      f"dopo {attempt} micro-nudge.")
+                                      f"(pre-colpo, dopo {attempt-1} colpi): "
+                                      f"fermo qui.", flush=True)
+                                self.key_ctrl.release_all()
+                                return
+
+                        pos = self.pos_target if self.pos_target else (cx, cy)
+                        key = _single_axis_key(pos[0], pos[1])
+                        if key is None:
+                            # Entro la deadzone su entrambi gli assi: centrato.
+                            print(f"[Arrival] Centrato dopo {attempt-1} "
+                                  f"micro-colpi.", flush=True)
+                            break
+
+                        # Durata del colpo dosata sulla distanza residua:
+                        # minuscola da vicino per non oltrepassare il raggio
+                        # di attivazione della task.
+                        tap = _tap_for_distance(pos[0], pos[1])
+
+                        # Un solo micro-colpo sul singolo asse.
+                        self.key_ctrl.release_all()
+                        self.key_ctrl.press(key)
+                        time.sleep(tap)
+                        self.key_ctrl.release(key)
+                        # Pausa di assestamento: il personaggio si ferma
+                        # (inerzia) e la RAM aggiorna la posizione.
+                        time.sleep(settle_sec)
+
+                        # Ricontrolla il pulsante Use dopo il colpo.
+                        rect = _client_rect()
+                        if rect:
+                            lit = is_lit(rect, calib, sct_optional=sct)
+                            if lit:
+                                print(f"[Arrival] Pulsante Use acceso "
+                                      f"dopo {attempt} micro-colpi.",
+                                      flush=True)
                                 return
 
                     # Esauriti i tentativi senza accendere il pulsante.
-                    # Non blocchiamo: lanciamo la task comunque (best-effort).
-                    print(f"[Arrival] Esauriti {max_nudges} micro-nudge, "
-                          f"pulsante Use ancora spento. Lancio comunque.")
+                    # NON lanciamo a vuoto: segnaliamo che il pulsante e'
+                    # ancora spento (la task probabilmente non partira').
+                    print(f"[Arrival] Esauriti {max_nudges} micro-colpi, "
+                          f"pulsante Use ancora SPENTO.", flush=True)
+                    self._arrival_use_lit = False
                     return
+            else:
+                # check abilitato ma calibrazione mancante: avviso una volta
+                print("[Arrival] USE_BUTTON_CHECK attivo ma calibrazione "
+                      "mancante: uso il nudge fisso di fallback.", flush=True)
 
         # === FASE 2: fallback nudge fisso (calibrazione mancante o
-        # disabilitata) - nudge fisso classico ===
-        nudge_sec = getattr(GPSConfig, 'AUTO_FINAL_NUDGE_SEC', 0.0)
-        if nudge_sec > 0:
-            tx, ty = target
-            fdx, fdy = tx - cx, ty - cy
-            fdist = math.hypot(fdx, fdy)
-            if fdist > 0.05:
-                keys = _calc_nudge_keys(cx, cy)
-                if keys:
-                    self.key_ctrl.release_all()
-                    for k in keys:
-                        self.key_ctrl.press(k)
-                    time.sleep(nudge_sec)
-                    self.key_ctrl.release_all()
+        # check disabilitato) - micro-colpi a ciclo aperto (niente check
+        # del pulsante perche' non calibrato), un asse alla volta. ===
+        max_blind = int(getattr(GPSConfig, 'BLIND_NUDGE_MAX', 8))
+        for _ in range(max_blind):
+            pos = self.pos_target if self.pos_target else (cx, cy)
+            key = _single_axis_key(pos[0], pos[1])
+            if key is None:
+                break
+            tap = _tap_for_distance(pos[0], pos[1])
+            self.key_ctrl.release_all()
+            self.key_ctrl.press(key)
+            time.sleep(tap)
+            self.key_ctrl.release(key)
+            time.sleep(settle_sec)
+        self.key_ctrl.release_all()

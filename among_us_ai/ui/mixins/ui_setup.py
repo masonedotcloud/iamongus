@@ -408,7 +408,7 @@ class UISetupMixin:
                         dpg.add_button(label="Registra nuova", width=104,
                                        callback=lambda *a: self._registra_task_sconosciuta())
                     dpg.add_spacer(height=4)
-                    dpg.add_button(label="Esegui automaticamente tutte le task",
+                    dpg.add_button(label="Avvia tutte le task [F4]",
                                    width=-1, tag="btn_auto_all",
                                    callback=lambda *a: self._toggle_auto_all())
                     dpg.add_spacer(height=4)

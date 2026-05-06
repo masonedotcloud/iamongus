@@ -141,9 +141,18 @@ class GameStateMonitorMixin:
                 return PHASE_LOBBY
             return PHASE_MENU
 
-        # In partita: prima check del POST_VOTE grace
+        # In partita: prima check del POST_VOTE grace.
+        # NB: il grace serve a dare ai VIVI il tempo di "materializzarsi"
+        # nel punto in cui li teletrasporta il gioco dopo il meeting.
+        # I FANTASMI invece possono muoversi subito (non vengono
+        # teletrasportati allo stesso modo e attraversano i muri), quindi
+        # per loro NON applichiamo il grace: classifichiamo subito GHOST.
         if self._post_vote_end_t is not None:
             if _time.time() < self._post_vote_end_t:
+                if state["is_dead"]:
+                    # Fantasma dopo il voto: niente grace, riparte subito.
+                    self._post_vote_end_t = None
+                    return PHASE_GHOST
                 return PHASE_POST_VOTE
             # Grace finito: spengo il timer
             self._post_vote_end_t = None

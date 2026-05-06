@@ -1,5 +1,229 @@
 # Changelog
 
+## v2.2.59 — Colpi proporzionali alla distanza + check Use pre-colpo
+
+### Problema: movimenti troppo lunghi, esce dal raggio di attivazione
+
+Anche coi micro-colpi "un asse alla volta" il bot, avvicinandosi alla
+task, faceva colpi troppo lunghi e usciva dal raggio di attivazione
+(il pulsante Use non restava acceso). Due cause:
+
+1. Il colpo aveva durata FISSA (30ms) a qualsiasi distanza: vicino al
+   target era troppo e oltrepassava.
+2. Il pulsante Use veniva controllato solo DOPO il colpo: se il bot era
+   gia' nel raggio, il colpo successivo lo faceva comunque uscire prima
+   del controllo.
+
+### Fix 1: durata del colpo proporzionale alla distanza residua
+
+Nuovo ``_tap_for_distance``: il colpo e' lungo solo da lontano e diventa
+MINIMO (12ms) quando si e' vicini al target (sotto
+``MICRO_NUDGE_FINE_DIST``). Cosi' in rifinitura fa micro-passi che non
+superano il raggio. Nuove costanti: ``MICRO_NUDGE_TAP_MIN_SEC`` (colpo
+minimo), ``MICRO_NUDGE_FINE_DIST`` (soglia rifinitura); ``MICRO_NUDGE_TAP_SEC``
+ora e' il colpo MASSIMO (da lontano).
+
+### Fix 2: controllo pulsante Use PRIMA di ogni colpo
+
+All'inizio di ogni iterazione il bot verifica se il pulsante Use e' gia'
+acceso: in tal caso e' gia' nel raggio e si ferma SENZA fare il colpo
+(che lo farebbe uscire). Prima il check era solo dopo il colpo. Questo
+copre anche il caso "gia' nel raggio all'arrivo" (rimosso il check
+iniziale separato, ora ridondante).
+
+Tuning: ``MICRO_NUDGE_SETTLE_SEC`` 0.08 -> 0.12 (piu' tempo per fermarsi,
+l'inerzia del personaggio non falsa la lettura), ``BLIND_NUDGE_MAX``
+8 -> 12.
+
+Per tarare dal vivo: se esce ancora dal raggio, abbassa
+``MICRO_NUDGE_TAP_MIN_SEC`` (colpi finali piu' corti) o alza
+``MICRO_NUDGE_FINE_DIST`` (entra prima in rifinitura).
+
+File toccati: ``ui/mixins/auto_move.py`` (tap proporzionale + check
+pre-colpo), ``core/config.py`` (nuove costanti).
+
+---
+
+## v2.2.58 — Fix F4: ripresa Auto-All bloccata + stop netto della task
+
+### Bug: F4 non riprendeva Auto-All
+
+``_ferma_processo_task`` faceva ``return`` anticipato quando il
+subprocess era gia' terminato (``poll() != None``), SENZA azzerare
+``self._task_process``. Cosi' dopo che una task finiva da sola,
+``_task_process`` restava puntato a un Popen morto. Il guard di Auto-All
+(``if self._task_process is not None: return``) lo vedeva come "task
+ancora in corso" e non sceglieva mai una nuova task -> premere F4 per
+riprendere non aveva effetto.
+
+Fix: ``_task_process`` (e ``_task_process_task_id`` / ``_task_prewarm_id``)
+vengono ora azzerati SEMPRE, anche quando il processo era gia' morto.
+Verificato con test: col vecchio codice la ripresa restava bloccata,
+col nuovo riparte.
+
+### F4 durante una task: ora la ferma e annulla nettamente
+
+Premere F4 mentre una task e' in esecuzione ora la chiude davvero:
+nuovo helper ``_stop_completo_task`` che esegue in sequenza STOP flag ->
+ESC sul gioco (chiude il minigioco aperto a schermo) + rilascio mouse ->
+kill del subprocess -> annulla navigazione -> chiude il popup di lancio
+e azzera i flag di arrivo, e rimette ``stop_flag.requested = False`` cosi'
+la ripresa successiva parte pulita.
+
+Prima F4-spegnimento chiamava solo ``_cancel_auto_move`` +
+``_ferma_processo_task`` senza ESC: il minigioco poteva restare aperto.
+
+File toccati: ``ui/mixins/tasks_process.py`` (reset sempre eseguito),
+``ui/mixins/auto_quest.py`` (``_stop_completo_task`` + toggle che lo usa).
+
+---
+
+## v2.2.57 — Micro-colpi di posizionamento: un asse alla volta, precisi e lenti
+
+### Movimenti ancora anomali all'arrivo (gira in cerchio, si allontana)
+
+Anche col nudge "adattivo per distanza/velocita'" il bot all'arrivo
+girava in cerchio sopra la task e si allontanava troppo. Due cause:
+
+- I tap muovevano DUE assi insieme (W+D = diagonale): se gli assi del
+  gioco non sono perfettamente allineati allo schermo, la diagonale fa
+  "ruotare" attorno al target invece di centrarlo.
+- Il calcolo della durata in base alla velocita' poteva ancora produrre
+  tap troppo lunghi -> overshoot.
+
+### Fix: micro-colpi precisi, UN ASSE ALLA VOLTA
+
+Riscritta la centratura all'arrivo (``_do_arrival_nudge``):
+
+- **Un solo asse per colpo**: ogni micro-colpo preme UN solo tasto WASD,
+  correggendo prima l'asse con l'errore maggiore, poi l'altro. Mai
+  diagonali -> niente "giri in cerchio".
+- **Tap fissi e brevi** (``MICRO_NUDGE_TAP_SEC = 0.03``): niente calcolo
+  di velocita' che amplifica il movimento. Piccoli passi ripetuti.
+- **Pausa di assestamento** dopo ogni colpo (``MICRO_NUDGE_SETTLE_SEC =
+  0.08``): il player si ferma e la RAM aggiorna la posizione prima del
+  colpo successivo -> movimento meticoloso, non frenetico.
+- **Deadzone ridotta** (0.18 -> 0.12): si centra piu' vicino al punto
+  esatto.
+- Dopo ogni colpo ricontrolla il pulsante Use: appena acceso, stop.
+- Senza calibrazione Use: micro-colpi "alla cieca" fino alla deadzone,
+  max ``BLIND_NUDGE_MAX``.
+
+Rimossi il vecchio ``_calc_nudge_keys`` (due assi) e la stima velocita' a
+feedback chiuso, sostituiti da ``_single_axis_key``. Rimosse le costanti
+``MICRO_NUDGE_DURATION_SEC`` / ``_MIN_SEC`` / ``_GAIN_SEC``.
+
+Per tarare dal vivo: tap piu' corti o pause piu' lunghe = piu' precisione
+e lentezza; deadzone piu' piccola = piu' vicino al centro.
+
+File toccati: ``ui/mixins/auto_move.py`` (riscrittura nudge),
+``core/config.py`` (nuove costanti micro-colpi).
+
+---
+
+## v2.2.56 — Fix arrivo fantasma: nudge adattivo + verifica reale del pulsante Use
+
+### Problema (regressione della v2.2.55)
+
+Nella v2.2.55 avevo fatto SALTARE del tutto il nudge ai fantasmi per
+eliminare i movimenti scattosi. Ma cosi' ho tolto anche il controllo del
+pulsante Use e l'aggiustamento di posizione: il fantasma "pensava" di
+essere arrivato e lanciava la task senza essere ben posizionato -> la
+task non partiva davvero.
+
+### Fix: nudge adattivo alla velocita' (invece di saltarlo)
+
+La vera causa dei movimenti scattosi NON era "il fantasma fa il nudge",
+ma la VELOCITA' alta del fantasma combinata con un tap a durata fissa:
+un tap da 50ms a velocita' alta percorre troppa strada e oltrepassa il
+target. Ora il nudge e' di nuovo attivo per tutti (fantasmi inclusi), ma
+la durata del singolo tap e' ADATTIVA:
+
+    dur = clamp(distanza_residua * GAIN, MIN, DURATION)
+
+Da lontano tap piu' lunghi (avvicinamento rapido), da vicino tap
+brevissimi (~20ms) che non oltrepassano. Cosi' anche un fantasma veloce
+si centra senza oscillare. Nuove costanti: ``MICRO_NUDGE_MIN_SEC``,
+``MICRO_NUDGE_GAIN_SEC``.
+
+### Fix: la task non parte piu' "a vuoto" se il pulsante Use e' spento
+
+Prima, se all'arrivo il pulsante Use era spento e non c'erano punti
+alternativi, il bot lanciava la task "comunque" (best-effort) -> sembrava
+eseguirla ma non si attivava. Ora:
+
+- Se il check visuale (pulsante Use in basso a destra OPPURE alone giallo
+  sulla task) fallisce e non ci sono alternativi, il bot RITENTA il
+  riposizionamento sul target principale fino a ``REPOSITION_MAX_RETRY``
+  volte (rifacendo il nudge, che ricontrolla il pulsante Use).
+- Dopo i tentativi falliti NON lancia a vuoto: salta la task e le mette
+  un cooldown breve (``REPOSITION_FAIL_COOLDOWN_SEC``) cosi' in Auto-All
+  il planner passa ad un'altra task e non resta incastrato.
+
+Il loop di micro-nudge ora, a tentativi esauriti, segnala chiaramente
+"pulsante Use ancora SPENTO" invece di "lancio comunque".
+
+File toccati: ``ui/mixins/auto_move.py`` (nudge adattivo, rimosso lo skip
+fantasma), ``ui/mixins/tasks_launch.py`` (retry riposizionamento invece
+di lancio a vuoto), ``core/config.py`` (costanti nudge adattivo +
+riposizionamento).
+
+---
+
+## v2.2.55 — Fix navigazione fantasma + oscillazione arrivo + F4 toggle Auto-All
+
+### Movimenti scattosi "avanti/indietro" sopra la task (risolto)
+
+Il "nudge" di rifinitura all'arrivo usava una deadzone minuscola (0.05):
+appena il bot oltrepassava di poco il target su un asse, premeva il
+tasto opposto -> oltrepassava di nuovo -> oscillava (i movimenti
+scattosi avanti/indietro). Risolto con:
+
+- **Deadzone piu' ampia** (``GPSConfig.NUDGE_DEADZONE = 0.18``): sotto
+  questa distanza su un asse, il bot non preme.
+- **Anti-overshoot**: se la direzione richiesta su un asse si inverte
+  rispetto al nudge precedente (= ho oltrepassato), quell'asse viene
+  fermato invece di rimbalzare indietro.
+
+### Anomalie da fantasma (risolto)
+
+Due cause distinte:
+
+1. **Dopo la votazione**: il grace period post-voto (pensato per dare
+   ai vivi il tempo di materializzarsi dopo il teletrasporto) veniva
+   applicato anche ai fantasmi, classificandoli ``POST_VOTE`` invece di
+   ``GHOST`` per alcuni secondi -> il bot tentava di navigare come un
+   vivo (A* che evita i muri) invece che in linea retta. Ora il grace
+   NON si applica ai fantasmi: appena morti dopo il voto, ripartono
+   subito in modalita' fantasma.
+
+2. **All'arrivo sulla task**: da fantasma il pulsante Use spesso non si
+   illumina, quindi il loop di micro-nudge (fino a 10 iterazioni di
+   press/release) andava in stallo producendo i movimenti scattosi. Ora
+   da fantasma il micro-nudge viene saltato del tutto: il bot arriva in
+   linea retta e lancia la task appena nel raggio di arrivo.
+
+### F4 = avvia/ferma tutte le task (Auto-All)
+
+Prima F4 era solo "stop". Ora F4 e' un toggle:
+
+- Auto-All SPENTO -> F4 lo accende (avvia il giro di tutte le task)
+- Auto-All ACCESO -> F4 lo spegne e ferma tutto (navigazione + subprocess)
+
+Il tasto **FINE/END** resta lo **stop d'emergenza** puro: ferma sempre
+tutto immediatamente (anche una singola task lanciata a mano), senza
+toggle. Il bottone in dashboard ora mostra "Avvia tutte le task [F4]"
+e diventa "[X] Ferma Esecuzione Totale [F4]" quando attivo.
+
+File toccati: ``ui/app.py`` (F4 toggle + FINE stop), ``ui/mixins/auto_quest.py``
+(refactor toggle + helper bottone), ``ui/mixins/auto_move.py`` (deadzone,
+anti-overshoot, skip nudge da fantasma), ``ui/mixins/game_state_monitor.py``
+(grace post-voto non si applica ai fantasmi), ``core/config.py``
+(NUDGE_DEADZONE), ``ui/mixins/ui_setup.py`` + ``ui/mixins/dialogs.py``
+(label/help).
+
+---
+
 ## v2.2.54 — Game state, path ottimizzato, gestione meeting/morte, F1/F2 globali
 
 ### #1 Pre-lobby riconosciuto

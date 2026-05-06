@@ -589,27 +589,34 @@ class TasksProcessMixin:
             self.task_seen_in_ram.discard(id_task)
 
     def _ferma_processo_task(self, success=False):
-        """Termina il processo attivo (se presente) e aggiorna lo stato a idle."""
+        """Termina il processo attivo (se presente) e aggiorna lo stato a idle.
+
+        IMPORTANTE: azzera SEMPRE ``self._task_process`` (anche se il
+        processo era gia' terminato da solo). Lasciarlo puntato a un Popen
+        morto bloccava il guard di Auto-All (``_task_process is not None``),
+        impedendo la ripresa con F4 dopo che una task finiva.
+        """
         # Rilascia sempre il mouse per evitare che rimanga incastrato sul gioco
         if _WIN_OK:
             try:
                 pyautogui.mouseUp(button='left')
             except Exception:
                 pass
-                
-        if self._task_process is None or self._task_process.poll() is not None:
-            if not success:
-                self.auto_status_msg = "Nessun processo da fermare"
-            return
-        try:
-            # Termina forzatamente il subprocess
-            self._task_process.terminate()
-            self._task_process.wait(timeout=3)
-        except Exception:
+
+        proc = self._task_process
+        gia_morto = (proc is None or proc.poll() is not None)
+
+        if proc is not None and not gia_morto:
+            # Processo ancora vivo: terminazione forzata.
             try:
-                self._task_process.kill()
+                proc.terminate()
+                proc.wait(timeout=3)
             except Exception:
-                pass
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
         id_task = self._task_process_task_id
         if id_task is not None:
             nuovo_stato = 'done' if success else 'idle'
@@ -620,9 +627,14 @@ class TasksProcessMixin:
             if success:
                 self.auto_status_msg = f"OK '{nome}' completata (Memoria)"
                 print(f"[Exec] '{nome}' interrotta automaticamente (successo in RAM)")
-            else:
+            elif not gia_morto:
                 self.auto_status_msg = f"[X] '{nome}' fermata"
                 print(f"[Exec] '{nome}' terminata forzatamente")
+        elif not success and gia_morto:
+            self.auto_status_msg = "Nessun processo da fermare"
+
+        # Reset SEMPRE eseguito (anche se il processo era gia' morto):
+        # e' il fix che sblocca la ripresa di Auto-All con F4.
         self._task_process         = None
         self._task_process_task_id = None
         self._task_prewarm_id      = None

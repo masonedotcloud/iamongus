@@ -165,7 +165,9 @@ class DialogsMixin:
                          color=Colors.TEXT_DIM)
             dpg.add_text("  M = abilita / disabilita auto-move",
                          color=Colors.TEXT_DIM)
-            dpg.add_text("  F4 / FINE (END) = ferma esecuzione task",
+            dpg.add_text("  F4 = avvia/ferma tutte le task (Auto-All)",
+                         color=Colors.TEXT_DIM)
+            dpg.add_text("  FINE (END) = stop d'emergenza (ferma tutto)",
                          color=Colors.TEXT_DIM)
             dpg.add_text("  F5 = reset partita (azzera task e dati)",
                          color=Colors.TEXT_DIM)
