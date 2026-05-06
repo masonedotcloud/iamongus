@@ -228,12 +228,16 @@ class GameStateMonitorMixin:
             # e classifichera' come POST_VOTE.
             return
 
-        # Se siamo ENTRATI in fase di stop, fermo Auto-Move/Auto-All
+        # Se siamo ENTRATI in fase di stop (votazione, post-voto, lobby...),
+        # fermo solo il MOVIMENTO corrente ma NON spengo Auto-All: cosi'
+        # quando si torna in gioco (ACTIVE/GHOST) il loop Auto-All riprende
+        # da solo a scegliere le task, senza bisogno di premere F4.
+        # (Prima qui si chiamava stop_auto_all=True, che spegneva Auto-All
+        # ad ogni votazione: il bot poi non ripartiva piu' da solo.)
         if not self._is_phase_bot_active(new_phase):
             try:
-                # Ferma navigazione (auto move)
                 if getattr(self, 'auto_path', None):
-                    self._cancel_auto_move(silent=True, stop_auto_all=True)
+                    self._cancel_auto_move(silent=True, stop_auto_all=False)
             except Exception as e:
                 print(f"[GameState] Errore stop auto_move: {e}",
                       flush=True)

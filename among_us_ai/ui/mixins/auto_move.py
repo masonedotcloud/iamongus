@@ -599,8 +599,9 @@ class AutoMoveMixin:
                             if lit:
                                 print(f"[Arrival] Pulsante Use acceso "
                                       f"(pre-colpo, dopo {attempt-1} colpi): "
-                                      f"fermo qui.", flush=True)
+                                      f"posizionamento OK.", flush=True)
                                 self.key_ctrl.release_all()
+                                self._arrival_use_lit = True
                                 return
 
                         pos = self.pos_target if self.pos_target else (cx, cy)
@@ -631,8 +632,10 @@ class AutoMoveMixin:
                             lit = is_lit(rect, calib, sct_optional=sct)
                             if lit:
                                 print(f"[Arrival] Pulsante Use acceso "
-                                      f"dopo {attempt} micro-colpi.",
-                                      flush=True)
+                                      f"dopo {attempt} micro-colpi: "
+                                      f"posizionamento OK.", flush=True)
+                                self.key_ctrl.release_all()
+                                self._arrival_use_lit = True
                                 return
 
                     # Esauriti i tentativi senza accendere il pulsante.
