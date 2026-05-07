@@ -316,15 +316,44 @@ class TasksLaunchMixin:
                 # o altri motivi: non e' fatale, proseguiamo.
                 pass
 
-            # FASE B: premi SPAZIO per aprire il pannello del minigioco.
-            try:
-                # Invia un evento tastiera a livello scan-code (DirectInput)
-                _send_scan(SCAN_CODES['SPACE'], keyup=False)
-                time.sleep(0.05)
-                # Invia un evento tastiera a livello scan-code (DirectInput)
-                _send_scan(SCAN_CODES['SPACE'], keyup=True)
-            except Exception as e:
-                print(f"[Input] Errore pressione SPAZIO: {e}")
+            # FASE B: APRI il pannello del minigioco.
+            # Opzione IBRIDA: se il pulsante Use e' calibrato, clicchiamo
+            # direttamente il suo centro (piu' affidabile: colpisce il
+            # punto esatto del pulsante, indipendente dalla posizione
+            # precisa del personaggio). Se non e' calibrato, fallback sulla
+            # pressione di SPAZIO (comportamento classico).
+            opened = False
+            if bool(getattr(GPSConfig, 'USE_CLICK_TO_OPEN', True)):
+                try:
+                    from ...execution.use_button import (
+                        carica_calibrazione, centro_use_button)
+                    _calib = carica_calibrazione()
+                    if _calib and _calib.get('calibrated', False) and _WIN_OK:
+                        hwnd_au = win32gui.FindWindow(None, "Among Us")
+                        if hwnd_au:
+                            rect = win32gui.GetClientRect(hwnd_au)
+                            pt = win32gui.ClientToScreen(
+                                hwnd_au, (rect[0], rect[1]))
+                            client_rect = (pt[0], pt[1], rect[2], rect[3])
+                            centro = centro_use_button(client_rect, _calib)
+                            if centro is not None:
+                                time.sleep(0.05)  # assicura player fermo
+                                pyautogui.click(centro[0], centro[1])
+                                print(f"[Input] Click pulsante Use @ {centro} "
+                                      f"per aprire il pannello.", flush=True)
+                                opened = True
+                except Exception as e:
+                    print(f"[Input] Click Use fallito ({e}), "
+                          f"fallback su SPAZIO.", flush=True)
+
+            if not opened:
+                # Fallback: premi SPAZIO per aprire il pannello del minigioco.
+                try:
+                    _send_scan(SCAN_CODES['SPACE'], keyup=False)
+                    time.sleep(0.05)
+                    _send_scan(SCAN_CODES['SPACE'], keyup=True)
+                except Exception as e:
+                    print(f"[Input] Errore pressione SPAZIO: {e}")
 
             # FASE C: invia il trigger al subprocess pre-warmed.
             # A questo punto il subprocess e' caricato e in attesa.
