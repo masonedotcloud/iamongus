@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.2.60 — Ripresa post-voto + apertura task ibrida (click sul pulsante Use)
+
+### Fix: il bot non riprendeva da solo dopo la votazione
+
+Alla fine di un meeting, entrando nel grace period POST_VOTE il codice
+chiamava ``_cancel_auto_move(stop_auto_all=True)``, che SPEGNEVA Auto-All.
+Nessuno poi lo riaccendeva -> dopo ogni votazione il giro restava fermo e
+bisognava premere F4 a mano.
+
+Fix: durante le pause di fase (votazione, post-voto, lobby) ora si ferma
+solo il MOVIMENTO corrente, ``auto_execute_all`` resta attivo. Quando si
+torna in gioco (ACTIVE/GHOST) il loop Auto-All riprende da solo. Gli
+altri due punti (inizio meeting, morte) usavano gia' ``stop_auto_all=False``.
+
+### Nuova logica di esecuzione: apertura task IBRIDA (click sul pulsante Use)
+
+Riscritta la fase di arrivo/esecuzione (opzione ibrida):
+
+- **Avvicinamento**: micro-colpi WASD un asse alla volta (come prima) per
+  portarsi nel raggio, finche' il pulsante Use si accende. Il check del
+  pulsante e' fatto PRIMA e DOPO ogni colpo: appena acceso ci si ferma
+  (posizionamento OK), senza fare il colpo di troppo che faceva uscire.
+- **Apertura**: invece di premere SPAZIO "alla cieca", il bot ora CLICCA
+  direttamente il centro del pulsante Use (posizione nota dalla
+  calibrazione, ``centro_use_button``). E' piu' affidabile perche'
+  colpisce il punto esatto del pulsante, indipendente dalla posizione
+  precisa del personaggio. Se la calibrazione manca, fallback automatico
+  su SPAZIO (comportamento classico). Toggle: ``GPSConfig.USE_CLICK_TO_OPEN``.
+
+Cosi' non c'e' piu' doppia apertura: il click sostituisce lo SPAZIO nella
+FASE B del lancio, e il subprocess pre-warmed riceve il "GO" subito dopo
+come prima.
+
+Nuova funzione ``execution/use_button.py::centro_use_button`` (centro
+assoluto del pulsante Use dalla ROI di calibrazione), con test.
+
+File toccati: ``ui/mixins/game_state_monitor.py`` (no spegnimento Auto-All
+in pausa), ``ui/mixins/auto_move.py`` (check Use = verifica posizione),
+``ui/mixins/tasks_launch.py`` (FASE B: click Use con fallback SPAZIO),
+``execution/use_button.py`` (centro_use_button), ``core/config.py``
+(USE_CLICK_TO_OPEN).
+
+---
+
 ## v2.2.59 — Colpi proporzionali alla distanza + check Use pre-colpo
 
 ### Problema: movimenti troppo lunghi, esce dal raggio di attivazione
