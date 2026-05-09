@@ -76,6 +76,13 @@ class GPSConfig:
     USE_BUTTON_CHECK_ENABLED = True
     USE_BUTTON_MAX_NUDGES    = 14
 
+    # Apertura del pannello task con CLICK sul pulsante Use (opzione
+    # ibrida) invece della pressione di SPAZIO. Piu' affidabile: clicca
+    # il centro esatto del pulsante (posizione nota dalla calibrazione),
+    # quindi non dipende dalla posizione precisa del personaggio. Se la
+    # calibrazione del pulsante Use manca, fa fallback automatico su SPAZIO.
+    USE_CLICK_TO_OPEN = True
+
     # --- MICRO-COLPI di aggiustamento posizione (precisi e lenti) ---
     # All'arrivo il bot si centra sul target con piccoli "colpi" di WASD,
     # UN ASSE ALLA VOLTA (mai diagonali, che farebbero "girare in cerchio").

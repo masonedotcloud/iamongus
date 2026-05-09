@@ -173,3 +173,39 @@ def is_lit(client_rect, calib=None, sct_optional=None):
 
     # Più vicino al riferimento "acceso" -> True
     return d_lit < d_off
+
+
+def centro_use_button(client_rect, calib=None):
+    """
+    Ritorna le coordinate assolute (x, y) del CENTRO del pulsante Use
+    sullo schermo, calcolate dalla ROI di calibrazione. Servono per
+    cliccare direttamente il pulsante invece di posizionarsi con WASD.
+
+    Parametri
+    ---------
+    client_rect : tuple(cx, cy, cw, ch)
+        Posizione e dimensioni del client del gioco (assolute, in pixel).
+    calib : dict | None
+        Calibrazione corrente; se None viene caricata dal file.
+
+    Ritorna
+    -------
+    tuple(int, int) | None
+        (x, y) centro del pulsante, oppure None se la calibrazione manca.
+    """
+    if calib is None:
+        calib = carica_calibrazione()
+    if not calib or 'roi' not in calib:
+        return None
+
+    cx, cy, cw, ch = client_rect
+    roi = calib['roi']
+    rx = float(roi.get('rx', 0.92))
+    ry = float(roi.get('ry', 0.85))
+    rw = float(roi.get('rw', 0.07))
+    rh = float(roi.get('rh', 0.12))
+
+    # Centro della ROI in coordinate assolute schermo.
+    x = cx + int((rx + rw / 2.0) * cw)
+    y = cy + int((ry + rh / 2.0) * ch)
+    return (x, y)
