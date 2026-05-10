@@ -194,6 +194,40 @@ class AutoQuestMixin:
                   f"({lung})")
             self._avvia_task_selezionata(task_to_run=prossima['_enriched'])
 
+    def _task_vitale_ancora_attiva(self):
+        """
+        Verifica se la task VITALE che il bot sta inseguendo e' ancora
+        attiva in RAM (cioe' il sabotaggio non e' stato risolto).
+
+        Confronta il tipo + stanza memorizzati all'avvio della navigazione
+        (``_target_task_tipo`` / ``_target_task_stanza``) con le task lette
+        dalla RAM (``memory_tasks``): la task e' ancora attiva se ne esiste
+        una corrispondente NON 'done'. Se e' sparita del tutto o risulta
+        completata, il sabotaggio e' stato risolto.
+
+        Ritorna True se ancora attiva (continua il viaggio), False se
+        risolta/sparita (conviene ricalcolare il giro).
+        """
+        tipo   = getattr(self, '_target_task_tipo', None)
+        stanza = getattr(self, '_target_task_stanza', None)
+        if tipo is None:
+            # Nessuna identita' memorizzata: per prudenza continua.
+            return True
+
+        mem = getattr(self, 'memory_tasks', None)
+        if not mem:
+            # RAM non leggibile in questo istante: NON annullo (evito falsi
+            # positivi su una lettura vuota temporanea). Continua il viaggio.
+            return True
+
+        for mt in mem:
+            if mt.get('tipo') == tipo and mt.get('id_stanza') == stanza:
+                # Trovata la corrispondente: attiva solo se non completata.
+                return not mt.get('done', False)
+
+        # Non e' piu' in lista: il sabotaggio e' sparito (risolto).
+        return False
+
     def _check_2p_yolo_thread(self, current_target_is_A):
         """Esegue l'analisi YOLO asincrona per vedere se il pannello e' occupato da un altro player."""
         if getattr(self, '_2p_yolo_active', False): return

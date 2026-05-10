@@ -191,6 +191,31 @@ class AutoMoveMixin:
                 self.auto_final_target = None
             return
 
+        # --- Task VITALE risolta durante il viaggio? ---
+        # Se sto navigando verso una task vitale (sabotaggio) e questa
+        # viene risolta/scompare dalla RAM mentre ci sto andando, e'
+        # inutile proseguire: annullo la navigazione e lascio che
+        # _update_auto_all ricalcoli il giro (ripianifica da capo).
+        if self.auto_path and getattr(self, '_target_task_vitale', False):
+            self._vitale_check_timer = getattr(self,
+                                               '_vitale_check_timer', 0.0) + dt
+            if self._vitale_check_timer >= 0.5:  # check ogni mezzo secondo
+                self._vitale_check_timer = 0.0
+                if not self._task_vitale_ancora_attiva():
+                    print("[Auto-All] Task vitale risolta/sparita durante il "
+                          "viaggio: annullo e ricalcolo il giro.", flush=True)
+                    self.auto_status_msg = ("Sabotaggio risolto: riprendo "
+                                            "le mie task")
+                    # Annulla navigazione SENZA spegnere Auto-All: il loop
+                    # _update_auto_all ripianifichera' alla prossima scelta.
+                    self._cancel_auto_move(silent=True, stop_auto_all=False)
+                    self._target_task_vitale = False
+                    self._current_auto_all_task_id = None
+                    if dpg.does_item_exist("task_launch_popup"):
+                        dpg.delete_item("task_launch_popup")
+                    return
+
+
         # --- Aggiornamento ostacoli dinamici (Porte) ---
         if hasattr(self, 'pathfinder'):
             self.pathfinder.dynamic_obstacles.clear()
