@@ -1,5 +1,42 @@
 # Changelog
 
+## v2.2.61 — Task vitale risolta durante il viaggio: annulla e ricalcola
+
+### Problema
+
+Se il bot stava navigando verso una task VITALE (sabotaggio: Reactor,
+O2, Lights, Comms...) e questa veniva risolta o spariva mentre era in
+viaggio, il bot continuava comunque fino a destinazione, sprecando
+tempo su un punto ormai inutile.
+
+### Fix
+
+Durante la navigazione verso una task vitale, il bot ora controlla
+periodicamente (ogni 0.5s) se quella task e' ancora attiva in RAM:
+
+- All'avvio della navigazione viene memorizzata l'identita' della task
+  inseguita (``tipo`` + ``id_stanza`` + flag ``vitale``).
+- Nuovo ``_task_vitale_ancora_attiva()``: confronta con ``memory_tasks``.
+  La task e' ancora attiva solo se esiste una corrispondente NON 'done';
+  se e' sparita o risulta completata, il sabotaggio e' stato risolto.
+- Se risolta: ``_update_auto_move`` annulla la navigazione (SENZA
+  spegnere Auto-All) e lascia che il loop ripianifichi il giro alla
+  prossima scelta -> il bot riprende le sue task normali.
+
+Protezione contro i falsi positivi: se la lettura RAM e' vuota in quel
+momento (transitorio), NON si annulla (si continua il viaggio), per non
+abbandonare per errore una task ancora valida.
+
+Il flag ``_target_task_vitale`` viene ricalcolato a ogni nuova task in
+``_avvia_task_selezionata``, quindi e' sempre coerente con la task
+corrente (le task non vitali non attivano il check).
+
+File toccati: ``ui/mixins/tasks_launch.py`` (memorizza identita' task),
+``ui/mixins/auto_move.py`` (check durante il viaggio),
+``ui/mixins/auto_quest.py`` (``_task_vitale_ancora_attiva``).
+
+---
+
 ## v2.2.60 — Ripresa post-voto + apertura task ibrida (click sul pulsante Use)
 
 ### Fix: il bot non riprendeva da solo dopo la votazione

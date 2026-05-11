@@ -36,6 +36,14 @@ class TasksLaunchMixin:
             return
             
         self._current_auto_all_task_id = id_task
+
+        # Memorizzo l'identita' della task che sto per inseguire, cosi'
+        # durante il viaggio posso verificare se e' ancora attiva in RAM.
+        # Serve soprattutto per le task VITALI (sabotaggi): se vengono
+        # risolte/scompaiono mentre ci sto andando, e' inutile continuare.
+        self._target_task_vitale = bool(reg.get('vitale', False))
+        self._target_task_tipo = reg.get('tipo')
+        self._target_task_stanza = reg.get('id_stanza')
             
         # Controllo Cooldown
         rem = self.task_cooldowns.get(id_task, 0) - time.time()
