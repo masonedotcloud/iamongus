@@ -1,27 +1,41 @@
-# Python
+# --- Python ---
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
+.eggs/
+build/
+dist/
 .venv/
 venv/
 env/
 
-# IDE
-.vscode/
-.idea/
-
-# OS
-Thumbs.db
-.DS_Store
-
-# Log e cache runtime
-*.log
-
-# Task executor: generati automaticamente dal task writer se assenti
+# --- File generati a runtime dal bot ---
+# File .py autonomi delle task (rigenerati dall'editor/dal runtime)
 tasks_exec/
+# Backup del vecchio formato task creato dopo la migrazione automatica
+task_registrate.json.bak
+# Export e dati di sessione
+trail_export.json
 
-# Backup automatici (es. task_registrate.json.bak dalla migrazione al formato v2.1)
-*.bak
+# --- Configurazione locale / dump di memoria ---
+# Il dump degli indirizzi RAM e' specifico della build del gioco
+dati_memoria/
 
+# --- IDE / editor ---
+.idea/
+.vscode/
+*.swp
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Aggiunte di repo ---
 # Cache del linter Ruff
 .ruff_cache/
+# Log
+*.log
+# Tutti i backup (generalizza task_registrate.json.bak)
+*.bak
