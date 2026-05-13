@@ -1,20 +1,41 @@
-# Among Us AI
+# Among Us AI Bot
 
 Bot di navigazione e automazione per Among Us. Legge la posizione del
 giocatore direttamente dalla RAM del gioco, mostra una mappa interattiva,
 calcola percorsi A* per spostarti automaticamente, registra ed esegue
-task semi-automatiche, rileva altri giocatori e porte chiuse via YOLO.
+task semi-automatiche, rileva altri giocatori e porte chiuse con la
+visione artificiale (YOLO).
 
-> **Importante**: questo strumento usa input simulato a livello scan-code
-> e lettura della RAM del processo del gioco. Funziona solo su **Windows**
+> **Importante**: lo strumento usa input simulato a livello scan-code e
+> lettura della RAM del processo del gioco. Funziona solo su **Windows**
 > e richiede che Among Us sia in esecuzione.
+
+> **⚠️ Disclaimer — Progetto a scopo esclusivamente didattico**
+>
+> Questo repository nasce come **esercizio di studio** su visione
+> artificiale (YOLO), lettura della memoria di processo, pathfinding A* e
+> costruzione di interfacce desktop. È pubblicato a fini **educativi e
+> dimostrativi**.
+>
+> **Non è inteso come un cheat** e non deve essere usato per ottenere
+> vantaggi sleali in partite online, pubbliche o competitive: farlo è
+> scorretto verso gli altri giocatori e quasi certamente viola i Termini
+> di Servizio di *Among Us* (Innersloth). Usalo solo in **partite private
+> con amici consenzienti**, in locale, o semplicemente per leggere e
+> studiare il codice.
+>
+> Il progetto non è affiliato né approvato da Innersloth. *Among Us* è un
+> marchio dei rispettivi proprietari. L'autore declina ogni
+> responsabilità per usi impropri o per eventuali conseguenze (incluse
+> sospensioni o ban dell'account) derivanti dall'uso di questo software,
+> fornito "così com'è" senza alcuna garanzia.
 
 ---
 
 ## Indice
 
-1. [Sezione utente](#sezione-utente) — come si installa e si usa
-2. [Sezione sviluppatore](#sezione-sviluppatore) — come e' fatto dentro
+1. [Sezione utente](#sezione-utente) — installazione e uso
+2. [Sezione sviluppatore](#sezione-sviluppatore) — com'e' fatto dentro
 
 ---
 
@@ -32,68 +53,90 @@ task semi-automatiche, rileva altri giocatori e porte chiuse via YOLO.
    python main.py
    ```
 
-Al primo avvio, se hai un `task_registrate.json` di una vecchia versione,
-il bot lo migra automaticamente nel nuovo formato (vedi sotto).
+Al primo avvio, se hai un `task_registrate.json` di una vecchia
+versione, il bot lo migra automaticamente nel nuovo formato (vedi la
+sezione sviluppatore).
 
 ## Cosa fa il bot
 
-In una partita di Among Us, mentre il bot e' aperto, vedi una finestra
-con tre zone:
+Mentre il bot e' aperto durante una partita, vedi una finestra divisa
+in tre zone: la mappa del livello (con l'omino, la scia, le task e il
+percorso A*), un pannello laterale di controlli e una barra di stato in
+basso.
 
-```
-+------------------------------------+--------------------+
-|                                    |                    |
-|  Mappa del livello                 |  Pannello          |
-|  (canvas con omino, scia,          |  laterale          |
-|   task da fare, percorso A*)       |  (controlli)       |
-|                                    |                    |
-+------------------------------------+--------------------+
-|  X: 12.3   Y: -4.5   FPS: 60   Mode: follow ...        |
-+----------------------------------------------------------+
-```
+Le sue funzioni principali:
 
-Il bot:
+- **Posizione in tempo reale** sulla mappa, letta dalla memoria del
+  gioco, con scia che si accumula muovendoti.
+- **Task da fare** mostrate dove si trovano, lette direttamente dalla
+  RAM.
+- **Percorso A***: cliccando sulla mappa o su una task, il bot calcola
+  un percorso che passa solo per le zone calpestabili.
+- **Auto-movimento**: il bot cammina al posto tuo premendo W/A/S/D
+  simulati.
+- **Esecuzione delle task**: dopo aver "insegnato" al bot come fare una
+  task (registrando i click con l'editor azioni), puoi farla eseguire
+  in automatico.
+- **Riconoscimento stato di gioco**: il bot capisce se sei in lobby, in
+  partita, in votazione, vivo o fantasma, e si comporta di conseguenza.
+- **Rilevamento di altri giocatori e porte chiuse** tramite YOLO.
 
-1. **Mostra la tua posizione in tempo reale** sulla mappa (palla verde
-   al centro, con scia che si accumula muovendoti).
-2. **Mostra le task da fare**, lette direttamente dalla memoria del
-   gioco (cerchio colorato con icona).
-3. **Calcola un percorso A***: cliccando sulla mappa o su una task,
-   si genera una linea che mostra come arrivarci passando solo per
-   zone calpestabili.
-4. **Si muove automaticamente al posto tuo** se attivi
-   "Auto-movimento": il bot preme W/A/S/D simulando i tasti.
-5. **Esegue task pre-registrate**: se hai gia' "insegnato al bot"
-   come fare una task (registrando i click con l'editor azioni),
-   puoi avviarla con un bottone e lui la fa da solo.
-6. **Rileva altri giocatori** vicini e porte chiuse tramite YOLO
-   (visione artificiale).
+## Stato del gioco e comportamento automatico
 
-## Pannello laterale: cosa c'e'
+Il bot legge dalla RAM la fase corrente della partita e adatta il suo
+comportamento:
 
-In cima sempre visibile:
+- **Menu / pre-lobby**: resta fermo, non pianifica nulla.
+- **In partita (vivo)**: esegue il giro delle task.
+- **Votazione / meeting**: se era a meta' di una task, la abbandona
+  subito (preme ESC per chiudere il minigioco) e aspetta. Finito il
+  meeting, riprende da solo.
+- **Morte (fantasma)**: riparte il giro in modalita' fantasma; da morto
+  i percorsi vanno in linea retta perche' si attraversano i muri.
 
-- **Modalita' telecamera**: Segui (centra il giocatore), Libera (pan
-  con tasto centrale del mouse), Tutta (zoom out per vedere tutto).
-- **Zoom della mappa**: Riduci / Aumenta / Predefinito.
-- **Auto-movimento**: checkbox per attivare lo spostamento
-  automatico, riepilogo dello stato (target, numero waypoint nel
-  percorso), bottone Annulla.
+## Modalita' "Avvia tutte le task" (Auto-All)
 
-Sotto, una **TabBar** con 5 tab:
+E' la modalita' automatica completa: il bot sceglie da solo la prossima
+task, ci naviga, la esegue e passa alla successiva, in loop.
 
-| Tab | Cosa contiene |
-|-----|---------------|
-| **Zone** | Aree definite a mano sulla mappa (Cafeteria, MedBay, ecc.). Bottoni per disegnare, modificare, navigare. Sotto-sezione "Zone porte" per filtrare le porte rilevate da YOLO. |
-| **Task** | Task lette dalla RAM (in tempo reale) + Task registrate (salvate dall'utente con azioni custom). Bottone per la finestra di gestione padre/figlia (ereditarieta' delle azioni). |
-| **POI** | Punti di interesse generici (Vent, Admin Panel, ecc.). |
-| **Vista** | Cosa mostrare sulla mappa: griglia, scia, mirino, HUD. Configurazione del rilevamento YOLO. Smoothing della telecamera. |
-| **Stats** | Distanza percorsa, tempo sessione, celle calpestabili, punti del trail. |
+- Sceglie la task in base a un punteggio che bilancia distanza e
+  priorita'. Con l'opzione **"Percorso piu' breve"** (attiva di default)
+  va sempre alla task piu' vicina, per fare meno strada.
+- I **sabotaggi** (task "vitali": Reactor, O2, Lights, Comms) hanno
+  priorita' assoluta. Se durante il viaggio verso un sabotaggio questo
+  viene risolto, il bot se ne accorge, abbandona quel target e
+  ricalcola il giro.
+- Quando una task finisce, ricontrolla la RAM per vedere se risulta
+  completata e passa alla prossima.
 
-In fondo:
-- **Scorciatoie da tastiera** (collassabile).
+Si avvia e si ferma con il tasto **F4** o con il bottone nel pannello.
+
+## Reset partita e auto-reset
+
+- **Reset partita** (tasto **F5** o menu Strumenti): azzera tutti gli
+  stati di progresso (task in corso, cooldown, navigazione, dati di
+  sessione) senza toccare le task registrate, le zone, i POI o la
+  mappa. Utile per ripartire puliti.
+- **Auto-reset tra le partite** (checkbox nel menu Strumenti): se
+  attivo, il bot esegue il reset automaticamente quando rileva l'inizio
+  di una nuova partita.
 
 ## Scorciatoie da tastiera
+
+Alcune scorciatoie sono globali (funzionano anche con il gioco in primo
+piano), altre solo quando la finestra del bot e' attiva.
+
+### Tasti globali
+
+| Tasto | Azione |
+|-------|--------|
+| **F1** | Apri/chiudi la preview del giro Auto-All (pannello sinistro) |
+| **F2** | Apri/chiudi il pannello Intelligence (pannello destro) |
+| **F4** | Avvia / ferma tutte le task (Auto-All). Premuto durante una task, la ferma e annulla. |
+| **F5** | Reset partita |
+| **FINE (END)** | Stop d'emergenza: ferma tutto immediatamente |
+
+### Tasti con finestra del bot attiva
 
 | Tasto | Azione |
 |-------|--------|
@@ -107,65 +150,91 @@ In fondo:
 | P | Mostra/nascondi percorso A* |
 | M | Abilita/disabilita auto-movimento |
 | N | Disegna nuova zona |
-| **F4** o **FINE (END)** | **Ferma TUTTO subito** (auto-move, esecuzione task, scanner YOLO) |
-| Click sinistro | Imposta destinazione (calcola percorso A* da li') |
-| Click destro / ESC | Annulla operazione corrente |
+| F3 | Abilita/disabilita Anti-AFK |
+| Click sinistro | Imposta destinazione (calcola il percorso A* fin li') |
+| Click destro / ESC | Annulla l'operazione corrente |
 | Rotellina mouse | Zoom della mappa |
 | Tasto centrale + drag | Pan della mappa |
+
+## Pannello laterale
+
+In cima, sempre visibili: le modalita' telecamera (Segui / Libera /
+Panoramica), lo zoom della mappa e i controlli dell'auto-movimento.
+
+Sotto, una barra a schede:
+
+| Scheda | Contenuto |
+|--------|-----------|
+| **Zone** | Aree definite a mano sulla mappa (Cafeteria, MedBay, ...). Bottoni per disegnare, modificare e navigare. Include il filtro "Zone porte" per il rilevamento YOLO. |
+| **Task** | Task lette dalla RAM in tempo reale + task registrate dall'utente con azioni personalizzate. Da qui si avvia "tutte le task" e si apre la gestione padre/figlia (ereditarieta' delle azioni). |
+| **POI** | Punti di interesse generici (Vent, Admin Panel, ...). |
+| **Vista** | Cosa mostrare sulla mappa (griglia, scia, mirino, HUD), configurazione YOLO e smoothing della telecamera. |
+| **Stats** | Distanza percorsa, tempo di sessione, celle calpestabili, punti del trail. |
+
+Nel menu in alto, la voce **Strumenti** raccoglie reset partita,
+auto-reset, "percorso piu' breve", calibrazione del pulsante Use e
+pulizia di trail/statistiche.
 
 ## Come si registra una task
 
 1. Avvicinati alla task in gioco (es. "Swipe Card" in Admin).
-2. Nella tab "Task", se la task non e' in elenco "Task registrate",
+2. Nella scheda "Task", se non e' tra le "Task registrate",
    selezionala dalle "Task in memoria" e clicca "Registra nuova".
-3. Aprilo con "Modifica task" e clicca "Modifica azioni" per aprire
-   l'editor.
-4. Nell'editor: clicca sui pulsanti come "Avvia click semplice" o
-   "Avvia drag" e poi clicca sulla preview dello screenshot del gioco
-   per registrare le coordinate.
-5. Quando hai finito, "Salva e chiudi".
-6. Dal pannello principale: "Genera file .py" produce il file
-   autonomo dentro `tasks_exec/` che il bot esegue per fare la task.
+3. Aprila con "Modifica task" e poi "Modifica azioni" per entrare
+   nell'editor.
+4. Nell'editor scegli un'azione (es. "Avvia click semplice" o "Avvia
+   drag") e clicca sulla preview dello screenshot del gioco per
+   registrarne le coordinate.
+5. "Salva e chiudi" al termine.
+6. Dal pannello principale, "Genera file .py" produce il file
+   autonomo in `tasks_exec/` che il bot esegue per fare la task.
 
-## Modalita' Auto-Quest (esegui tutte)
+## Calibrazione del pulsante "Use"
 
-Il bottone **Esegui automaticamente tutte le task** in tab "Task":
+Per eseguire una task il bot deve aprire il minigioco. Lo fa cliccando
+il pulsante **Use** in basso a destra: per sapere dove cliccare (e per
+capire quando il pulsante e' acceso) serve una calibrazione una tantum.
 
-- Sceglie la task piu' vicina in elenco "Task in memoria".
-- Naviga li' con A*.
-- Lancia il file `.py` autonomo che simula i click del minigioco.
-- Quando finisce, ricontrolla la RAM per vedere se la task e' "done"
-  e passa alla prossima.
+Dal menu **Strumenti → Calibra pulsante 'Use'**, segui le istruzioni
+per selezionare l'area del pulsante. Senza calibrazione il bot usa un
+fallback (pressione del tasto SPAZIO), meno preciso.
 
-Tutto fermabile in qualsiasi momento con **F4** o **FINE**.
+## File di configurazione
 
-## File JSON di configurazione
-
-Il bot legge dati da diversi file JSON nella cartella radice:
+Il bot legge alcuni file JSON dalla cartella radice:
 
 | File | Contenuto |
 |------|-----------|
-| `mappa_skeld.json` | Coordinate delle celle "calpestabili" (dove un giocatore puo' stare). Generato dal mapper. |
+| `mappa_skeld.json` | Celle "calpestabili" della mappa (dove un giocatore puo' stare). |
 | `zone_skeld.json` | Zone nominate a mano (poligoni con nome e colore). |
-| `door_zones_skeld.json` | Zone porte (filtro per il rilevamento YOLO). |
-| `poi_skeld.json` | Punti di interesse (POI). |
-| `tasks_dettagli.json` | Struttura delle task registrate (id, nome, posizione, fasi, alternativi, parent). |
-| `tasks_esecuzione/task_<id>.json` | Azioni di una specifica task (un file per ogni task). |
-| `task_registrate.json` | Vecchio formato monolitico. Solo per la migrazione automatica al primo avvio. |
-
-## File generati
-
-| File / cartella | Contenuto |
-|---|---|
-| `tasks_exec/` | File `.py` autonomi per ogni task (eseguibili via `python tasks_exec/task_001_xxx.py`). Generati dal bottone "Genera file .py" e usati a runtime quando si lancia una task. |
-| `task_registrate.json.bak` | Backup del file legacy creato al primo avvio dopo la migrazione. |
+| `door_zones_skeld.json` | Zone porte per il filtro del rilevamento YOLO. |
+| `poi_skeld.json` | Punti di interesse. |
+| `tasks_dettagli.json` | Struttura delle task registrate (id, nome, posizione, fasi, alternativi, padre). |
+| `tasks_esecuzione/task_<id>.json` | Azioni di una specifica task (un file per task). |
+| `use_button_calibration.json` | Calibrazione del pulsante Use (creata dallo strumento). |
+| `dati_memoria/script.json` | Dump opzionale degli indirizzi RAM: se presente, il bot lo usa per configurarsi (utile dopo un aggiornamento del gioco). |
 
 ## File di asset
 
-| File | Cosa e' |
-|------|---------|
-| `arrow.pt`, `nav.pt`, `foglie.pt`, `asteroids.pt`, `vent.pt`, `porte.pt`, `yolo_players.pt` | Modelli YOLO (PyTorch) per il rilevamento visivo: freccia di navigazione, gli "ostacoli" del minigioco asteroidi, le foglie da rimuovere in O2, i vent, le porte chiuse, gli altri giocatori sulla mappa. |
-| `requirements.txt` | Dipendenze Python (`pymem`, `pyautogui`, `dearpygui`, `numpy`, `opencv-python`, `pywin32`, `mss`, `ultralytics` per YOLO). |
+I file `.pt` sono i modelli YOLO (PyTorch) per il riconoscimento visivo:
+freccia di navigazione, gli ostacoli del minigioco asteroidi, le foglie
+da rimuovere in O2, i vent, le porte chiuse e gli altri giocatori sulla
+mappa. `requirements.txt` elenca le dipendenze Python (`pymem`,
+`pyautogui`, `dearpygui`, `numpy`, `opencv-python`, `pywin32`, `mss`,
+`Pillow`, `easyocr` e `ultralytics` per YOLO).
+
+## Avvertenza e uso responsabile
+
+Lo ripetiamo perché è importante: questo è un **progetto didattico**, non
+uno strumento pensato per barare.
+
+- **Non usarlo in partite online o pubbliche.** Automatizzare il gioco
+  rovina l'esperienza agli altri e viola i Termini di Servizio.
+- **Contesto consigliato**: partite private con amici d'accordo, ambienti
+  di test locali, oppure studio del codice senza eseguirlo.
+- **Nessuna garanzia**: il software è fornito "as is"; l'uso è a tuo
+  rischio e l'autore non risponde di ban, malfunzionamenti o altri danni.
+- Rispetta sempre il gioco, gli altri giocatori e i creatori (Innersloth).
 
 ---
 
@@ -173,148 +242,85 @@ Il bot legge dati da diversi file JSON nella cartella radice:
 
 ## Architettura ad alto livello
 
-Il bot e' un'applicazione DearPyGui (DPG) single-process che orchestra
-piu' thread:
+Il bot e' un'applicazione DearPyGui (DPG) a processo singolo che
+orchestra piu' thread:
 
-- **Thread principale** (DPG): rendering, input, callback UI.
-- **Thread RAM**: legge a 60 Hz la posizione e la lista task del
-  giocatore via `pymem`.
+- **Thread principale (DPG)**: rendering, input, callback della UI e il
+  loop di aggiornamento per frame.
+- **Thread RAM**: legge in continuo la posizione e la lista delle task
+  via `pymem`.
 - **Thread YOLO**: scanner periodico che cattura screenshot e fa
   inferenza per rilevare altri giocatori e porte chiuse.
-- **Subprocess**: quando si avvia una task, il bot lancia un altro
-  processo Python (un file in `tasks_exec/`) che simula i click del
-  minigioco.
+- **Subprocess**: quando si avvia una task, il bot lancia un processo
+  Python separato (un file in `tasks_exec/`) che simula i click del
+  minigioco. Il subprocess viene preparato in anticipo (pre-warming) e
+  attende un segnale "GO" sullo stdin: il bot lo invia subito dopo aver
+  aperto il pannello della task.
 
-```
-                 main.py
-                    |
-                    v
-        GPSVisualizerPro.run()
-                    |
-        +-----------+-----------+
-        |           |           |
-     thread      thread     thread principale
-      RAM        YOLO       (DPG event loop)
-        |           |           |
-        v           v           v
-       pymem    OpenCV +    rendering canvas,
-   read_float   torch       mouse/key callback,
-                            menu+pannello UI
-                    |
-                    v
-        utente avvia una task
-                    |
-                    v
-       subprocess.Popen(["python",
-                         "tasks_exec/task_001_xxx.py",
-                         "--step", "0"])
-                    |
-                    v
-              click su task
-              minigioco via SendInput
-```
+## Organizzazione del codice
 
-## Struttura del package
+Il package `among_us_ai/` e' suddiviso per responsabilita':
 
-```
-bot/
-+-- main.py                       # entry point: 14 righe, chiama run()
-+-- requirements.txt              # dipendenze Python
-+-- *.json                        # mappa, zone, POI, task
-+-- *.pt                          # modelli YOLO
-+-- tasks_exec/                   # file .py generati per ogni task
-+-- tasks_esecuzione/             # JSON azioni per ogni task
-+-- among_us_ai/                  # package vero e proprio
-    +-- core/
-    |   +-- config.py             # GPSConfig + Colors (palette)
-    |   +-- geometry.py           # point_in_polygon, hex_to_rgba, ...
-    |   +-- stop_flag.py          # singleton globale per F4/END
-    |   +-- win_deps.py           # import opzionali Windows
-    +-- io_input/
-    |   +-- key_controller.py     # SendInput a livello scan-code
-    +-- pathfinding/
-    |   +-- pathfinder.py         # A* su griglia + string-pulling
-    +-- game_io/
-    |   +-- memory_reader.py      # lettura RAM via pymem
-    +-- managers/
-    |   +-- task_manager.py             # FACADE
-    |   +-- task_dettagli_manager.py    # CRUD struttura
-    |   +-- task_esecuzione_manager.py  # CRUD azioni
-    |   +-- zone_manager.py             # zone nominate
-    |   +-- poi_manager.py              # punti di interesse
-    +-- execution/
-    |   +-- runtime.py            # motore "live" per il pulsante Test
-    |   +-- task_template.py      # path del package motore (_motore_pkg)
-    |   +-- _motore_pkg/          # motore modulare (copiato in tasks_exec/_motore/)
-    |   +-- task_writer.py        # genera i thin wrapper .py delle task
-    +-- ui/
-        +-- app.py                # GPSVisualizerPro (init+frame+run)
-        +-- editor.py             # TaskActionEditor (lifecycle)
-        +-- mixins/               # 19 mixin GPSVisualizerPro
-        +-- editor_mixins/        # 7 mixin TaskActionEditor
-```
+- `core/` — configurazione (`config.py`: `GPSConfig` + palette
+  `Colors`), helper geometrici, il flag di stop globale e gli import
+  opzionali Windows.
+- `io_input/` — controller della tastiera (SendInput a livello
+  scan-code).
+- `pathfinding/` — A* su griglia con string-pulling, piu' la variante
+  in linea retta per i fantasmi.
+- `game_io/` — lettura della RAM via `pymem`, con caricamento opzionale
+  degli indirizzi da `dati_memoria/script.json`.
+- `managers/` — `TaskManager` (facade) sopra i sub-manager di struttura
+  ed esecuzione delle task, piu' i manager di zone e POI e il
+  pianificatore del giro.
+- `execution/` — il motore di esecuzione: `runtime.py` per il pulsante
+  "Test" dell'editor e il package modulare `_motore_pkg/` (copiato in
+  `tasks_exec/_motore/`) per i file generati. `task_writer.py` genera i
+  thin wrapper `.py` delle task.
+- `ui/` — l'applicazione: `app.py` (`GPSVisualizerPro`), `editor.py`
+  (`TaskActionEditor`) e i rispettivi mixin in `mixins/` ed
+  `editor_mixins/`.
 
-## Le tre classi principali
+## Le classi principali
 
 ### `GPSVisualizerPro` (`ui/app.py`)
 
-E' la classe principale. **Eredita da 19 mixin** che dividono i metodi
-per tema (rendering, pathfinding, popup, ecc.). Ogni mixin contiene
-solo metodi: lo stato `self.*` e' inizializzato qui in `__init__`.
-
-```python
-class GPSVisualizerPro(
-    MemorySyncMixin, MapLoaderMixin, UISetupMixin, YoloScannerMixin,
-    InputCallbacksMixin, AutoMoveMixin, AutoQuestMixin, ZonesMixin,
-    TasksListMixin, TasksLaunchMixin, TasksProcessMixin,
-    TasksPopupsRegisterMixin, TasksPopupsEditMixin, TasksPopupsSubitemMixin,
-    DialogsMixin, PoiMixin, RenderingWorldMixin, RenderingEntitiesMixin,
-    MiscMixin,
-):
-    def __init__(self): ...
-    def aggiorna_frame(self): ...
-    def run(self): ...
-```
-
-Solo `__init__`, `aggiorna_frame` e `run` stanno in `app.py`. Tutti i
-~110 metodi rimanenti sono nei mixin.
+E' la classe centrale. Eredita da un insieme di **mixin** (uno per
+tema: rendering, pathfinding, popup, esecuzione task, ecc.) che
+contengono solo metodi; lo stato `self.*` e' tutto inizializzato qui in
+`__init__`. In `app.py` stanno solo `__init__`, `aggiorna_frame` e
+`run`; il resto dei metodi e' nei mixin di `ui/mixins/`.
 
 ### `TaskActionEditor` (`ui/editor.py`)
 
 Finestra secondaria per registrare le azioni di una task (click, drag,
-zone YOLO, sequenze). Anch'essa **eredita da 7 mixin**:
-`EditorUIMixin`, `EditorStartActionsMixin`, `EditorSequenceMixin`,
-`EditorCanvasInputMixin`, `EditorDrawingMixin`, `EditorListPanelMixin`,
-`EditorSaveTestMixin`. Solo `__init__`, `apri`, `chiudi`,
-`aggiorna_frame` stanno in `editor.py`.
+zone YOLO, sequenze). Anch'essa eredita da una serie di mixin
+(`editor_mixins/`); in `editor.py` stanno solo `__init__`, `apri`,
+`chiudi` e `aggiorna_frame`.
 
 ### `TaskManager` (`managers/task_manager.py`)
 
 E' una **facade** che delega a due sub-manager:
 
-- `TaskDettagliManager`: CRUD struttura task (id, nome, posizione,
-  fasi, alternativi, parent_id).
-- `TaskEsecuzioneManager`: CRUD azioni e stato di esecuzione di
-  ciascuna task.
+- `TaskDettagliManager` — CRUD della struttura task (id, nome,
+  posizione, fasi, alternativi, padre).
+- `TaskEsecuzioneManager` — CRUD delle azioni e dello stato di
+  esecuzione di ciascuna task.
 
-L'API pubblica del `TaskManager` e' invariata rispetto al monolite
-originale: i mixin chiamano `self.task_mgr.aggiungi(...)`,
-`self.task_mgr.imposta_azioni(...)`, ecc. senza sapere che dietro le
-quinte ci sono due manager.
+I mixin chiamano l'API pubblica del `TaskManager` senza sapere che
+dietro ci sono due manager.
 
 ## Pattern dei mixin
 
-Tutti i mixin seguono lo stesso pattern. Esempio:
+Ogni mixin segue lo stesso schema: in cima `from ._imports import *`
+(che porta `dpg`, `time`, `math`, `GPSConfig`, `Colors`, i manager,
+ecc., evitando di ripetere gli import in ogni file) e una classe
+`<Nome>Mixin` che contiene solo metodi `self.*`.
 
 ```python
 # among_us_ai/ui/mixins/zones.py
 
-"""
-Gestione delle zone nominate e delle zone porta (UI).
-
-Mixin di GPSVisualizerPro: metodi separati per organizzazione, ma
-condividono lo stato self.* della classe principale.
-"""
+"""Gestione delle zone nominate e delle zone porta (UI)."""
 
 from ._imports import *
 
@@ -323,188 +329,106 @@ class ZonesMixin:
     def _start_new_zone_mode(self):
         self.zone_drawing_mode = True
         # ...
-
-    def _refresh_zone_list(self):
-        # ...
 ```
-
-Lo `import *` carica tutti i simboli del facade `_imports.py`:
-`dpg`, `time`, `math`, `os`, `GPSConfig`, `Colors`, `np`, `cv2`,
-`TaskManager`, `ZoneManager`, `Pathfinder`, ecc. Cosi' nei mixin non
-c'e' bisogno di ripetere 30 import in ogni file.
 
 ## Come aggiungere una funzionalita'
 
 ### Un nuovo bottone nel pannello
 
 1. Apri `among_us_ai/ui/mixins/ui_setup.py`.
-2. Trova il `with dpg.tab(label="...")` giusto.
-3. Aggiungi `dpg.add_button(label="Mio bottone", callback=lambda *a: self._mio_callback())`.
-4. Crea il metodo `_mio_callback` in un mixin appropriato. Se non
-   sai dove, mettilo in `misc.py`.
+2. Trova la scheda giusta (`with dpg.tab(label="...")`).
+3. Aggiungi `dpg.add_button(label="...", callback=lambda *a: self._mio_callback())`.
+4. Crea `_mio_callback` in un mixin adatto (se non sai dove, `misc.py`).
 
 ### Un nuovo tipo di azione per le task
 
-1. Aggiungi un metodo `_avvia_<nuova_azione>` in
-   `editor_mixins/start_actions.py` che imposta lo stato della
-   macchina (es. `self.stato = self.WAIT_NUOVA_AZIONE`).
-2. Aggiungi la nuova costante di stato (`WAIT_NUOVA_AZIONE = "..."`)
-   in `editor.py` (le costanti di classe in cima).
-3. Gestisci il click in `editor_mixins/canvas_input.py`
-   nella macchina a stati di `_canvas_mouse_down`.
-4. Aggiungi il rendering dell'azione in
-   `editor_mixins/drawing.py::_disegna_azione`.
-5. Aggiungi l'esecuzione in `execution/runtime.py::esegui_azioni`
-   (per il pulsante Test) **e** nel package `execution/_motore_pkg/`
-   (per i file `.py` generati): aggiungi l'handler nel modulo della
-   famiglia giusta e registralo nella dispatch map. Sono due posti
-   distinti.
+1. Aggiungi `_avvia_<nuova_azione>` in `editor_mixins/start_actions.py`
+   che imposta lo stato della macchina.
+2. Aggiungi la costante di stato in `editor.py`.
+3. Gestisci il click in `editor_mixins/canvas_input.py`.
+4. Aggiungi il rendering in `editor_mixins/drawing.py::_disegna_azione`.
+5. Aggiungi l'esecuzione in **due** posti: `execution/runtime.py`
+   (per il pulsante Test) e nel package `execution/_motore_pkg/` (per i
+   file generati): nuovo handler nel modulo della famiglia giusta,
+   registrato nella dispatch map.
 
 ### Un nuovo manager
 
 Crea `managers/<nome>_manager.py` sul modello di `PoiManager`,
-esportalo da `managers/__init__.py`, instanzialo in
-`GPSVisualizerPro.__init__` (in `ui/app.py`).
+esportalo da `managers/__init__.py` e instanzialo in
+`GPSVisualizerPro.__init__`.
 
 ### Un nuovo gruppo di metodi UI
 
-Crea `among_us_ai/ui/mixins/<nome>.py` con
-`from ._imports import *` in cima e una classe `<Nome>Mixin`.
-Aggiungi `from .mixins.<nome> import <Nome>Mixin` in `app.py` e
-mettilo nelle basi di `GPSVisualizerPro`.
+Crea `among_us_ai/ui/mixins/<nome>.py` con `from ._imports import *` e
+una classe `<Nome>Mixin`, poi aggiungilo alle basi di
+`GPSVisualizerPro` in `app.py`.
 
-## File JSON: due formati
+## Formato delle task
 
-Le task sono in due file (formato v2.1):
+Le task sono divise in due file:
 
-```
-tasks_dettagli.json:
-{
-  "next_id": 59,
-  "task_list": [
-    {
-      "id": 1,
-      "nome": "Swipe Card",
-      "x": 6.5, "y": -6.6,
-      "tipo": 5,
-      "id_stanza": 6,
-      "id_zona": 0,
-      "id_zona_locale": 19,
-      "nome_zona": "Admin",
-      "id_padre": null,
-      "vitale": false,
-      "due_giocatori": false,
-      "lunghezza": "Short",
-      "fasi": [...],
-      "alternativi": []
-    },
-    ...
-  ]
-}
-
-tasks_esecuzione/task_001.json:
-{
-  "id": 1,
-  "azioni": [
-    {"tipo": "click", "x_rel": 0.5, "y_rel": 0.5, "durata": 0.2},
-    ...
-  ],
-  "codice_personalizzato": false,
-  "esecuzione": {
-    "file": "tasks_exec/task_001_Swipe_Card.py",
-    "stato": "idle",
-    "parametri": {}
-  }
-}
-```
-
-`tasks_dettagli.json` e' "leggero" (~23 KB), cambia raramente. I file
-in `tasks_esecuzione/` sono "pesanti" (azioni con poligoni, zone YOLO,
-ecc.) e cambiano spesso quando si edita una task.
+- `tasks_dettagli.json` — struttura "leggera" (id, nome, posizione,
+  tipo, stanza, padre, fasi, alternativi), cambia raramente.
+- `tasks_esecuzione/task_<id>.json` — azioni "pesanti" (poligoni, zone
+  YOLO, ...) e stato di esecuzione, cambiano spesso quando si edita una
+  task.
 
 ## Migrazione automatica al primo avvio
 
-`TaskManager._migra_se_serve()` viene chiamato in `__init__`. Se:
+`TaskManager` controlla all'avvio: se `tasks_dettagli.json` non esiste
+ma esiste un `task_registrate.json` (vecchio formato monolitico), lo
+splitta in struttura + azioni e rinomina il vecchio file in
+`task_registrate.json.bak`. Accetta sia il formato `v2.0` sia il `v2.1`.
 
-- `tasks_dettagli.json` non esiste, **e**
-- `task_registrate.json` esiste,
+## Generazione del file `.py` di una task
 
-allora il manager:
-
-1. Legge il vecchio formato monolitico.
-2. Per ogni task, splitta in struttura (-> `tasks_dettagli.json`) e
-   azioni (-> `tasks_esecuzione/task_<id>.json`).
-3. Rinomina il vecchio file in `task_registrate.json.bak`.
-4. Stampa un log:
-   ```
-   [Migrazione] Splitto 56 task da task_registrate.json...
-   [Migrazione] Completata. Backup: task_registrate.json.bak
-   ```
-
-La migrazione accetta sia il formato `v2.0` (con `room_id`,
-`parent_id`, `fratelli`) sia quello `v2.1` (con `id_stanza`,
-`id_padre`, `alternativi`).
-
-## Generazione del file `.py` per una task
-
-`TaskManager.crea_file_esecuzione(id_task)` -> path del file generato.
-
-1. Risolve l'ereditarieta': se la task ha `id_padre`, usa le azioni del
-   padre.
-2. Delega a `execution/task_writer.py::genera_file_esecuzione` che
-   produce un thin wrapper con tre blocchi:
-   - **header** (commento + marker versione + parsing argomenti CLI)
-   - **meta_block** (dizionario `TASK_META` + costante `AZIONI`)
-   - **call_block** (`import _motore` + `_motore.esegui_lifecycle(...)`)
-   Il task_writer copia anche `_motore_pkg/` in `tasks_exec/_motore/`.
-3. Il file risultante non importa nulla dal package `among_us_ai`:
-   dipende solo dal package `_motore/` nella stessa cartella, ed e'
-   eseguibile con `python tasks_exec/task_001_xxx.py --step 0`.
+`TaskManager.crea_file_esecuzione(id_task)` risolve l'eventuale
+ereditarieta' delle azioni (padre → figlia), poi `task_writer.py`
+produce un thin wrapper con tre blocchi: header (commento + marker di
+versione + parsing CLI), dati (`TASK_META` + `AZIONI`) e chiamata al
+motore (`import _motore` + `_motore.esegui_lifecycle(...)`). Il writer
+copia anche `_motore_pkg/` in `tasks_exec/_motore/`. Il file risultante
+dipende solo dal package `_motore/` accanto a se' ed e' eseguibile con
+`python tasks_exec/task_001_xxx.py --step 0`.
 
 ## Stop globale
 
-Premere **F4** o **FINE (END)** in qualsiasi momento attiva il flag
-`stop_flag.STOP` (singleton in `core/stop_flag.py`). Tutti i thread e i
-loop di esecuzione lo controllano periodicamente e si fermano.
+Lo stato di stop e' un singleton in `core/stop_flag.py` con un solo
+attributo booleano `requested`, gestito tramite gli helper
+`request_stop()` / `is_stop_requested()`. I thread e i loop di
+esecuzione lo controllano periodicamente; il subprocess riceve anche un
+messaggio `STOP` sullo stdin.
 
 ```python
-# core/stop_flag.py
-STOP = threading.Event()  # singleton globale
-
-# nei mixin / runtime / template:
-if stop_flag.STOP.is_set():
+# nei mixin / runtime:
+if stop_flag.is_stop_requested():
     return  # o break
 ```
 
+Il tasto **FINE (END)** forza lo stop immediato di tutto; **F4** ferma
+la modalita' Auto-All (e con essa l'eventuale task in corso).
+
 ## Convenzioni di codice
 
-- **Italiano coerente** in business logic: campi JSON (`id_stanza`,
-  `id_padre`, `alternativi`, `nome_zona`, ...), nomi metodi
+- **Italiano** nella business logic: campi JSON (`id_stanza`,
+  `id_padre`, `alternativi`, `nome_zona`, ...) e nomi di metodi
   (`aggiungi`, `imposta_padre`, `naviga_a_zona`).
-- **Inglese tecnico tenuto** dove e' gergo del dominio: tipi di azione
+- **Inglese tecnico** dove e' gergo del dominio: tipi di azione
   (`click_poly`, `drag_zone`, `yolo_drag_all`), campi delle azioni
-  (`poly`, `rect`, `rx`, `ry`, `keypad`, `lights`), `subprocess`,
-  `_task_launch_*`.
-- Tag DPG sono **stabili e snake_case** (`zone_listbox`,
-  `mem_task_listbox`, `auto_state_label`): cambiarli rompe i
-  `dpg.set_value()` sparsi nei mixin.
-- Costanti `OFFSET_*` per gli offset RAM del gioco: in maiuscolo
-  per chiarezza, non sono nomi di campo dei dati.
+  (`poly`, `rect`, `rx`, `ry`, `keypad`, `lights`), `subprocess`.
+- I tag DPG sono stabili e in snake_case (`zone_listbox`,
+  `mem_task_listbox`, ...): cambiarli rompe i `dpg.set_value()` sparsi
+  nei mixin.
+- Le costanti `OFFSET_*` sono gli offset RAM del gioco, in maiuscolo
+  per distinguerle dai nomi di campo dei dati.
 
-## Testing manuale
-
-Non c'e' una test suite formale. Test consigliati per ogni modifica:
-
-1. Avvia con `task_registrate.json` di esempio: la migrazione
-   automatica deve produrre 56 task in `tasks_dettagli.json`.
-2. Apri il pannello: tutti i 5 tab devono caricarsi senza errori
-   nella console.
-3. Genera un file `.py` di una task: `python tasks_exec/task_001*.py`
-   non deve crashare.
-4. F4 deve fermare istantaneamente qualunque thread/auto-move/task.
-
-## Fonti & ringraziamenti
+## Fonti
 
 - DearPyGui: https://dearpygui.readthedocs.io/
 - pymem: https://github.com/srounet/Pymem
 - Ultralytics YOLO: https://docs.ultralytics.com/
+
+## Licenza
+
+MIT. Vedi il file [LICENSE](LICENSE).
